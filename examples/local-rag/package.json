@@ -1,0 +1,17 @@
+{
+  "name": "@d8um/example-local-rag",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts",
+    "build": "echo 'no build step'",
+    "clean": "rm -f local-rag.db"
+  },
+  "dependencies": {
+    "@d8um/core": "workspace:*",
+    "@d8um/adapter-sqlite-vec": "workspace:*",
+    "@d8um/embedding-local": "workspace:*",
+    "tsx": "^4.0.0"
+  }
+}

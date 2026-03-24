@@ -1,10 +1,25 @@
+<p align="center">
+  <img src="d8um_logo_text_filled.webp" alt="d8um" width="400" />
+</p>
 
+<p align="center">
+  <strong>One SDK. Every data source. Context, ready for your LLM agent.</strong>
+</p>
 
-**One SDK. Every data source. Context, ready for your LLM agent.**
+<p align="center">
+  <a href="#quick-start">Quick Start</a> &nbsp;&bull;&nbsp;
+  <a href="#how-it-works">How It Works</a> &nbsp;&bull;&nbsp;
+  <a href="#embedding-providers">Embedding</a> &nbsp;&bull;&nbsp;
+  <a href="#packages">Packages</a> &nbsp;&bull;&nbsp;
+  <a href="#api-overview">API</a> &nbsp;&bull;&nbsp;
+  <a href="#contributing">Contributing</a>
+</p>
 
-[Quick Start](#quick-start)  •  [How It Works](#how-it-works)  •  [Embedding](#embedding-providers)  •  [Packages](#packages)  •  [API](#api-overview)  •  [Contributing](#contributing)
-
-
+<p align="center">
+  <img src="https://img.shields.io/badge/TypeScript-first-blue?logo=typescript&logoColor=white" alt="TypeScript first" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" />
+  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Alpha" />
+</p>
 
 ---
 
