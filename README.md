@@ -1,58 +1,81 @@
-<p align="center">
-  <img src="d8um_logo_text.webp" alt="d8um" width="400" />
-</p>
 
-<p align="center">
-  <strong>One SDK. Every data source. Context, ready for your LLM agent.</strong>
-</p>
 
-<p align="center">
-  <a href="#quick-start">Quick Start</a> &nbsp;&bull;&nbsp;
-  <a href="#how-it-works">How It Works</a> &nbsp;&bull;&nbsp;
-  <a href="#embedding-providers">Embedding</a> &nbsp;&bull;&nbsp;
-  <a href="#packages">Packages</a> &nbsp;&bull;&nbsp;
-  <a href="#api-overview">API</a> &nbsp;&bull;&nbsp;
-  <a href="#contributing">Contributing</a>
-</p>
+**One SDK. Every data source. Context, ready for your LLM agent.**
 
-<p align="center">
-  <img src="https://img.shields.io/badge/TypeScript-first-blue?logo=typescript&logoColor=white" alt="TypeScript first" />
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" />
-  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Alpha" />
-</p>
+[Quick Start](#quick-start)  •  [How It Works](#how-it-works)  •  [Embedding](#embedding-providers)  •  [Packages](#packages)  •  [API](#api-overview)  •  [Contributing](#contributing)
+
+
 
 ---
 
 **d8um** (pronounced "datum") is a TypeScript SDK and open protocol for supplying context to LLMs. Define your data sources once - websites, documents, integrations, APIs, databases - and query all of them with a single call. d8um handles chunking, embedding, storage, retrieval, score merging, and prompt assembly so you can focus on building your application.
 
 ```ts
-const { results } = await d8um.query('how do I configure SSO?', { count: 8 })
-const context = d8um.assemble(results, { format: 'xml', maxTokens: 4000 })
+// Register a data source
+d8um.addSource({
+  id: 'faq',
+  mode: 'indexed',
+  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] },
+})
+
+// Ingest document(s) into your source
+await d8um.ingest('faq', {
+  title: 'How do I set up SSO?',
+  content: 'To enable SSO, navigate to Settings > Authentication and select your identity provider. We support SAML 2.0 and OpenID Connect.'
+})
+
+// Fan-out query across all sources, merge, and rank
+const response = await d8um.query('how do I configure SSO?', { count: 8 })
+// response.results contains ranked chunks from your sources:
+// [
+//   {
+//     content: 'To enable SSO, navigate to Settings > Authentication...',
+//     score: 0.9142,
+//     source: { id: 'faq', title: 'How do I set up SSO?' },
+//   },
+//   ...
+// ]
+
+// Assemble the results as LLM prompt context
+const context = d8um.assemble(response.results, { format: 'xml' })
+// context contains a string of formatted response.results:
+// <context>
+// <source id="faq" title="How do I set up SSO?">
+//   <passage score="0.9142">
+//     To enable SSO, navigate to Settings > Authentication...
+//   </passage>
+// </source>
+// ...
+// </context>
 ```
 
 ## Why d8um?
 
 Most RAG setups devolve into bespoke plumbing - a different retrieval path for each data source, ad-hoc score normalization, and fragile prompt formatting. d8um replaces that with a single, composable interface.
 
-| | Frameworks (LangChain, LlamaIndex) | **d8um** |
-|---|---|---|
-| **Philosophy** | Build *inside* the framework | Compose *alongside* your stack |
-| **Embeddings** | Baked-in provider wrappers | [Vercel AI SDK](https://ai-sdk.dev) ecosystem - 40+ providers, zero lock-in |
-| **Multi-model** | One model for everything | Per-source embedding models, merged at query time |
-| **Data sources** | Per-source wiring | Unified `Connector` interface |
-| **Retrieval** | Manual per-source | Fan-out + merge + re-rank in one call |
-| **Storage** | Tightly coupled | Swappable adapters (Postgres, SQLite, ...) |
-| **Output** | Raw results | Prompt-ready context (`xml`, `markdown`, `plain`) |
+
+|                  | Frameworks (LangChain, LlamaIndex) | **d8um**                                                                    |
+| ---------------- | ---------------------------------- | --------------------------------------------------------------------------- |
+| **Philosophy**   | Build *inside* the framework       | Compose *alongside* your stack                                              |
+| **Embeddings**   | Baked-in provider wrappers         | [Vercel AI SDK](https://ai-sdk.dev) ecosystem - 40+ providers, zero lock-in |
+| **Multi-model**  | One model for everything           | Per-source embedding models, merged at query time                           |
+| **Data sources** | Per-source wiring                  | Unified `Connector` interface                                               |
+| **Retrieval**    | Manual per-source                  | Fan-out + merge + re-rank in one call                                       |
+| **Storage**      | Tightly coupled                    | Swappable adapters (Postgres, SQLite, ...)                                  |
+| **Output**       | Raw results                        | Prompt-ready context (`xml`, `markdown`, `plain`)                           |
+
 
 ## How It Works
 
 d8um organizes every data source into one of three modes:
 
-| Mode | Behavior | Best for |
-|------|----------|----------|
-| **`indexed`** | Content is chunked, embedded, and stored. Semantic search runs against the vector store. | Docs, wikis, knowledge bases |
-| **`live`** | Fetched at query time. Never stored - always fresh. | APIs, search engines, real-time data |
-| **`cached`** | Fetched once, stored until a TTL expires, then re-fetched. | Slowly-changing reference data |
+
+| Mode          | Behavior                                                                                 | Best for                             |
+| ------------- | ---------------------------------------------------------------------------------------- | ------------------------------------ |
+| `**indexed`** | Content is chunked, embedded, and stored. Semantic search runs against the vector store. | Docs, wikis, knowledge bases         |
+| `**live**`    | Fetched at query time. Never stored - always fresh.                                      | APIs, search engines, real-time data |
+| `**cached**`  | Fetched once, stored until a TTL expires, then re-fetched.                               | Slowly-changing reference data       |
+
 
 A single `d8um.query()` call fans out across all three modes in parallel, normalizes scores, merges results via [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf), and returns a unified ranked result set.
 
@@ -390,15 +413,17 @@ const md = d8um.assemble(response.results, { format: 'markdown' })
 
 ### `d8um`
 
-| Method | Description |
-|--------|-------------|
-| `d8um.initialize(config)` | Configure the singleton with a vector store adapter and embedding provider |
-| `d8umCreate(config)` | Create an independent instance (for multi-instance use cases) |
-| `.addSource(source)` | Register a data source (indexed, live, or cached) |
-| `.index(sourceId?, opts?)` | Index one or all indexed sources - idempotent, incremental by default |
-| `.query(text, opts?)` | Fan-out query across all sources, merge, and rank |
+
+| Method                      | Description                                                                 |
+| --------------------------- | --------------------------------------------------------------------------- |
+| `d8um.initialize(config)`   | Configure the singleton with a vector store adapter and embedding provider  |
+| `d8umCreate(config)`        | Create an independent instance (for multi-instance use cases)               |
+| `.addSource(source)`        | Register a data source (indexed, live, or cached)                           |
+| `.index(sourceId?, opts?)`  | Index one or all indexed sources - idempotent, incremental by default       |
+| `.query(text, opts?)`       | Fan-out query across all sources, merge, and rank                           |
 | `.assemble(results, opts?)` | Format results for prompt injection (`xml`, `markdown`, `plain`, or custom) |
-| `.destroy()` | Clean up connections |
+| `.destroy()`                | Clean up connections                                                        |
+
 
 ### Indexing Options
 
@@ -427,18 +452,20 @@ const response = await d8um.query('search text', {
 
 ## Packages
 
-| Package | Description | Status |
-|---------|-------------|--------|
-| [`@d8um/core`](packages/core) | Query engine, index engine, types, embedding providers | Alpha |
-| [`@d8um/hosted`](packages/hosted) | Hosted client SDK - zero infrastructure, just an API key | Alpha |
-| [`@d8um/adapter-pgvector`](packages/adapters/pgvector) | PostgreSQL + pgvector - driver-agnostic (bring your own Postgres client) | Alpha |
-| [`@d8um/adapter-sqlite-vec`](packages/adapters/sqlite-vec) | SQLite + sqlite-vec - zero-infra local development | Alpha |
-| [`@d8um/connector-domain`](packages/connectors/domain) | Recursively crawl a domain with BFS, respecting depth/page limits | Alpha |
-| [`@d8um/connector-url`](packages/connectors/url) | Scrape individual web pages, strip HTML to clean text | Alpha |
-| [`@d8um/connector-notion`](packages/connectors/notion) | Sync Notion pages and databases with block-aware chunking | Alpha |
-| [`@d8um/connector-slack`](packages/connectors/slack) | Sync Slack conversations, threads, and messages | Stub |
-| [`@d8um/connector-google-drive`](packages/connectors/google-drive) | Sync Google Drive documents, spreadsheets, and files | Stub |
-| [`@d8um/connector-fathom`](packages/connectors/fathom) | Sync Fathom call recordings and transcripts | Stub |
+
+| Package                                                            | Description                                                              | Status |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------ | ------ |
+| `[@d8um/core](packages/core)`                                      | Query engine, index engine, types, embedding providers                   | Alpha  |
+| `[@d8um/hosted](packages/hosted)`                                  | Hosted client SDK - zero infrastructure, just an API key                 | Alpha  |
+| `[@d8um/adapter-pgvector](packages/adapters/pgvector)`             | PostgreSQL + pgvector - driver-agnostic (bring your own Postgres client) | Alpha  |
+| `[@d8um/adapter-sqlite-vec](packages/adapters/sqlite-vec)`         | SQLite + sqlite-vec - zero-infra local development                       | Alpha  |
+| `[@d8um/connector-domain](packages/connectors/domain)`             | Recursively crawl a domain with BFS, respecting depth/page limits        | Alpha  |
+| `[@d8um/connector-url](packages/connectors/url)`                   | Scrape individual web pages, strip HTML to clean text                    | Alpha  |
+| `[@d8um/connector-notion](packages/connectors/notion)`             | Sync Notion pages and databases with block-aware chunking                | Alpha  |
+| `[@d8um/connector-slack](packages/connectors/slack)`               | Sync Slack conversations, threads, and messages                          | Stub   |
+| `[@d8um/connector-google-drive](packages/connectors/google-drive)` | Sync Google Drive documents, spreadsheets, and files                     | Stub   |
+| `[@d8um/connector-fathom](packages/connectors/fathom)`             | Sync Fathom call recordings and transcripts                              | Stub   |
+
 
 ### Build Your Own
 
@@ -601,23 +628,23 @@ The repo uses [Turborepo](https://turbo.build) for build orchestration and [pnpm
 
 ## Roadmap
 
-- [x] AI SDK embedding provider integration (40+ providers)
-- [x] Per-source embedding model support with automatic multi-model query fan-out
-- [x] Per-model vector table isolation
-- [x] Indexed query runner and QueryPlanner implementation
-- [x] Full pgvector adapter with hybrid search (iterative HNSW + tsvector RRF)
-- [x] Driver-agnostic pgvector adapter (bring your own Postgres client)
-- [x] URL connector with HTML stripping and link extraction
-- [x] Domain connector with BFS crawling, domain boundaries, and allow/deny patterns
-- [x] Hosted client SDK (`@d8um/hosted`) - zero-infra SaaS mode
-- [ ] Live and cached query runners
-- [ ] SQLite-vec adapter implementation
-- [ ] Notion connector with block tree traversal
-- [ ] Neighbor chunk joining in `assemble()`
-- [ ] Token budget trimming
-- [ ] Additional adapters (Qdrant, Pinecone, Weaviate)
-- [ ] Additional connectors (GitHub, Confluence, Google Drive, S3)
-- [ ] MCP server integration
+- AI SDK embedding provider integration (40+ providers)
+- Per-source embedding model support with automatic multi-model query fan-out
+- Per-model vector table isolation
+- Indexed query runner and QueryPlanner implementation
+- Full pgvector adapter with hybrid search (iterative HNSW + tsvector RRF)
+- Driver-agnostic pgvector adapter (bring your own Postgres client)
+- URL connector with HTML stripping and link extraction
+- Domain connector with BFS crawling, domain boundaries, and allow/deny patterns
+- Hosted client SDK (`@d8um/hosted`) - zero-infra SaaS mode
+- Live and cached query runners
+- SQLite-vec adapter implementation
+- Notion connector with block tree traversal
+- Neighbor chunk joining in `assemble()`
+- Token budget trimming
+- Additional adapters (Qdrant, Pinecone, Weaviate)
+- Additional connectors (GitHub, Confluence, Google Drive, S3)
+- MCP server integration
 
 ## Contributing
 
