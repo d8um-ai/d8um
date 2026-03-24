@@ -144,6 +144,9 @@ export class UrlConnector implements Connector<UrlMeta> {
     // Expand accordions and hidden content so turndown can see it
     expandHiddenContent($)
 
+    // Strip base64-encoded images (massive inline data URIs)
+    stripBase64Images($)
+
     // Strip decorative images (logos, icons, tracking pixels)
     stripDecorativeImages($)
 
@@ -187,6 +190,16 @@ export class UrlConnector implements Connector<UrlMeta> {
       replacement(_content: string, node: any) {
         return (node.textContent ?? '').trim()
       },
+    })
+
+    // Strip base64 images that survived cheerio preprocessing
+    turndown.addRule('skip-base64-images', {
+      filter(node: any) {
+        if (node.nodeName !== 'IMG') return false
+        const src = node.getAttribute?.('src') ?? ''
+        return src.startsWith('data:')
+      },
+      replacement() { return '' },
     })
 
     // Skip decorative images that survived cheerio preprocessing
@@ -284,6 +297,19 @@ function expandHiddenContent($: CheerioAPI): void {
       }
     })
   }
+}
+
+/** Remove images with base64 data URIs — these are massive inline strings that bloat content. */
+function stripBase64Images($: CheerioAPI): void {
+  $('img[src^="data:"]').remove()
+  // Also catch base64 in srcset and background-image inline styles
+  $('img[srcset*="data:"]').remove()
+  $('[style*="base64"]').each((_, el) => {
+    const style = $(el).attr('style') ?? ''
+    $(el).attr('style', style.replace(/background(-image)?\s*:[^;]*base64[^;]*;?/gi, ''))
+  })
+  // Remove <source> elements with data URIs (inside <picture>)
+  $('source[srcset^="data:"]').remove()
 }
 
 /** Remove decorative images: logos, icons, tracking pixels, social icons. */
