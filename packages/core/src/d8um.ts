@@ -8,6 +8,7 @@ import { aiSdkEmbeddingProvider, isAISDKEmbeddingInput } from './embedding/ai-sd
 import { OpenAIEmbedding } from './embedding/openai.js'
 import { CohereEmbedding } from './embedding/cohere.js'
 import { IndexEngine } from './index-engine/engine.js'
+import { QueryPlanner } from './query/planner.js'
 import { assemble as assembleResults } from './query/assemble.js'
 
 export interface D8umConfig {
@@ -177,12 +178,11 @@ export class D8um {
 
   async query(text: string, opts?: QueryOpts): Promise<QueryResponse> {
     await this.ensureInitialized()
-    // TODO: implement via QueryPlanner with model-aware fan-out
-    // 1. Filter sources by opts.sources
-    // 2. Group by embedding model via this.groupSourcesByModel()
-    // 3. For each model group: embed query, search, collect
-    // 4. Merge all results via ScoreMerger
-    throw new Error('Not implemented')
+    const planner = new QueryPlanner(this.adapter, this.sources, this.sourceEmbeddings)
+    return planner.execute(text, {
+      ...opts,
+      tenantId: opts?.tenantId ?? this.config.tenantId,
+    })
   }
 
   assemble(results: D8umResult[], opts?: AssembleOpts): string {

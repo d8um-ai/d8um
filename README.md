@@ -37,7 +37,7 @@ Most RAG setups devolve into bespoke plumbing - a different retrieval path for e
 | | Frameworks (LangChain, LlamaIndex) | **d8um** |
 |---|---|---|
 | **Philosophy** | Build *inside* the framework | Compose *alongside* your stack |
-| **Embeddings** | Baked-in provider wrappers | [Vercel AI SDK](https://ai-sdk.dev) ecosystem — 40+ providers, zero lock-in |
+| **Embeddings** | Baked-in provider wrappers | [Vercel AI SDK](https://ai-sdk.dev) ecosystem - 40+ providers, zero lock-in |
 | **Multi-model** | One model for everything | Per-source embedding models, merged at query time |
 | **Data sources** | Per-source wiring | Unified `Connector` interface |
 | **Retrieval** | Manual per-source | Fan-out + merge + re-rank in one call |
@@ -62,31 +62,31 @@ A single `ctx.query()` call fans out across all three modes in parallel, normali
                      ┌────────────────┼────────────────┐
                      ▼                ▼                ▼
               ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-              │   indexed   │  │    live      │  │   cached     │
-              │  (vector +  │  │  (connector  │  │  (TTL-based  │
-              │   keyword)  │  │   .query())  │  │   refresh)   │
+              │   indexed   │  │    live     │  │   cached    │
+              │  (vector +  │  │  (connector │  │  (TTL-based │
+              │   keyword)  │  │   .query()) │  │   refresh)  │
               └──────┬──────┘  └──────┬──────┘  └──────┬──────┘
                      │                │                │
       ┌──────────────┤                │                │
       ▼              ▼                │                │
- ┌─────────┐   ┌─────────┐           │                │
- │ Model A  │   │ Model B  │           │                │
- │ (OpenAI) │   │ (Cohere) │           │                │
- │ embed +  │   │ embed +  │           │                │
- │ search   │   │ search   │           │                │
- └────┬─────┘   └────┬─────┘           │                │
-      │              │                 │                │
-      └──────┬───────┴─────────────────┴────────────────┘
+ ┌──────────┐   ┌──────────┐          │                │
+ │ Model A  │   │ Model B  │          │                │
+ │ (OpenAI) │   │ (Cohere) │          │                │
+ │ embed +  │   │ embed +  │          │                │
+ │ search   │   │ search   │          │                │
+ └────┬─────┘   └────┬─────┘          │                │
+      │              │                │                │
+      └──────┬───────┴────────────────┴────────────────┘
              ▼
     ┌────────────────┐
-    │  Score Merger   │
-    │  (normalize +   │
-    │   RRF + dedup)  │
+    │  Score Merger  │
+    │  (normalize +  │
+    │   RRF + dedup) │
     └────────┬───────┘
              ▼
     ┌────────────────┐
     │   assemble()   │
-    │  (xml/md/plain) │
+    │  (xml/md/plain)│
     └────────────────┘
              ▼
        Prompt-ready
@@ -285,7 +285,7 @@ ctx.addSource({
 ├── embedding/
 │   ├── provider.ts     EmbeddingProvider interface
 │   └── ai-sdk-adapter  Wraps any AI SDK model via structural typing (zero deps)
-├── IndexEngine         Chunk, embed, store — model-aware, idempotent
+├── IndexEngine         Chunk, embed, store - model-aware, idempotent
 ├── QueryPlanner        Multi-model fan-out, timeout, error handling
 ├── ScoreMerger         Normalize + RRF + dedup across modes and models
 ├── assemble()          Format results for prompt injection
@@ -307,9 +307,9 @@ ctx.addSource({
 
 ## Embedding Providers
 
-d8um uses the [Vercel AI SDK](https://ai-sdk.dev) provider ecosystem for embeddings. Install the provider package you need, pass the model — done. No wrapper code, no API key plumbing, no HTTP client to maintain.
+d8um uses the [Vercel AI SDK](https://ai-sdk.dev) provider ecosystem for embeddings. Install the provider package you need, pass the model - done. No wrapper code, no API key plumbing, no HTTP client to maintain.
 
-> **Zero new dependencies.** `@d8um/core` doesn't import `@ai-sdk/provider` or any provider package. It uses [structural typing](https://www.typescriptlang.org/docs/handbook/type-compatibility.html) — any object that looks like an AI SDK embedding model works, whether it comes from `@ai-sdk/openai`, a custom implementation, or a test mock.
+> **Zero new dependencies.** `@d8um/core` doesn't import `@ai-sdk/provider` or any provider package. It uses [structural typing](https://www.typescriptlang.org/docs/handbook/type-compatibility.html) - any object that looks like an AI SDK embedding model works, whether it comes from `@ai-sdk/openai`, a custom implementation, or a test mock.
 
 ### Global default + per-source overrides
 
@@ -358,20 +358,20 @@ When you call `ctx.query()`, d8um:
 3. Searches each model's dedicated vector table
 4. Merges all results via RRF across models and modes
 
-You don't think about which model applies to which source — d8um handles the fan-out and merge.
+You don't think about which model applies to which source - d8um handles the fan-out and merge.
 
 ### Per-model table isolation
 
 Each embedding model gets its own vector table (e.g., `d8um_chunks_openai_text_embedding_3_small`, `d8um_chunks_cohere_embed_english_v3_0`). This means:
 
-- No dimension conflicts — each table has the correct `VECTOR(n)` column
-- Clean HNSW indexes per model — no mixed vector spaces
-- Safe model migration — switching a source's model triggers automatic re-embedding, with old chunks cleaned up
+- No dimension conflicts - each table has the correct `VECTOR(n)` column
+- Clean HNSW indexes per model - no mixed vector spaces
+- Safe model migration - switching a source's model triggers automatic re-embedding, with old chunks cleaned up
 - Works identically across all adapters (pgvector, sqlite-vec, etc.)
 
 ### Custom embedding providers
 
-For full control, pass a raw `EmbeddingProvider` object — no AI SDK required:
+For full control, pass a raw `EmbeddingProvider` object - no AI SDK required:
 
 ```ts
 const ctx = new D8um({
