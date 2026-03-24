@@ -97,24 +97,38 @@ A single `d8um.query()` call fans out across all three modes in parallel, normal
 
 ### Option A: Hosted (zero infrastructure)
 
+#### 1) Install
+
 ```bash
 npm install @d8um/core @d8um/hosted
 ```
 
+#### 2) Initialize
+
 ```ts
 import { d8umHosted } from '@d8um/hosted'
 
+// Initialize d8um using the d8um api key
 const d8um = d8umHosted({ apiKey: process.env.D8UM_API_KEY! })
+```
 
-// 1. Create a source you send documents to - FAQ questions and answers
+#### 3) Create a Source
+
+```ts
+// Create a source - in this case, a basic source you send documents to - FAQ questions and answers
 d8um.addSource({
   id: 'faq',
   mode: 'indexed',
   index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] },
 })
+```
 
-// 2. Send documents to your FAQ source - d8um handles chunking and embedding
+#### 4) Ingest Documents
+
+```ts
+// Send documents to your FAQ source - d8um handles chunking and embedding
 //    document id is optional - d8um generates an UUID id if none is sent, and automatically deduplicates by content hash
+
 await d8um.ingest('faq', {
   title: 'How do I set up SSO?',
   content: 'To enable SSO, navigate to Settings > Authentication and select your identity provider. We support SAML 2.0 and OpenID Connect.',
@@ -129,13 +143,17 @@ await d8um.ingest('faq', {
   metadata: {},
 })
 
-// 3. Check source statuses - FAQ is ready
+// Optionally check source statuses because we're thorough?
 const sources = await d8um.listSources()
 // [
 //   { id: 'faq', status: 'ready', documentCount: 2 }
 // ]
+```
 
-// 4. Query - fans out across faq (and any other sources), merges, re-ranks
+#### 5) Query
+
+```ts
+// Query - fans out across faq (and any other sources), merges, re-ranks
 const response = await d8um.query('how do I configure SSO?')
 
 // response.results contains ranked chunks from your sources:
@@ -147,8 +165,12 @@ const response = await d8um.query('how do I configure SSO?')
 //   },
 //   ...
 // ]
+```
 
-// 5. Assemble ranked chunks into structured LLM context
+#### 6) Format results (optional)
+
+```ts
+// Assemble ranked chunks into structured LLM context
 const xml = d8um.assemble(response.results) // defaults to XML format
 // <context>
 // <source id="faq" title="How do I set up SSO?">
@@ -170,40 +192,47 @@ const md = d8um.assemble(response.results, { format: 'markdown' })
 
 ### Option B: Self-Hosted (full control)
 
+#### 1) Install
+
 ```bash
 # Core SDK
 npm install @d8um/core
 
-# Pick an embedding provider (any AI SDK provider works)
+# Pick an embedding provider
 npm install @ai-sdk/openai           
 # npm install @ai-sdk/anthropic      
 # npm install @ai-sdk/cohere          
-# ... or any of 40+ AI SDK providers
+# ... or any other pre-built, or custom embedding providers
 
 # Pick a vector store adapter
 npm install @d8um/adapter-pgvector      # Production - Postgres + pgvector
 # npm install @d8um/adapter-sqlite-vec  # Local dev - zero external dependencies
+# ... or any other pre-built, or custom vector store adapters
 
-# Pick connectors
-npm install @d8um/connector-domain          # Recursively crawl a domain/website
-npm install @d8um/connector-url             # Scrape individual web pages
-npm install @d8um/connector-slack           # Sync Slack conversations
-npm install @d8um/connector-google-drive    # Sync Google Drive documents and files
-npm install @d8um/connector-fathom          # Sync Fathom call transcripts
-npm install @d8um/connector-notion          # Sync Notion pages and databases
+# Pick connectors (optional)
+#npm install @d8um/connector-domain          # Recursively crawl a domain/website
+#npm install @d8um/connector-url             # Scrape individual web pages
+#npm install @d8um/connector-slack           # Sync Slack conversations
+#npm install @d8um/connector-google-drive    # Sync Google Drive documents and files
+#npm install @d8um/connector-fathom          # Sync Fathom call transcripts
+#npm install @d8um/connector-notion          # Sync Notion pages and databases
 # ... or any other pre-built, or custom connectors
 ```
 
-### Define sources, index, query
+#### 2) Initialize
 
 ```ts
+// d8um specific import stuff
 import { d8um } from '@d8um/core'
 import { PgVectorAdapter } from '@d8um/adapter-pgvector'
-import { DomainConnector } from '@d8um/connector-domain'
+
+// Then, these imports here will be specific to your app:
+// i.e. your embedding provider
 import { openai } from '@ai-sdk/openai'
+// i.e. your vector database provider
 import { neon } from '@neondatabase/serverless'
 
-// 1. Initialize d8um
+// 1) Initialize d8um — point it at your embedding model and your database
 d8um.initialize({
   embedding: {
     model: openai.embedding('text-embedding-3-small'),
@@ -212,23 +241,49 @@ d8um.initialize({
   vectorStore: new PgVectorAdapter({ sql: neon(process.env.DATABASE_URL!) }),
 })
 
-// 2. Create a source you send documents to - "faq" for Q&A pairs
+// Under the hood, d8um creates these tables in your database:
+//
+//   d8um_documents     — stores document records (id, source_id, title, url, content_hash, status, ...)
+//   d8um_hashes        — tracks content hashes for deduplication and incremental sync
+//   d8um_chunks_registry — registry of which embedding models have been used
+
+```
+
+#### 3) Create a Source
+
+```ts
+// Create a source - in this case, a basic source you send documents to - FAQ questions and answers
 d8um.addSource({
   id: 'faq',
   mode: 'indexed',
   index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] },
 })
 
-// 3. Create a source that d8um crawls - your docs site
-d8um.addSource({
-  id: 'docs',
-  connector: new DomainConnector({ startUrl: 'https://docs.acme.com', maxPages: 200 }),
-  mode: 'indexed',
-  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['url'] },
-})
+// Under the hood, d8um creates a per-model chunks table for the embedding model:
+//
+//   d8um_chunks_openai_text_embedding_3_small (
+//     id              UUID PRIMARY KEY,
+//     source_id       TEXT,
+//     document_id     UUID REFERENCES d8um_documents,
+//     content         TEXT,
+//     embedding       VECTOR(1536),          -- pgvector column
+//     chunk_index     INTEGER,
+//     total_chunks    INTEGER,
+//     metadata        JSONB,
+//     search_vector   TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
+//     ...
+//   )
+//
+// Each embedding model gets its own table — so if you later switch models or use
+// different models per source, d8um isolates them automatically.
+```
 
-// 4. Send documents to your FAQ source - d8um handles chunking and embedding
-//    No id needed - d8um generates one, and deduplicates by content hash
+#### 4) Ingest Documents
+
+```ts
+// Send documents to your FAQ source - d8um handles chunking and embedding under the hood
+//    document id is optional - d8um generates an UUID id if none is sent, and automatically deduplicates by content hash
+
 await d8um.ingest('faq', {
   title: 'How do I set up SSO?',
   content: 'To enable SSO, navigate to Settings > Authentication and select your identity provider. We support SAML 2.0 and OpenID Connect.',
@@ -243,27 +298,75 @@ await d8um.ingest('faq', {
   metadata: {},
 })
 
-// 5. Index the docs site (FAQ docs were already indexed on ingest)
-await d8um.index('docs')
+// Under the hood, for each document d8um:
+//   1. Generates a UUID (since no id was provided)
+//   2. Hashes the content for deduplication (deduplicateBy: ['content'])
+//   3. Checks d8um_hashes — skips if content unchanged (idempotent re-ingestion)
+//   4. Inserts a record into d8um_documents (title, url, content_hash, status, ...)
+//   5. Chunks the content based on chunkSize/chunkOverlap
+//   6. Calls openai.embedding() to generate a 1536-dim vector for each chunk
+//   7. Bulk inserts chunks + embeddings:
+//
+//        INSERT INTO d8um_chunks_openai_text_embedding_3_small
+//          (source_id, document_id, content, embedding, chunk_index, total_chunks, metadata, ...)
+//        SELECT * FROM unnest($1::text[], $2::uuid[], ..., $6::vector[], ...)
+//        ON CONFLICT (idempotency_key, chunk_index, source_id) DO UPDATE SET ...
+//
+//   8. Updates d8um_hashes so the next ingest() call can skip unchanged docs
+```
 
-// 6. Query - fans out across FAQ + docs, merges, re-ranks
+#### 5) Query
+
+```ts
+// Query - fans out across faq (and any other sources), merges, re-ranks
 const response = await d8um.query('how do I configure SSO?')
 
-// response.results contains ranked chunks from both sources:
+// response.results contains ranked chunks:
 // [
 //   {
 //     content: 'To enable SSO, navigate to Settings > Authentication...',
 //     score: 0.9142,
 //     source: { id: 'faq', title: 'How do I set up SSO?' },
 //   },
-//   {
-//     content: 'SSO Configuration Guide: Step-by-step instructions for...',
-//     score: 0.8731,
-//     source: { id: 'docs', title: 'SSO Configuration', url: 'https://docs.acme.com/sso' },
-//   },
+//   ...
 // ]
 
-// 7. Assemble ranked chunks into structured LLM context
+// Under the hood, d8um:
+//   1. Groups your sources by embedding model. If you have sources using different
+//      models (e.g. openai text-embedding-3-small for docs, cohere embed-v4 for
+//      support tickets), d8um handles each model separately — embedding your query
+//      with each model, searching each model's table, then merging all results
+//      together with RRF re-ranking. You just call query() once and get back a
+//      single ranked result set. The multi-model complexity is invisible to you.
+//   2. Embeds the query text using each model for the sources you're querying
+//   3. Runs a hybrid search per model, combining vector similarity + full-text keyword matching:
+//
+//        WITH vector_ranked AS (
+//          SELECT *, 1 - (embedding <=> $1::vector) AS similarity,
+//                 ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS vrank
+//          FROM d8um_chunks_openai_text_embedding_3_small
+//          WHERE source_id = 'faq'
+//          LIMIT 60
+//        ),
+//        keyword_ranked AS (
+//          SELECT *, ts_rank(search_vector, websearch_to_tsquery('english', $2)) AS kw_score,
+//                 ROW_NUMBER() OVER (ORDER BY ts_rank(...) DESC) AS krank
+//          FROM d8um_chunks_openai_text_embedding_3_small
+//          WHERE search_vector @@ websearch_to_tsquery('english', $2)
+//          LIMIT 60
+//        )
+//        SELECT *, (1.0/(60 + vrank) + 1.0/(60 + krank)) AS rrf_score
+//        FROM (vector_ranked FULL OUTER JOIN keyword_ranked ...)
+//        ORDER BY rrf_score DESC LIMIT 10
+//
+//   3. Maps results back to d8umResult objects with scores, source info, and chunk positions
+
+```
+
+#### 6) Format results (optional)
+
+```ts
+// Assemble ranked chunks into structured LLM context
 const xml = d8um.assemble(response.results) // defaults to XML
 // <context>
 // <source id="faq" title="How do I set up SSO?">
@@ -271,42 +374,16 @@ const xml = d8um.assemble(response.results) // defaults to XML
 //     To enable SSO, navigate to Settings > Authentication...
 //   </passage>
 // </source>
-// <source id="docs" title="SSO Configuration" url="https://docs.acme.com/sso">
-//   <passage score="0.8731">
-//     SSO Configuration Guide: Step-by-step instructions for...
-//   </passage>
-// </source>
+// ...
 // </context>
 
+// Or you can assemble into markdown
 const md = d8um.assemble(response.results, { format: 'markdown' })
 // # How do I set up SSO?
 // To enable SSO, navigate to Settings > Authentication...
 //
 // ---
-//
-// # (SSO Configuration)[https://docs.acme.com/sso]
-// SSO Configuration Guide: Step-by-step instructions for...
-```
-
-### Output
-
-`assemble()` produces structured context ready to drop into any prompt:
-
-```xml
-<context>
-<source id="docs" title="SSO Configuration Guide" url="https://docs.acme.com/sso">
-  <passage score="0.9142">
-    To enable SSO, navigate to Settings > Authentication and select your
-    identity provider. d8um supports SAML 2.0 and OpenID Connect...
-  </passage>
-</source>
-<source id="wiki" title="SSO Troubleshooting" url="https://notion.so/acme/sso-troubleshooting">
-  <passage score="0.8731">
-    If users see a "redirect loop" error after enabling SSO, verify that
-    the callback URL matches exactly...
-  </passage>
-</source>
-</context>
+// ...
 ```
 
 ## API Overview
