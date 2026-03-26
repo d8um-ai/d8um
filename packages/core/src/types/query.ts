@@ -61,6 +61,11 @@ export interface QueryOpts {
   } | undefined
 
   onSourceError?: 'omit' | 'warn' | 'throw' | undefined
+
+  /** Point-in-time query: only return results valid at this timestamp */
+  temporalAt?: Date | undefined
+  /** Include invalidated/expired results. Default: false */
+  includeInvalidated?: boolean | undefined
 }
 
 export interface QueryResponse {

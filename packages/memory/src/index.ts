@@ -34,3 +34,22 @@ export {
 // Working memory
 export { WorkingMemory } from './working-memory.js'
 export type { WorkingMemoryItem, WorkingMemoryConfig } from './working-memory.js'
+
+// Extraction
+export type { LLMProvider } from './extraction/index.js'
+export { MemoryExtractor } from './extraction/index.js'
+export type {
+  ConversationMessage,
+  MemoryOperationType,
+  MemoryOperation,
+  CandidateFact,
+  ExtractionResult,
+  ExtractionConfig,
+} from './extraction/index.js'
+export { EntityResolver } from './extraction/index.js'
+export type { EntityResolverConfig } from './extraction/index.js'
+export { InvalidationEngine } from './extraction/index.js'
+export type { InvalidationConfig, Contradiction } from './extraction/index.js'
+
+// Jobs
+export { conversationIngestJob } from './jobs/conversation-ingest.js'
