@@ -22,7 +22,7 @@ export function assemble(results: d8umResult[], opts: AssembleOpts = {}): string
   }
 }
 
-function assembleXml(results: d8umResult[], _opts: { citeSources: boolean }): string {
+export function assembleXml(results: d8umResult[], _opts: { citeSources: boolean }): string {
   const sources = groupBySourceId(results)
   const parts = Object.entries(sources).map(([sourceId, chunks]) => {
     const first = chunks[0]!
@@ -42,7 +42,7 @@ function assembleXml(results: d8umResult[], _opts: { citeSources: boolean }): st
   return `<context>\n${parts.join('\n')}\n</context>`
 }
 
-function assembleMarkdown(results: d8umResult[], _opts: { citeSources: boolean }): string {
+export function assembleMarkdown(results: d8umResult[], _opts: { citeSources: boolean }): string {
   return results.map(r => {
     const title = r.source.title
     const url = r.source.url
@@ -51,11 +51,11 @@ function assembleMarkdown(results: d8umResult[], _opts: { citeSources: boolean }
   }).join('\n\n---\n\n')
 }
 
-function assemblePlain(results: d8umResult[]): string {
+export function assemblePlain(results: d8umResult[]): string {
   return results.map(r => r.content).join('\n\n')
 }
 
-function groupBySourceId(results: d8umResult[]): Record<string, d8umResult[]> {
+export function groupBySourceId(results: d8umResult[]): Record<string, d8umResult[]> {
   return results.reduce((acc, r) => {
     const key = r.source.id
     ;(acc[key] = acc[key] ?? []).push(r)
@@ -63,7 +63,7 @@ function groupBySourceId(results: d8umResult[]): Record<string, d8umResult[]> {
   }, {} as Record<string, d8umResult[]>)
 }
 
-function escapeXml(s: string): string {
+export function escapeXml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

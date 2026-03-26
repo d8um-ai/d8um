@@ -53,3 +53,7 @@ export type { InvalidationConfig, Contradiction } from './extraction/index.js'
 
 // Jobs
 export { conversationIngestJob } from './jobs/conversation-ingest.js'
+
+// Unified API
+export { D8umMemory } from './d8um-memory.js'
+export type { D8umMemoryConfig } from './d8um-memory.js'

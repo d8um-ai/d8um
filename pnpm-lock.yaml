@@ -293,6 +293,19 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
+  packages/mcp-server:
+    dependencies:
+      '@d8um/memory':
+        specifier: workspace:*
+        version: link:../memory
+    devDependencies:
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.0.0
+        version: 1.6.1(@types/node@20.19.37)
+
   packages/memory:
     dependencies:
       '@d8um/core':
@@ -311,6 +324,19 @@ importers:
       '@d8um/core':
         specifier: workspace:*
         version: link:../core
+      '@d8um/memory':
+        specifier: workspace:*
+        version: link:../memory
+    devDependencies:
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+      vitest:
+        specifier: ^1.0.0
+        version: 1.6.1(@types/node@20.19.37)
+
+  packages/vercel-ai-provider:
+    dependencies:
       '@d8um/memory':
         specifier: workspace:*
         version: link:../memory
