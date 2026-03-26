@@ -15,16 +15,16 @@ import { d8umHosted } from '@d8um/hosted'
 
 const ctx = d8umHosted({ apiKey: process.env.D8UM_API_KEY! })
 
-const source = ctx.sources.create({ name: 'Knowledge Base' })
+const bucket = ctx.buckets.create({ name: 'Knowledge Base' })
 
-await ctx.ingest(source.id, { id: 'doc-1', content: 'Your content here' }, {})
+await ctx.ingest(bucket.id, { id: 'doc-1', content: 'Your content here' }, {})
 
 const { results } = await ctx.query('How does billing work?')
 const context = ctx.assemble(results)
 
 // Hosted-only: async document CRUD
-const docs = await ctx.listDocuments({ sourceId: source.id })
-await ctx.deleteDocuments({ sourceId: source.id, status: 'stale' })
+const docs = await ctx.listDocuments({ bucketId: bucket.id })
+await ctx.deleteDocuments({ bucketId: bucket.id, status: 'stale' })
 ```
 
 ## API

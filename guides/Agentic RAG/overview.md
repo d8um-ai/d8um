@@ -197,7 +197,7 @@ The `query()` method accepts a rich set of options:
 ```ts
 const response = await d8um.query('search text', {
   count: 10,                              // max results
-  sources: ['docs', 'wiki'],              // filter to specific sources
+  buckets: ['docs', 'wiki'],              // filter to specific buckets
   tenantId: 'acme',                       // multi-tenant isolation
   mergeStrategy: 'rrf',                   // 'rrf', 'linear', or 'custom'
   mergeWeights: {

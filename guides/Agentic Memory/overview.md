@@ -25,7 +25,7 @@ d8um's memory system draws on established models from cognitive science and neur
 A bounded in-memory buffer inspired by cognitive science's capacity limits. Items are stored with a priority score and evicted by lowest priority first, then oldest first, when capacity is exceeded.
 
 ```ts
-const memory = new d8umMemory({ memoryStore, embedding, llm, scope: { userId: 'alice' } })
+const memory = new d8umMemory({ memoryStore, embedding, llm })
 
 // Add items to working memory with priority
 memory.working.add('User is debugging a PostgreSQL connection issue', 'system', 5)
@@ -153,7 +153,7 @@ Edge invalidation follows Graphiti's approach: when a new fact contradicts an ex
 
 ## Consolidation, Decay, and Forgetting
 
-The `@d8um/consolidation` package provides lifecycle management:
+The `@d8um/graph` package provides lifecycle management:
 
 - **Consolidation** promotes episodic memories to semantic facts when patterns emerge from repeated observations
 - **Decay** reduces the effective priority of memories based on access frequency, age, and importance
@@ -170,7 +170,7 @@ d8um memory supports two execution modes that share the same underlying engines:
 Direct method calls for immediate results:
 
 ```ts
-const memory = new d8umMemory({ memoryStore, embedding, llm, scope: { userId: 'alice' } })
+const memory = new d8umMemory({ memoryStore, embedding, llm })
 
 await memory.remember('Prefers dark mode interfaces')
 const facts = await memory.recallFacts('UI preferences')
@@ -183,7 +183,7 @@ const context = await memory.assembleContext('user preferences')
 Schedulable, automated memory operations:
 
 ```ts
-import { registerConsolidationJobs } from '@d8um/consolidation'
+import { registerConsolidationJobs } from '@d8um/graph'
 registerConsolidationJobs()
 
 // Schedule nightly consolidation
@@ -203,7 +203,7 @@ The job system uses the same `JobTypeDefinition` interface as d8um's retrieval j
 Memory is scoped across five levels for isolation and sharing:
 
 ```ts
-const scope: MemoryScope = {
+const identity: d8umIdentity = {
   tenantId: 'acme-corp',      // organization-level isolation
   groupId: 'team-alpha',      // shared team/channel/project memory
   userId: 'alice',            // individual memory owner

@@ -60,4 +60,4 @@ Pure structural typing -- no `ai` or `@ai-sdk/*` imports needed.
 ## Related
 
 - [d8um main repo](../../README.md)
-- [@d8um/memory](../memory/README.md)
+- [@d8um/graph](../graph/README.md)

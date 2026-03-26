@@ -64,7 +64,7 @@ d8um creates the following tables for the local embedding model:
 d8um_chunks_local_fast_bge_small_en_v1_5 (
   chunk_rowid     INTEGER PRIMARY KEY AUTOINCREMENT,
   id              TEXT,
-  source_id       TEXT,
+  bucket_id       TEXT,
   document_id     TEXT,
   content         TEXT,
   embedding_model TEXT,

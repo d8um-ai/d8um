@@ -62,7 +62,7 @@ When you initialize, d8um creates these tables in your database:
 
 | Table | Purpose |
 |-------|---------|
-| `d8um_documents` | Stores document records (id, source_id, title, url, content_hash, status, ...) |
+| `d8um_documents` | Stores document records (id, bucket_id, title, url, content_hash, status, ...) |
 | `d8um_hashes` | Tracks content hashes for deduplication and incremental sync |
 | `d8um_chunks_registry` | Registry of which embedding models have been used |
 
@@ -84,7 +84,7 @@ d8um creates a per-model chunks table for the embedding model:
 ```sql
 d8um_chunks_openai_text_embedding_3_small (
   id              UUID PRIMARY KEY,
-  source_id       TEXT,
+  bucket_id       TEXT,
   document_id     UUID REFERENCES d8um_documents,
   content         TEXT,
   embedding       VECTOR(1536),          -- pgvector column
@@ -133,9 +133,9 @@ For each document, d8um:
 
 ```sql
 INSERT INTO d8um_chunks_openai_text_embedding_3_small
-  (source_id, document_id, content, embedding, chunk_index, total_chunks, metadata, ...)
+  (bucket_id, document_id, content, embedding, chunk_index, total_chunks, metadata, ...)
 SELECT * FROM unnest($1::text[], $2::uuid[], ..., $6::vector[], ...)
-ON CONFLICT (idempotency_key, chunk_index, source_id) DO UPDATE SET ...
+ON CONFLICT (idempotency_key, chunk_index, bucket_id) DO UPDATE SET ...
 ```
 
 8. Updates `d8um_hashes` so the next `ingest()` call can skip unchanged docs
@@ -172,7 +172,7 @@ WITH vector_ranked AS (
   SELECT *, 1 - (embedding <=> $1::vector) AS similarity,
          ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS vrank
   FROM d8um_chunks_openai_text_embedding_3_small
-  WHERE source_id = 'faq'
+  WHERE bucket_id = 'faq'
   LIMIT 60
 ),
 keyword_ranked AS (

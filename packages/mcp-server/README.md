@@ -47,4 +47,4 @@ const result = await executeTool(memory, 'd8um_remember', {
 ## Related
 
 - [d8um main repo](../../README.md)
-- [@d8um/memory](../memory/README.md)
+- [@d8um/graph](../graph/README.md)
