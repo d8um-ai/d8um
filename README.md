@@ -21,855 +21,161 @@
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="Alpha" />
 </p>
 
-**d8um** (pronounced "datum") is a TypeScript SDK and open protocol for supplying context to LLMs. Define your data sources once - websites, documents, integrations, APIs, databases - and query all of them with a single call. d8um handles chunking, embedding, storage, retrieval, score merging, and prompt assembly so you can focus on building your application.
-
-```ts
-// Register a data source
-d8um.addSource({
-  id: 'faq',
-  mode: 'indexed',
-  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] },
-})
-
-// Ingest document(s) into your source
-await d8um.ingest('faq', {
-  title: 'How do I set up SSO?',
-  content: 'To enable SSO, navigate to Settings > Authentication and select your identity provider. We support SAML 2.0 and OpenID Connect.'
-})
-
-// Fan-out query across all sources, merge, and rank
-const response = await d8um.query('how do I configure SSO?', { count: 8 })
-// response.results contains ranked chunks from your sources:
-// [
-//   {
-//     content: 'To enable SSO, navigate to Settings > Authentication...',
-//     score: 0.9142,
-//     source: { id: 'faq', title: 'How do I set up SSO?' },
-//   },
-//   ...
-// ]
-
-// Assemble the results as LLM prompt context
-const context = d8um.assemble(response.results, { format: 'xml' })
-// context contains a string of formatted response.results:
-// <context>
-// <source id="faq" title="How do I set up SSO?">
-//   <passage score="0.9142">
-//     To enable SSO, navigate to Settings > Authentication...
-//   </passage>
-// </source>
-// ...
-// </context>
-```
+**d8um** (pronounced "datum") is a TypeScript SDK that gives AI agents both **retrieval and memory** in a single composable package. Ingest any data source, search with hybrid retrieval, and give your agent cognitive memory — episodic recall, semantic knowledge, procedural learning — without Python, without a graph database, and without stitching together 6 different tools.
 
 ## Why d8um?
 
-Most RAG setups devolve into bespoke plumbing - a different retrieval path for each data source, ad-hoc score normalization, and fragile prompt formatting. d8um replaces that with a single, composable interface.
+Building a memory-capable agent in TypeScript today means cobbling together a vector DB, a graph DB, an embedding API, a caching layer, consolidation logic, and a conversation manager. The leading frameworks (Graphiti, Mem0, MemOS) are Python-first. **TypeScript has nothing equivalent.**
 
+d8um closes that gap:
 
-|                  | Frameworks (LangChain, LlamaIndex) | **d8um**                                                                    |
-| ---------------- | ---------------------------------- | --------------------------------------------------------------------------- |
-| **Philosophy**   | Build *inside* the framework       | Compose *alongside* your stack                                              |
-| **Embeddings**   | Baked-in provider wrappers         | [Vercel AI SDK](https://ai-sdk.dev) ecosystem - 40+ providers, zero lock-in |
-| **Multi-model**  | One model for everything           | Per-source embedding models, merged at query time                           |
-| **Data sources** | Per-source wiring                  | Unified `JobTypeDefinition` interface                                       |
-| **Retrieval**    | Manual per-source                  | Fan-out + merge + re-rank in one call                                       |
-| **Storage**      | Tightly coupled                    | Swappable adapters (Postgres, SQLite, ...)                                  |
-| **Output**       | Raw results                        | Prompt-ready context (`xml`, `markdown`, `plain`)                           |
-
-
-## How It Works
-
-d8um organizes every data source into one of three modes:
-
-
-| Mode          | Behavior                                                                                 | Best for                             |
-| ------------- | ---------------------------------------------------------------------------------------- | ------------------------------------ |
-| `**indexed`** | Content is chunked, embedded, and stored. Semantic search runs against the vector store. | Docs, wikis, knowledge bases         |
-| `**live**`    | Fetched at query time. Never stored - always fresh.                                      | APIs, search engines, real-time data |
-| `**cached**`  | Fetched once, stored until a TTL expires, then re-fetched.                               | Slowly-changing reference data       |
-
-
-A single `d8um.query()` call fans out across all three modes in parallel, normalizes scores, merges results via [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf), and returns a unified ranked result set.
-
-```
-                        d8um.query("how do I configure SSO?")
-                                      │
-                     ┌────────────────┼────────────────┐
-                     ▼                ▼                ▼
-              ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-              │   indexed   │  │    live     │  │   cached    │
-              │  (vector +  │  │  (connector │  │  (TTL-based │
-              │   keyword)  │  │   .query()) │  │   refresh)  │
-              └──────┬──────┘  └──────┬──────┘  └──────┬──────┘
-                     │                │                │
-      ┌──────────────┤                │                │
-      ▼              ▼                │                │
- ┌──────────┐   ┌──────────┐          │                │
- │ Model A  │   │ Model B  │          │                │
- │ (OpenAI) │   │ (Cohere) │          │                │
- │ embed +  │   │ embed +  │          │                │
- │ search   │   │ search   │          │                │
- └────┬─────┘   └────┬─────┘          │                │
-      │              │                │                │
-      └──────┬───────┴────────────────┴────────────────┘
-             ▼
-    ┌────────────────┐
-    │  Score Merger  │
-    │  (normalize +  │
-    │   RRF + dedup) │
-    └────────┬───────┘
-             ▼
-    ┌────────────────┐
-    │   assemble()   │
-    │  (xml/md/plain)│
-    └────────────────┘
-             ▼
-       Prompt-ready
-         context
-```
+- **Retrieval + memory in one SDK** — not two separate tools bolted together
+- **TypeScript-native** — no Python runtime, no managed service, no vendor lock-in
+- **Lightweight infrastructure** — runs on pgvector or SQLite. No Neo4j, no Redis, no Qdrant
+- **Composable** — works alongside your stack, not inside a framework
+- **Per-source embedding models** — different models for different content, merged at query time via RRF
+- **Job system** — schedule memory consolidation, decay, and extraction as recurring tasks
 
 ## Quick Start
 
-### Option A: Hosted (zero infrastructure)
-
-#### 1) Install
-
 ```bash
-npm install @d8um/core @d8um/hosted
+npm install @d8um/core @d8um/adapter-sqlite-vec @d8um/embedding-local
 ```
-
-#### 2) Initialize
-
-```ts
-import { d8umHosted } from '@d8um/hosted'
-
-// Initialize d8um using the d8um api key
-const d8um = d8umHosted({ apiKey: process.env.D8UM_API_KEY! })
-```
-
-#### 3) Create a Source
-
-```ts
-// Create a source - in this case, a basic source you send documents to - FAQ questions and answers
-d8um.addSource({
-  id: 'faq',
-  mode: 'indexed',
-  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] },
-})
-```
-
-#### 4) Ingest Documents
-
-```ts
-// Send documents to your FAQ source - d8um handles chunking and embedding
-//    document id is optional - d8um generates an UUID id if none is sent, and automatically deduplicates by content hash
-
-await d8um.ingest('faq', {
-  title: 'How do I set up SSO?',
-  content: 'To enable SSO, navigate to Settings > Authentication and select your identity provider. We support SAML 2.0 and OpenID Connect.',
-  updatedAt: new Date(),
-  metadata: {},
-})
-
-await d8um.ingest('faq', {
-  title: 'How do I reset my password?',
-  content: 'Click "Forgot password" on the login page. You will receive a reset link via email within 5 minutes.',
-  updatedAt: new Date(),
-  metadata: {},
-})
-
-// Optionally check source statuses because we're thorough?
-const sources = await d8um.listSources()
-// [
-//   { id: 'faq', status: 'ready', documentCount: 2 }
-// ]
-```
-
-#### 5) Query
-
-```ts
-// Query - fans out across faq (and any other sources), merges, re-ranks
-const response = await d8um.query('how do I configure SSO?')
-
-// response.results contains ranked chunks from your sources:
-// [
-//   {
-//     content: 'To enable SSO, navigate to Settings > Authentication...',
-//     score: 0.9142,
-//     source: { id: 'faq', title: 'How do I set up SSO?' },
-//   },
-//   ...
-// ]
-```
-
-#### 6) Format results (optional)
-
-```ts
-// Assemble ranked chunks into structured LLM context
-const xml = d8um.assemble(response.results) // defaults to XML format
-// <context>
-// <source id="faq" title="How do I set up SSO?">
-//   <passage score="0.9142">
-//     To enable SSO, navigate to Settings > Authentication...
-//   </passage>
-// </source>
-// ...
-// </context>
-
-// Also available as markdown:
-const md = d8um.assemble(response.results, { format: 'markdown' })
-// # How do I set up SSO?
-// To enable SSO, navigate to Settings > Authentication...
-//
-// ---
-//...
-```
-
-### Option B: Self-Hosted (full control)
-
-#### 1) Install
-
-```bash
-# Core SDK
-npm install @d8um/core
-
-# Pick an embedding provider
-npm install @ai-sdk/openai           
-# npm install @ai-sdk/anthropic      
-# npm install @ai-sdk/cohere          
-# ... or any other pre-built, or custom embedding providers
-
-# Pick a vector store adapter
-npm install @d8um/adapter-pgvector      # Production - Postgres + pgvector
-# npm install @d8um/adapter-sqlite-vec  # Local dev - zero external dependencies
-# ... or any other pre-built, or custom vector store adapters
-
-# Pick integrations (optional — 3rd party connectors)
-#npm install @d8um/integration-core          # Shared integration types
-#npm install @d8um/integration-slack         # Slack messages & channels
-#npm install @d8um/integration-google-drive  # Google Drive files
-#npm install @d8um/integration-hubspot       # HubSpot CRM contacts, companies, deals
-# ... or any other integration package
-```
-
-#### 2) Initialize
-
-```ts
-// d8um specific import stuff
-import { d8um } from '@d8um/core'
-import { PgVectorAdapter } from '@d8um/adapter-pgvector'
-
-// Then, these imports here will be specific to your app:
-// i.e. your embedding provider
-import { openai } from '@ai-sdk/openai'
-// i.e. your vector database provider
-import { neon } from '@neondatabase/serverless'
-
-// 1) Initialize d8um — point it at your embedding model and your database
-d8um.initialize({
-  embedding: {
-    model: openai.embedding('text-embedding-3-small'),
-    dimensions: 1536,
-  },
-  vectorStore: new PgVectorAdapter({ sql: neon(process.env.DATABASE_URL!) }),
-})
-
-// Under the hood, d8um creates these tables in your database:
-//
-//   d8um_documents     — stores document records (id, source_id, title, url, content_hash, status, ...)
-//   d8um_hashes        — tracks content hashes for deduplication and incremental sync
-//   d8um_chunks_registry — registry of which embedding models have been used
-
-```
-
-#### 3) Create a Source
-
-```ts
-// Create a source - in this case, a basic source you send documents to - FAQ questions and answers
-d8um.addSource({
-  id: 'faq',
-  mode: 'indexed',
-  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] },
-})
-
-// Under the hood, d8um creates a per-model chunks table for the embedding model:
-//
-//   d8um_chunks_openai_text_embedding_3_small (
-//     id              UUID PRIMARY KEY,
-//     source_id       TEXT,
-//     document_id     UUID REFERENCES d8um_documents,
-//     content         TEXT,
-//     embedding       VECTOR(1536),          -- pgvector column
-//     chunk_index     INTEGER,
-//     total_chunks    INTEGER,
-//     metadata        JSONB,
-//     search_vector   TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
-//     ...
-//   )
-//
-// Each embedding model gets its own table — so if you later switch models or use
-// different models per source, d8um isolates them automatically.
-```
-
-#### 4) Ingest Documents
-
-```ts
-// Send documents to your FAQ source - d8um handles chunking and embedding under the hood
-//    document id is optional - d8um generates an UUID id if none is sent, and automatically deduplicates by content hash
-
-await d8um.ingest('faq', {
-  title: 'How do I set up SSO?',
-  content: 'To enable SSO, navigate to Settings > Authentication and select your identity provider. We support SAML 2.0 and OpenID Connect.',
-  updatedAt: new Date(),
-  metadata: {},
-})
-
-await d8um.ingest('faq', {
-  title: 'How do I reset my password?',
-  content: 'Click "Forgot password" on the login page. You will receive a reset link via email within 5 minutes.',
-  updatedAt: new Date(),
-  metadata: {},
-})
-
-// Under the hood, for each document d8um:
-//   1. Generates a UUID (since no id was provided)
-//   2. Hashes the content for deduplication (deduplicateBy: ['content'])
-//   3. Checks d8um_hashes — skips if content unchanged (idempotent re-ingestion)
-//   4. Inserts a record into d8um_documents (title, url, content_hash, status, ...)
-//   5. Chunks the content based on chunkSize/chunkOverlap
-//   6. Calls openai.embedding() to generate a 1536-dim vector for each chunk
-//   7. Bulk inserts chunks + embeddings:
-//
-//        INSERT INTO d8um_chunks_openai_text_embedding_3_small
-//          (source_id, document_id, content, embedding, chunk_index, total_chunks, metadata, ...)
-//        SELECT * FROM unnest($1::text[], $2::uuid[], ..., $6::vector[], ...)
-//        ON CONFLICT (idempotency_key, chunk_index, source_id) DO UPDATE SET ...
-//
-//   8. Updates d8um_hashes so the next ingest() call can skip unchanged docs
-```
-
-#### 5) Query
-
-```ts
-// Query - fans out across faq (and any other sources), merges, re-ranks
-const response = await d8um.query('how do I configure SSO?')
-
-// response.results contains ranked chunks:
-// [
-//   {
-//     content: 'To enable SSO, navigate to Settings > Authentication...',
-//     score: 0.9142,
-//     source: { id: 'faq', title: 'How do I set up SSO?' },
-//   },
-//   ...
-// ]
-
-// Under the hood, d8um:
-//   1. Groups your sources by embedding model. If you have sources using different
-//      models (e.g. openai text-embedding-3-small for docs, cohere embed-v4 for
-//      support tickets), d8um handles each model separately — embedding your query
-//      with each model, searching each model's table, then merging all results
-//      together with RRF re-ranking. You just call query() once and get back a
-//      single ranked result set. The multi-model complexity is invisible to you.
-//   2. Embeds the query text using each model for the sources you're querying
-//   3. Runs a hybrid search per model, combining vector similarity + full-text keyword matching:
-//
-//        WITH vector_ranked AS (
-//          SELECT *, 1 - (embedding <=> $1::vector) AS similarity,
-//                 ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS vrank
-//          FROM d8um_chunks_openai_text_embedding_3_small
-//          WHERE source_id = 'faq'
-//          LIMIT 60
-//        ),
-//        keyword_ranked AS (
-//          SELECT *, ts_rank(search_vector, websearch_to_tsquery('english', $2)) AS kw_score,
-//                 ROW_NUMBER() OVER (ORDER BY ts_rank(...) DESC) AS krank
-//          FROM d8um_chunks_openai_text_embedding_3_small
-//          WHERE search_vector @@ websearch_to_tsquery('english', $2)
-//          LIMIT 60
-//        )
-//        SELECT *, (1.0/(60 + vrank) + 1.0/(60 + krank)) AS rrf_score
-//        FROM (vector_ranked FULL OUTER JOIN keyword_ranked ...)
-//        ORDER BY rrf_score DESC LIMIT 10
-//
-//   3. Maps results back to d8umResult objects with scores, source info, and chunk positions
-
-```
-
-#### 6) Format results (optional)
-
-```ts
-// Assemble ranked chunks into structured LLM context
-const xml = d8um.assemble(response.results) // defaults to XML
-// <context>
-// <source id="faq" title="How do I set up SSO?">
-//   <passage score="0.9142">
-//     To enable SSO, navigate to Settings > Authentication...
-//   </passage>
-// </source>
-// ...
-// </context>
-
-// Or you can assemble into markdown
-const md = d8um.assemble(response.results, { format: 'markdown' })
-// # How do I set up SSO?
-// To enable SSO, navigate to Settings > Authentication...
-//
-// ---
-// ...
-```
-
-### Option C: Local Dev (zero external dependencies)
-
-No API keys, no cloud services, no external database. Everything runs on your machine.
-
-#### 1) Install
-
-```bash
-# Core SDK
-npm install @d8um/core
-
-# Local embedding model — BAAI/bge-small-en-v1.5 via fastembed + ONNX Runtime
-# MIT licensed, 33M params, 384 dimensions, ~32 MB model (downloaded on first run)
-npm install @d8um/embedding-local
-
-# SQLite vector store — zero-infra, single-file database
-npm install @d8um/adapter-sqlite-vec
-```
-
-#### 2) Initialize
 
 ```ts
 import { d8um } from '@d8um/core'
 import { LocalEmbeddingProvider } from '@d8um/embedding-local'
 import { SqliteVecAdapter } from '@d8um/adapter-sqlite-vec'
 
-// Initialize d8um — fully local, no API keys needed
-const embedding = new LocalEmbeddingProvider()
-
 d8um.initialize({
-  embedding,
+  embedding: new LocalEmbeddingProvider(),
   vectorStore: new SqliteVecAdapter({ dbPath: './my-app.db' }),
 })
 
-// Under the hood:
-//   - LocalEmbeddingProvider wraps fastembed + onnxruntime-node
-//   - On first use, the ONNX model (~32 MB) is downloaded and cached locally
-//   - SqliteVecAdapter creates a SQLite database file at ./my-app.db
-//   - Tables are created: d8um_chunks_registry, d8um_hashes, d8um_hashes_run_times
-```
-
-#### 3) Create a Source
-
-```ts
-// Same API as Options A and B — the source config is identical
-d8um.addSource({
-  id: 'faq',
-  mode: 'indexed',
-  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] },
-})
-
-// Under the hood, d8um creates:
-//
-//   d8um_chunks_local_fast_bge_small_en_v1_5 (
-//     chunk_rowid     INTEGER PRIMARY KEY AUTOINCREMENT,
-//     id              TEXT,
-//     source_id       TEXT,
-//     document_id     TEXT,
-//     content         TEXT,
-//     embedding_model TEXT,
-//     chunk_index     INTEGER,
-//     ...
-//   )
-//
-//   d8um_chunks_local_fast_bge_small_en_v1_5_vec — sqlite-vec virtual table
-//     embedding float[384]   -- 384-dim vectors for cosine similarity search
-```
-
-#### 4) Ingest Documents
-
-```ts
-// Same API as Options A and B
+// Ingest a document
 await d8um.ingest('faq', {
   title: 'How do I set up SSO?',
-  content: 'To enable SSO, navigate to Settings > Authentication and select your identity provider. We support SAML 2.0 and OpenID Connect.',
+  content: 'Navigate to Settings > Authentication and select your identity provider.',
   updatedAt: new Date(),
-  metadata: {},
 })
 
-await d8um.ingest('faq', {
-  title: 'How do I reset my password?',
-  content: 'Click "Forgot password" on the login page. You will receive a reset link via email within 5 minutes.',
-  updatedAt: new Date(),
-  metadata: {},
-})
+// Query — hybrid search, score merging, ranked results
+const { results } = await d8um.query('how do I configure SSO?')
 
-// Under the hood, for each document d8um:
-//   1. Hashes the content for deduplication
-//   2. Checks d8um_hashes — skips if content unchanged
-//   3. Chunks the content based on chunkSize/chunkOverlap
-//   4. Runs the chunks through the local ONNX model (bge-small-en-v1.5) — no network call
-//   5. Inserts chunks into the SQLite chunks table
-//   6. Inserts 384-dim embeddings into the sqlite-vec virtual table
-//   7. Updates d8um_hashes for deduplication on next run
+// Assemble into LLM-ready context
+const context = d8um.assemble(results, { format: 'xml' })
 ```
 
-#### 5) Query
-
-```ts
-// Query - fans out across faq (and any other sources), merges, re-ranks
-const response = await d8um.query('how do I configure SSO?')
-
-// response.results contains ranked chunks:
-// [
-//   {
-//     content: 'To enable SSO, navigate to Settings > Authentication...',
-//     score: 0.9142,
-//     source: { id: 'faq', title: 'How do I set up SSO?' },
-//   },
-//   ...
-// ]
-
-// Under the hood, d8um:
-//   1. Embeds the query locally using bge-small-en-v1.5
-//   2. Runs a KNN search against the sqlite-vec virtual table:
-//
-//        SELECT c.*, v.distance
-//        FROM d8um_chunks_local_fast_bge_small_en_v1_5_vec v
-//        JOIN d8um_chunks_local_fast_bge_small_en_v1_5 c ON c.chunk_rowid = v.rowid
-//        WHERE v.embedding MATCH ? AND k = 10
-//        ORDER BY v.distance
-//
-//   3. Converts cosine distance to similarity scores
-//   4. Returns ranked results — entirely offline, no network calls
-```
-
-#### 6) Format results (optional)
-
-```ts
-// Assemble ranked chunks into structured LLM context
-const xml = d8um.assemble(response.results) // defaults to XML
-// <context>
-// <source id="faq" title="How do I set up SSO?">
-//   <passage score="0.9142">
-//     To enable SSO, navigate to Settings > Authentication...
-//   </passage>
-// </source>
-// ...
-// </context>
-```
-
-> **When to use Option C:** Local development, testing, CI/CD pipelines, edge deployments, air-gapped environments, or anywhere you want zero external dependencies. When you're ready for production, swap in a cloud embedding provider and pgvector — the rest of your code stays the same.
-
-## API Overview
-
-### `d8um`
-
-
-| Method                      | Description                                                                 |
-| --------------------------- | --------------------------------------------------------------------------- |
-| `d8um.initialize(config)`   | Configure the singleton with a vector store adapter and embedding provider  |
-| `d8umCreate(config)`        | Create an independent instance (for multi-instance use cases)               |
-| `.addSource(source)`        | Register a data source (indexed, live, or cached)                           |
-| `.index(sourceId?, opts?)`  | Index one or all indexed sources - idempotent, incremental by default       |
-| `.query(text, opts?)`       | Fan-out query across all sources, merge, and rank                           |
-| `.assemble(results, opts?)` | Format results for prompt injection (`xml`, `markdown`, `plain`, or custom) |
-| `.destroy()`                | Clean up connections                                                        |
-
-
-### Indexing Options
-
-```ts
-await d8um.index('docs', {
-  mode: 'upsert',       // 'upsert' (incremental) or 'replace' (full rebuild)
-  tenantId: 'acme',     // Multi-tenant isolation
-  removeDeleted: true,    // Remove chunks for documents no longer in the source
-  dryRun: true,          // Preview what would change without writing
-  onProgress: (event) => console.log(event),  // Progress callbacks
-})
-```
-
-### Query Options
-
-```ts
-const response = await d8um.query('search text', {
-  count: 10,
-  sources: ['docs', 'wiki'],     // Filter to specific sources
-  tenantId: 'acme',
-  mergeStrategy: 'rrf',          // 'rrf', 'linear', or 'custom'
-  mergeWeights: { indexed: 0.7, live: 0.2, cached: 0.1 },
-  onSourceError: 'warn',         // 'omit', 'warn', or 'throw'
-})
-```
-
-## Packages
-
-
-| Package                                                            | Description                                                              | Status |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------ | ------ |
-| `[@d8um/core](packages/core)`                                      | Query engine, index engine, types, job registry, built-in jobs           | Alpha  |
-| `[@d8um/hosted](packages/hosted)`                                  | Hosted client SDK - zero infrastructure, just an API key                 | Alpha  |
-| `[@d8um/embedding-local](packages/embeddings/local)`               | Local embeddings via fastembed + ONNX Runtime (bge-small-en-v1.5, MIT)   | Alpha  |
-| `[@d8um/adapter-pgvector](packages/adapters/pgvector)`             | PostgreSQL + pgvector - driver-agnostic (bring your own Postgres client) | Alpha  |
-| `[@d8um/adapter-sqlite-vec](packages/adapters/sqlite-vec)`         | SQLite + sqlite-vec - zero-infra local development                       | Alpha  |
-| `[@d8um/integration-core](packages/integration-core)`              | Shared integration types (IntegrationDefinition)                         | Alpha  |
-| `[@d8um/integration-slack](packages/integration-slack)`            | Slack messages, channels, users                                          | Alpha  |
-| `[@d8um/integration-google-drive](packages/integration-google-drive)` | Google Drive files and folders                                        | Alpha  |
-| `[@d8um/integration-google-calendar](packages/integration-google-calendar)` | Google Calendar events                                          | Alpha  |
-| `[@d8um/integration-gmail](packages/integration-gmail)`            | Gmail messages, threads, labels                                          | Alpha  |
-| `[@d8um/integration-hubspot](packages/integration-hubspot)`        | HubSpot contacts, companies, deals                                       | Alpha  |
-| `[@d8um/integration-gong](packages/integration-gong)`              | Gong calls, transcripts, users                                           | Alpha  |
-| `[@d8um/integration-fathom](packages/integration-fathom)`          | Fathom call recordings and transcripts                                   | Alpha  |
-| `[@d8um/integration-salesforce](packages/integration-salesforce)`  | Salesforce contacts, accounts, opportunities, leads                      | Alpha  |
-| `[@d8um/integration-attio](packages/integration-attio)`            | Attio contacts, companies, tasks                                         | Alpha  |
-| `[@d8um/integration-linear](packages/integration-linear)`          | Linear issues, projects, teams                                           | Alpha  |
-| **Cognitive Memory**                                               |                                                                          |        |
-| `[@d8um/memory](packages/memory)`                                  | Memory type system, working memory, extraction, scoping                  | Alpha  |
-| `[@d8um/memory-graph](packages/memory-graph)`                      | Embedded graph layer — BFS/DFS traversal, subgraph extraction            | Alpha  |
-| `[@d8um/consolidation](packages/consolidation)`                    | Lifecycle management — decay, forgetting, consolidation, correction      | Alpha  |
-| `[@d8um/mcp-server](packages/mcp-server)`                          | MCP server — memory tools and resources for AI agents                    | Alpha  |
-| `[@d8um/vercel-ai-provider](packages/vercel-ai-provider)`          | Vercel AI SDK — memory tools and middleware                              | Alpha  |
-
-
-### Build Your Own
-
-d8um is designed to be extended. Define a custom `JobTypeDefinition` to add any data source, or implement the `VectorStoreAdapter` interface to bring your own storage.
-
-```ts
-import { registerJobType } from '@d8um/core'
-import type { JobTypeDefinition } from '@d8um/core'
-
-// Custom job — define type, config, and a run() function that yields documents
-const myDataJob: JobTypeDefinition = {
-  type: 'my_data_sync',
-  label: 'My Data Sync',
-  description: 'Sync data from my custom source',
-  category: 'ingestion',
-  requiresSource: true,
-  available: true,
-  configSchema: [],
-  async *run(ctx) {
-    for (const item of await getMyData()) {
-      yield {
-        id: item.id,
-        title: item.name,
-        content: item.body,
-        updatedAt: item.modifiedAt,
-        metadata: { category: item.category },
-      }
-    }
-  },
-}
-
-registerJobType(myDataJob)
-```
-
-## Architecture
-
-```
-@d8um/core
-├── d8um()              Main orchestrator, per-source embedding resolution
-├── embedding/
-│   ├── provider.ts     EmbeddingProvider interface
-│   └── ai-sdk-adapter  Wraps any AI SDK model via structural typing (zero deps)
-├── jobs/
-│   ├── registry.ts     Job type registry (registerJobType, getJobType, etc.)
-│   └── builtins/       Built-in jobs (url_scrape, domain_crawl) with run() implementations
-├── IndexEngine         Chunk, embed, store - model-aware, idempotent
-├── QueryPlanner        Multi-model fan-out, timeout, error handling
-├── ScoreMerger         Normalize + RRF + dedup across models
-├── assemble()          Format results for prompt injection
-└── types/              Full TypeScript type system
-
-@d8um/adapter-*         Swappable vector store backends (per-model table isolation)
-@d8um/integration-*     Modular 3rd party integrations (Slack, HubSpot, Google Drive, etc.)
-
-@d8um/memory            Cognitive memory substrate
-├── types/              TemporalRecord, MemoryRecord, EpisodicMemory, SemanticFact, etc.
-├── working-memory      Bounded in-memory buffer with priority eviction
-├── extraction/         LLM-driven fact extraction, entity resolution, invalidation
-├── d8umMemory          Unified API: remember(), recall(), correct(), assembleContext()
-└── jobs/               Memory job type definitions (conversation ingest)
-
-@d8um/memory-graph      Embedded graph layer (no external graph DB required)
-@d8um/consolidation     Lifecycle: decay scoring, forgetting, episodic→semantic promotion
-@d8um/mcp-server        MCP tools: d8um_remember, d8um_recall, d8um_correct, etc.
-@d8um/vercel-ai-provider Memory tools + middleware for Vercel AI SDK
-```
-
-**Key design decisions:**
-
-- **AI SDK native** - Embedding providers use the [Vercel AI SDK](https://ai-sdk.dev) ecosystem. Any of 40+ providers work out of the box.
-- **Per-source embedding models** - Each source can use a different embedding model. d8um manages separate vector tables per model and merges results at query time.
-- **Idempotent indexing** - Content is hashed. Unchanged documents are skipped. Partial failures are recoverable. Model changes are detected and trigger re-embedding.
-- **Atomic writes** - All chunks for a document are written in a single operation. No partial states.
-- **Multi-tenant** - Every operation accepts an optional `tenantId` for data isolation.
-- **Hybrid search** - pgvector adapter supports both semantic (HNSW) and keyword (tsvector) search with RRF fusion.
-- **Built-in web scraping** - URL scraping and domain crawling are built-in job types with full HTML parsing (cheerio + turndown), link extraction, and BFS crawling.
-
-## Embedding Providers
-
-d8um uses the [Vercel AI SDK](https://ai-sdk.dev) provider ecosystem for embeddings. Install the provider package you need, pass the model - done. No wrapper code, no API key plumbing, no HTTP client to maintain.
-
-> **Zero new dependencies.** `@d8um/core` doesn't import `@ai-sdk/provider` or any provider package. It uses [structural typing](https://www.typescriptlang.org/docs/handbook/type-compatibility.html) - any object that looks like an AI SDK embedding model works, whether it comes from `@ai-sdk/openai`, a custom implementation, or a test mock.
-
-### Global default + per-source overrides
-
-Set a default embedding model on the `d8um` instance, then optionally override it on any source:
-
-```ts
-import { d8um } from '@d8um/core'
-import { openai } from '@ai-sdk/openai'
-import { cohere } from '@ai-sdk/cohere'
-import { neon } from '@neondatabase/serverless'
-import { PgVectorAdapter } from '@d8um/adapter-pgvector'
-
-const adapter = new PgVectorAdapter({ sql: neon(process.env.DATABASE_URL!) })
-
-d8um.initialize({
-  // Global default - used for all sources unless overridden
-  embedding: {
-    model: openai.embedding('text-embedding-3-small'),
-    dimensions: 1536,
-  },
-  vectorStore: adapter,
-})
-
-// Uses the global default (OpenAI, 1536 dims)
-d8um.addSource({
-  id: 'docs',
-  connector: docsConnector,
-  mode: 'indexed',
-  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['url'] },
-})
-
-// Overrides with Cohere (1024 dims) - gets its own vector table automatically
-d8um.addSource({
-  id: 'wiki',
-  connector: wikiConnector,
-  mode: 'indexed',
-  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['metadata.pageId'] },
-  embedding: {
-    model: cohere.embedding('embed-english-v3.0'),
-    dimensions: 1024,
-  },
-})
-```
-
-### What happens at query time
-
-When you call `d8um.query()`, d8um:
-
-1. Groups sources by their embedding model
-2. Embeds the query text **once per distinct model** (not once per source)
-3. Searches each model's dedicated vector table
-4. Merges all results via RRF across models and modes
-
-You don't think about which model applies to which source - d8um handles the fan-out and merge.
-
-### Per-model table isolation
-
-Each embedding model gets its own vector table (e.g., `d8um_chunks_openai_text_embedding_3_small`, `d8um_chunks_cohere_embed_english_v3_0`). This means:
-
-- No dimension conflicts - each table has the correct `VECTOR(n)` column
-- Clean HNSW indexes per model - no mixed vector spaces
-- Safe model migration - switching a source's model triggers automatic re-embedding, with old chunks cleaned up
-- Works identically across all adapters (pgvector, sqlite-vec, etc.)
-
-### Custom embedding providers
-
-For full control, pass a raw `EmbeddingProvider` object - no AI SDK required:
-
-```ts
-d8um.initialize({
-  embedding: {
-    model: 'custom/my-model',
-    dimensions: 768,
-    async embed(text) { /* your logic */ },
-    async embedBatch(texts) { /* your logic */ },
-  },
-  vectorStore: new PgVectorAdapter({ sql: neon(process.env.DATABASE_URL!) }),
-})
-```
-
-## Development
-
-```bash
-# Install dependencies
-pnpm install
-
-# Build all packages
-pnpm run build
-
-# Run tests
-pnpm run test
-
-# Type check
-pnpm run typecheck
-```
-
-The repo uses [Turborepo](https://turbo.build) for build orchestration and [pnpm](https://pnpm.io) workspaces for package management.
+> **More setup options:** [Local Dev](guides/Local%20Dev/getting-started.md) | [Self-Hosted (pgvector)](guides/Self%20Hosted/setup.md) | [d8um Cloud](guides/d8um%20Cloud/quickstart.md)
 
 ## Cognitive Memory
 
-d8um includes a cognitive memory substrate inspired by human memory systems. It adds working memory, episodic recall, semantic knowledge graphs, and procedural learning to any TypeScript AI agent.
+d8um is also the **first TypeScript-native cognitive memory substrate** for AI agents. Inspired by human memory systems, it adds working memory, episodic recall, semantic knowledge graphs, and procedural learning.
 
 ```ts
 import { d8umMemory } from '@d8um/memory'
 
 const memory = new d8umMemory({ memoryStore, embedding, llm, scope: { userId: 'alice' } })
 
-// Store memories from conversations
 await memory.addConversationTurn([
-  { role: 'user', content: 'I just switched from MySQL to PostgreSQL at work' }
+  { role: 'user', content: 'I just switched from MySQL to PostgreSQL' }
 ])
 
-// Recall facts
 const facts = await memory.recallFacts('database preference')
-// → [{ content: 'Alice uses PostgreSQL', subject: 'Alice', predicate: 'uses', object: 'PostgreSQL' }]
+// [{ content: 'alice uses PostgreSQL', subject: 'alice', predicate: 'uses', object: 'PostgreSQL' }]
 
-// Correct memories with natural language
-await memory.correct('Actually, I use MariaDB now, not PostgreSQL')
-
-// Build LLM-ready context from memory
-const context = await memory.assembleContext('What database does Alice use?')
+await memory.correct('Actually, I use MariaDB now')
 ```
 
-Memory operations are also available as schedulable jobs:
+Memory operations are also schedulable jobs:
 
 ```ts
 import { registerConsolidationJobs } from '@d8um/consolidation'
 registerConsolidationJobs()
 
-// Schedule nightly consolidation (episodic → semantic promotion)
 d8um.jobs.create({ type: 'memory_consolidation', schedule: '0 3 * * *' })
-
-// Schedule hourly decay
 d8um.jobs.create({ type: 'memory_decay', schedule: '0 * * * *' })
 ```
 
-See [docs/cognitive-memory-plan.md](docs/cognitive-memory-plan.md) for the full architecture and competitive analysis.
+> **Deep dive:** [Agentic Memory Guide](guides/Agentic%20Memory/overview.md) — memory types, lifecycle, extraction pipeline, landscape analysis
 
-## Roadmap
+## How It Works
 
-- MemoryStoreAdapter implementations for pgvector and sqlite-vec
-- Integration job `run()` function implementations
-- Neighbor chunk joining in `assemble()`
-- Token budget trimming
-- Additional adapters (Qdrant, Pinecone, Weaviate)
-- Additional integrations (GitHub, Confluence, Notion, S3)
-- Full MCP server with @modelcontextprotocol/sdk transport
-- Webhook support for real-time integration syncs
+d8um queries across all sources in parallel, normalizes scores, merges via [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf), and returns a unified ranked result set.
+
+```
+d8um.query("how do I configure SSO?")
+        │
+   ┌────┼────┐
+   ▼    ▼    ▼
+indexed live cached    ← per-source embedding models
+   │    │    │
+   └────┼────┘
+        ▼
+  Score Merger (RRF)
+        ▼
+   assemble()
+        ▼
+  Prompt-ready context
+```
+
+> **Deep dive:** [Agentic RAG Guide](guides/Agentic%20RAG/overview.md) — hybrid search, per-model fan-out, embedding providers, architecture
+
+## Packages
+
+| Package | Description | Status |
+|---------|-------------|--------|
+| **Core** | | |
+| `@d8um/core` | Query engine, index engine, job registry, built-in jobs | Alpha |
+| `@d8um/adapter-pgvector` | PostgreSQL + pgvector storage | Alpha |
+| `@d8um/adapter-sqlite-vec` | SQLite + sqlite-vec — zero-infra local dev | Alpha |
+| `@d8um/embedding-local` | Local embeddings (bge-small-en-v1.5, MIT, ONNX) | Alpha |
+| `@d8um/hosted` | Hosted client SDK | Alpha |
+| **Cognitive Memory** | | |
+| `@d8um/memory` | Memory types, working memory, extraction, scoping | Alpha |
+| `@d8um/memory-graph` | Embedded graph — BFS/DFS traversal, no external DB | Alpha |
+| `@d8um/consolidation` | Decay, forgetting, consolidation, correction jobs | Alpha |
+| `@d8um/mcp-server` | MCP tools + resources for agent frameworks | Alpha |
+| `@d8um/vercel-ai-provider` | Vercel AI SDK memory tools + middleware | Alpha |
+| **Integrations** | | |
+| `@d8um/integration-slack` | Messages, channels, users | Alpha |
+| `@d8um/integration-google-drive` | Files and folders | Alpha |
+| `@d8um/integration-google-calendar` | Events | Alpha |
+| `@d8um/integration-gmail` | Messages, threads, labels | Alpha |
+| `@d8um/integration-hubspot` | Contacts, companies, deals | Alpha |
+| `@d8um/integration-gong` | Calls, transcripts, users | Alpha |
+| `@d8um/integration-fathom` | Call recordings, transcripts | Alpha |
+| `@d8um/integration-salesforce` | Contacts, accounts, opportunities, leads | Alpha |
+| `@d8um/integration-attio` | Contacts, companies, tasks | Alpha |
+| `@d8um/integration-linear` | Issues, projects, teams | Alpha |
+
+## Guides
+
+| Guide | What you'll learn |
+|-------|-------------------|
+| [Getting Started (Local Dev)](guides/Local%20Dev/getting-started.md) | Zero-infra setup with SQLite + local embeddings |
+| [Self-Hosted Setup](guides/Self%20Hosted/setup.md) | pgvector, cloud embeddings, hybrid search internals |
+| [d8um Cloud](guides/d8um%20Cloud/quickstart.md) | Hosted API — just an API key |
+| [Agentic RAG](guides/Agentic%20RAG/overview.md) | Retrieval architecture, embedding providers, landscape analysis |
+| [Agentic Memory](guides/Agentic%20Memory/overview.md) | Cognitive memory system, lifecycle, extraction, landscape analysis |
+
+## Development
+
+```bash
+pnpm install          # Install dependencies
+pnpm build            # Build all packages (Turborepo)
+pnpm test             # Run tests
+pnpm typecheck        # Type checking
+```
 
 ## Contributing
 
-d8um is open source and contributions are welcome. Whether it's a new connector, adapter, bug fix, or documentation improvement - we'd love your help.
+d8um is open source and contributions are welcome — new integrations, adapters, bug fixes, or documentation.
 
 1. Fork the repo
-2. Create a feature branch (`git checkout -b feat/my-connector`)
+2. Create a feature branch (`git checkout -b feat/my-feature`)
 3. Make your changes
-4. Run `pnpm run build && pnpm run typecheck` to verify
+4. Run `pnpm build && pnpm typecheck` to verify
 5. Open a PR
 
 ## License
