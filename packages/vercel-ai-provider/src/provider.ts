@@ -1,4 +1,4 @@
-import type { D8umMemory } from '@d8um/memory'
+import type { d8umMemory } from '@d8um/memory'
 
 // ── Tool Definition ──
 // Structural type matching Vercel AI SDK's tool definition pattern.
@@ -11,7 +11,7 @@ export interface ToolDefinition {
 }
 
 /**
- * Generate Vercel AI SDK-compatible tool definitions from a D8umMemory instance.
+ * Generate Vercel AI SDK-compatible tool definitions from a d8umMemory instance.
  *
  * Usage with Vercel AI SDK:
  * ```ts
@@ -26,7 +26,7 @@ export interface ToolDefinition {
  * })
  * ```
  */
-export function d8umMemoryTools(memory: D8umMemory): Record<string, ToolDefinition> {
+export function d8umMemoryTools(memory: d8umMemory): Record<string, ToolDefinition> {
   return {
     remember: {
       description: 'Store a memory for future recall',

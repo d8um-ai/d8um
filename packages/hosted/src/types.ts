@@ -9,13 +9,13 @@ export interface HostedConfig {
   timeout?: number | undefined
 }
 
-export class D8umApiError extends Error {
+export class d8umApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
     public readonly body?: unknown
   ) {
     super(message)
-    this.name = 'D8umApiError'
+    this.name = 'd8umApiError'
   }
 }

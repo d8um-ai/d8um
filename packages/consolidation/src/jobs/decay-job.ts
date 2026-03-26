@@ -30,7 +30,7 @@ export const memoryDecayJob: JobTypeDefinition = {
       jobId: ctx.job.id,
       sourceId: ctx.job.sourceId,
       status: 'completed',
-      summary: 'Decay job requires D8umMemory context to run',
+      summary: 'Decay job requires d8umMemory context to run',
       documentsCreated: 0,
       documentsUpdated: 0,
       documentsDeleted: 0,

@@ -1,5 +1,5 @@
 export { d8umHosted } from './client.js'
 export type { d8umHostedInstance } from './client.js'
 export type { HostedConfig } from './types.js'
-export { D8umApiError } from './types.js'
+export { d8umApiError } from './types.js'
 export { HttpClient } from './http-client.js'

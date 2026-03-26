@@ -1,8 +1,8 @@
-import type { D8umMemory } from '@d8um/memory'
+import type { d8umMemory } from '@d8um/memory'
 
 // ── MCP Tool Definitions ──
 // These define the tools that the MCP server exposes to AI agents.
-// Each tool maps to a D8umMemory method.
+// Each tool maps to a d8umMemory method.
 
 export interface MCPToolDefinition {
   name: string
@@ -98,10 +98,10 @@ export function getToolDefinitions(): MCPToolDefinition[] {
 }
 
 /**
- * Execute an MCP tool call against a D8umMemory instance.
+ * Execute an MCP tool call against a d8umMemory instance.
  */
 export async function executeTool(
-  memory: D8umMemory,
+  memory: d8umMemory,
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {

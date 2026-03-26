@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { assemble } from '../query/assemble.js'
 import type { d8umResult } from '../types/query.js'
 
-function makeD8umResult(overrides: Partial<d8umResult> = {}): d8umResult {
+function d8umMakeResult(overrides: Partial<d8umResult> = {}): d8umResult {
   return {
     content: 'Test passage content',
     score: 0.85,
@@ -22,7 +22,7 @@ function makeD8umResult(overrides: Partial<d8umResult> = {}): d8umResult {
 
 describe('assemble', () => {
   it('defaults to XML format with context/source/passage tags', () => {
-    const results = [makeD8umResult()]
+    const results = [d8umMakeResult()]
     const output = assemble(results)
     expect(output).toContain('<context>')
     expect(output).toContain('</context>')
@@ -33,7 +33,7 @@ describe('assemble', () => {
   })
 
   it('includes source attributes in XML', () => {
-    const results = [makeD8umResult()]
+    const results = [d8umMakeResult()]
     const output = assemble(results)
     expect(output).toContain('id="src-1"')
     expect(output).toContain('title="Test Document"')
@@ -41,16 +41,16 @@ describe('assemble', () => {
   })
 
   it('includes score in XML passage', () => {
-    const results = [makeD8umResult({ score: 0.8500 })]
+    const results = [d8umMakeResult({ score: 0.8500 })]
     const output = assemble(results)
     expect(output).toContain('score="0.8500"')
   })
 
   it('groups by source in XML', () => {
     const results = [
-      makeD8umResult({ content: 'A', source: { ...makeD8umResult().source, id: 'src-1' } }),
-      makeD8umResult({ content: 'B', source: { ...makeD8umResult().source, id: 'src-1' } }),
-      makeD8umResult({ content: 'C', source: { ...makeD8umResult().source, id: 'src-2', title: 'Other' } }),
+      d8umMakeResult({ content: 'A', source: { ...d8umMakeResult().source, id: 'src-1' } }),
+      d8umMakeResult({ content: 'B', source: { ...d8umMakeResult().source, id: 'src-1' } }),
+      d8umMakeResult({ content: 'C', source: { ...d8umMakeResult().source, id: 'src-2', title: 'Other' } }),
     ]
     const output = assemble(results)
     // Should have two <source> blocks
@@ -59,9 +59,9 @@ describe('assemble', () => {
   })
 
   it('escapes XML special chars', () => {
-    const results = [makeD8umResult({
+    const results = [d8umMakeResult({
       content: 'Use <div> & "quotes"',
-      source: { ...makeD8umResult().source, title: 'A & B <C>' },
+      source: { ...d8umMakeResult().source, title: 'A & B <C>' },
     })]
     const output = assemble(results)
     expect(output).toContain('&amp;')
@@ -72,8 +72,8 @@ describe('assemble', () => {
 
   it('assembles markdown format with headings and horizontal rules', () => {
     const results = [
-      makeD8umResult({ content: 'First' }),
-      makeD8umResult({ content: 'Second' }),
+      d8umMakeResult({ content: 'First' }),
+      d8umMakeResult({ content: 'Second' }),
     ]
     const output = assemble(results, { format: 'markdown' })
     expect(output).toContain('# (Test Document)')
@@ -83,18 +83,18 @@ describe('assemble', () => {
   })
 
   it('assembles markdown with linked title when url present', () => {
-    const results = [makeD8umResult({
+    const results = [d8umMakeResult({
       content: 'Content here',
-      source: { ...makeD8umResult().source, title: 'My Page', url: 'https://example.com' },
+      source: { ...d8umMakeResult().source, title: 'My Page', url: 'https://example.com' },
     })]
     const output = assemble(results, { format: 'markdown' })
     expect(output).toContain('# (My Page)[https://example.com]')
   })
 
   it('assembles markdown with plain title when no url', () => {
-    const results = [makeD8umResult({
+    const results = [d8umMakeResult({
       content: 'Content here',
-      source: { ...makeD8umResult().source, title: 'FAQ Item', url: undefined },
+      source: { ...d8umMakeResult().source, title: 'FAQ Item', url: undefined },
     })]
     const output = assemble(results, { format: 'markdown' })
     expect(output).toContain('# FAQ Item')
@@ -103,15 +103,15 @@ describe('assemble', () => {
 
   it('assembles plain format with double newlines', () => {
     const results = [
-      makeD8umResult({ content: 'First' }),
-      makeD8umResult({ content: 'Second' }),
+      d8umMakeResult({ content: 'First' }),
+      d8umMakeResult({ content: 'Second' }),
     ]
     const output = assemble(results, { format: 'plain' })
     expect(output).toBe('First\n\nSecond')
   })
 
   it('supports custom format function', () => {
-    const results = [makeD8umResult({ content: 'Test' })]
+    const results = [d8umMakeResult({ content: 'Test' })]
     const output = assemble(results, { format: (r) => r.map(x => x.content.toUpperCase()).join(',') })
     expect(output).toBe('TEST')
   })

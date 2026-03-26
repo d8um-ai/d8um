@@ -1,5 +1,5 @@
 import type { HostedConfig } from './types.js'
-import { D8umApiError } from './types.js'
+import { d8umApiError } from './types.js'
 
 const DEFAULT_BASE_URL = 'https://api.d8um.dev'
 const DEFAULT_TIMEOUT = 30_000
@@ -82,7 +82,7 @@ export class HttpClient {
 
       if (!response.ok) {
         const body = await response.text().catch(() => '')
-        throw new D8umApiError(
+        throw new d8umApiError(
           `d8um API error: ${response.status} ${response.statusText}`,
           response.status,
           body ? tryParseJson(body) : undefined
@@ -93,9 +93,9 @@ export class HttpClient {
       if (!text) return undefined as T
       return JSON.parse(text, dateReviver) as T
     } catch (error) {
-      if (error instanceof D8umApiError) throw error
+      if (error instanceof d8umApiError) throw error
       if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new D8umApiError('Request timed out', 0)
+        throw new d8umApiError('Request timed out', 0)
       }
       throw error
     } finally {

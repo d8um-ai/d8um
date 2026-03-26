@@ -689,7 +689,7 @@ registerJobType(myDataJob)
 ├── types/              TemporalRecord, MemoryRecord, EpisodicMemory, SemanticFact, etc.
 ├── working-memory      Bounded in-memory buffer with priority eviction
 ├── extraction/         LLM-driven fact extraction, entity resolution, invalidation
-├── D8umMemory          Unified API: remember(), recall(), correct(), assembleContext()
+├── d8umMemory          Unified API: remember(), recall(), correct(), assembleContext()
 └── jobs/               Memory job type definitions (conversation ingest)
 
 @d8um/memory-graph      Embedded graph layer (no external graph DB required)
@@ -816,9 +816,9 @@ The repo uses [Turborepo](https://turbo.build) for build orchestration and [pnpm
 d8um includes a cognitive memory substrate inspired by human memory systems. It adds working memory, episodic recall, semantic knowledge graphs, and procedural learning to any TypeScript AI agent.
 
 ```ts
-import { D8umMemory } from '@d8um/memory'
+import { d8umMemory } from '@d8um/memory'
 
-const memory = new D8umMemory({ memoryStore, embedding, llm, scope: { userId: 'alice' } })
+const memory = new d8umMemory({ memoryStore, embedding, llm, scope: { userId: 'alice' } })
 
 // Store memories from conversations
 await memory.addConversationTurn([

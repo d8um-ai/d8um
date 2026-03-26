@@ -17,7 +17,7 @@ export const memoryProceduralPromotionJob: JobTypeDefinition = {
       jobId: ctx.job.id,
       sourceId: ctx.job.sourceId,
       status: 'completed',
-      summary: 'Procedural promotion job requires D8umMemory context to run',
+      summary: 'Procedural promotion job requires d8umMemory context to run',
       documentsCreated: 0,
       documentsUpdated: 0,
       documentsDeleted: 0,

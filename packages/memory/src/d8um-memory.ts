@@ -16,9 +16,9 @@ import { WorkingMemory, type WorkingMemoryConfig } from './working-memory.js'
 import { createTemporal } from './temporal.js'
 import { randomUUID } from 'crypto'
 
-// ── D8umMemory Config ──
+// ── d8umMemory Config ──
 
-export interface D8umMemoryConfig {
+export interface d8umMemoryConfig {
   memoryStore: MemoryStoreAdapter
   embedding: EmbeddingProvider
   llm: LLMProvider
@@ -26,12 +26,12 @@ export interface D8umMemoryConfig {
   workingMemory?: WorkingMemoryConfig | undefined
 }
 
-// ── D8umMemory ──
+// ── d8umMemory ──
 // Unified developer-facing API for cognitive memory.
 // Imperative mode — direct calls, instant results.
 // Same engines used by job system for automation.
 
-export class D8umMemory {
+export class d8umMemory {
   readonly working: WorkingMemory
 
   private readonly store: MemoryStoreAdapter
@@ -41,7 +41,7 @@ export class D8umMemory {
   private readonly extractor: MemoryExtractor
   private readonly invalidation: InvalidationEngine
 
-  constructor(config: D8umMemoryConfig) {
+  constructor(config: d8umMemoryConfig) {
     this.store = config.memoryStore
     this.embedding = config.embedding
     this.llm = config.llm

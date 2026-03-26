@@ -1,4 +1,4 @@
-import type { D8umMemory } from '@d8um/memory'
+import type { d8umMemory } from '@d8um/memory'
 
 // ── Middleware ──
 // Structural type matching Vercel AI SDK's middleware pattern.
@@ -31,7 +31,7 @@ export interface MemoryMiddlewareOpts {
  * const enrichedPrompt = await middleware.enrichPrompt('What should Alice have for dinner?')
  * ```
  */
-export function d8umMemoryMiddleware(memory: D8umMemory, opts: MemoryMiddlewareOpts = {}) {
+export function d8umMemoryMiddleware(memory: d8umMemory, opts: MemoryMiddlewareOpts = {}) {
   return {
     /**
      * Enrich a prompt with memory context.

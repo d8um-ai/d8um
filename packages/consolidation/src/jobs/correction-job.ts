@@ -20,7 +20,7 @@ export const memoryCorrectionJob: JobTypeDefinition = {
       jobId: ctx.job.id,
       sourceId: ctx.job.sourceId,
       status: 'completed',
-      summary: 'Correction job requires D8umMemory context to run',
+      summary: 'Correction job requires d8umMemory context to run',
       documentsCreated: 0,
       documentsUpdated: 0,
       documentsDeleted: 0,

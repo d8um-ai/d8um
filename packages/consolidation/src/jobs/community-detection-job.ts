@@ -15,7 +15,7 @@ export const memoryCommunityDetectionJob: JobTypeDefinition = {
       jobId: ctx.job.id,
       sourceId: ctx.job.sourceId,
       status: 'completed',
-      summary: 'Community detection job requires D8umMemory context to run',
+      summary: 'Community detection job requires d8umMemory context to run',
       documentsCreated: 0,
       documentsUpdated: 0,
       documentsDeleted: 0,
