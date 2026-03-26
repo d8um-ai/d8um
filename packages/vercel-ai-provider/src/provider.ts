@@ -1,4 +1,4 @@
-import type { d8umMemory } from '@d8um/memory'
+import type { d8umMemory } from '@d8um/graph'
 
 // ── Tool Definition ──
 // Structural type matching Vercel AI SDK's tool definition pattern.

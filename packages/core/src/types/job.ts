@@ -31,8 +31,8 @@ export interface JobTypeDefinition {
   /** What this job does */
   description: string
   category: JobCategory
-  /** Must this job target a source? Ingestion jobs require one; others may not. */
-  requiresSource: boolean
+  /** Must this job target a bucket? Ingestion jobs require one; others may not. */
+  requiresBucket: boolean
   /** Is this job type currently implemented and available for use? */
   available: boolean
   /** Expected config shape for validation + UI generation */
@@ -83,8 +83,8 @@ export interface ConfigField {
 export interface Job {
   id: string
   tenantId?: string | undefined
-  /** Nullable FK to Source. Ingestion jobs target a source; other types may not. */
-  sourceId?: string | undefined
+  /** Nullable FK to Bucket. Ingestion jobs target a bucket; other types may not. */
+  bucketId?: string | undefined
   /** References a JobTypeDefinition.type */
   type: string
   /** User-defined label, e.g. "Nightly blog crawl" */
@@ -106,7 +106,7 @@ export interface Job {
 export interface CreateJobInput {
   name: string
   type: string
-  sourceId?: string | undefined
+  bucketId?: string | undefined
   tenantId?: string | undefined
   config?: Record<string, unknown> | undefined
   schedule?: string | undefined
@@ -145,7 +145,7 @@ export interface JobRunContext {
  */
 export interface JobRunResult {
   jobId: string
-  sourceId?: string | undefined
+  bucketId?: string | undefined
   status: 'completed' | 'failed'
   /** Human-readable summary of what happened */
   summary?: string | undefined
@@ -195,7 +195,7 @@ export interface ResultField {
 export interface JobRun {
   id: string
   jobId: string
-  sourceId?: string | undefined
+  bucketId?: string | undefined
   status: 'running' | 'completed' | 'failed'
   summary?: string | undefined
   documentsCreated: number

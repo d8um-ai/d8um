@@ -1,12 +1,12 @@
 import type { VectorStoreAdapter, SearchOpts, ScoredChunkWithDocument, UndeployResult } from '@d8um/core'
 import type { EmbeddedChunk, ChunkFilter, ScoredChunk } from '@d8um/core'
 import type { d8umDocument, DocumentFilter, DocumentStatus, UpsertDocumentInput } from '@d8um/core'
-import type { Source } from '@d8um/core'
+import type { Bucket } from '@d8um/core'
 import type { Job, JobRun } from '@d8um/core'
 import type { DocumentJobRelation, DocumentJobRelationFilter } from '@d8um/core'
 import {
   REGISTRY_SQL, MODEL_TABLE_SQL, HASH_TABLE_SQL, DOCUMENTS_TABLE_SQL,
-  SOURCES_TABLE_SQL, JOBS_TABLE_SQL, JOB_RUNS_TABLE_SQL, DOCUMENT_JOB_RELATIONS_TABLE_SQL,
+  BUCKETS_TABLE_SQL, JOBS_TABLE_SQL, JOB_RUNS_TABLE_SQL, DOCUMENT_JOB_RELATIONS_TABLE_SQL,
   sanitizeModelKey,
 } from './migrations.js'
 import { PgHashStore } from './hash-store.js'
@@ -41,7 +41,7 @@ export interface PgVectorAdapterConfig {
   tablePrefix?: string | undefined
   hashesTable?: string | undefined
   documentsTable?: string | undefined
-  sourcesTable?: string | undefined
+  bucketsTable?: string | undefined
   jobsTable?: string | undefined
   jobRunsTable?: string | undefined
   relationsTable?: string | undefined
@@ -58,7 +58,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
   private hashesTable: string
   private documentsTable: string
   private registryTable: string
-  private sourcesTable: string
+  private bucketsTable: string
   private jobsTable: string
   private jobRunsTable: string
   private relationsTable: string
@@ -73,7 +73,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     this.tablePrefix = config.tablePrefix ?? 'd8um_chunks'
     this.hashesTable = config.hashesTable ?? 'd8um_hashes'
     this.documentsTable = config.documentsTable ?? 'd8um_documents'
-    this.sourcesTable = config.sourcesTable ?? 'd8um_sources'
+    this.bucketsTable = config.bucketsTable ?? 'd8um_buckets'
     this.jobsTable = config.jobsTable ?? 'd8um_jobs'
     this.jobRunsTable = config.jobRunsTable ?? 'd8um_job_runs'
     this.relationsTable = config.relationsTable ?? 'd8um_document_job_relations'
@@ -88,7 +88,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     await this.sql(REGISTRY_SQL(this.registryTable))
     await this.sql(HASH_TABLE_SQL(this.hashesTable))
     await this.sql(DOCUMENTS_TABLE_SQL(this.documentsTable))
-    await this.sql(SOURCES_TABLE_SQL(this.sourcesTable))
+    await this.sql(BUCKETS_TABLE_SQL(this.bucketsTable))
     await this.sql(JOBS_TABLE_SQL(this.jobsTable))
     await this.sql(JOB_RUNS_TABLE_SQL(this.jobRunsTable))
     await this.sql(DOCUMENT_JOB_RELATIONS_TABLE_SQL(this.relationsTable))
@@ -120,7 +120,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
       this.hashesTable,
       `${this.hashesTable}_run_times`,
       this.documentsTable,
-      this.sourcesTable,
+      this.bucketsTable,
       this.jobsTable,
       this.jobRunsTable,
       this.relationsTable,
@@ -154,7 +154,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     await this.sql(`DROP TABLE IF EXISTS ${this.relationsTable}`)
     await this.sql(`DROP TABLE IF EXISTS ${this.jobRunsTable}`)
     await this.sql(`DROP TABLE IF EXISTS ${this.jobsTable}`)
-    await this.sql(`DROP TABLE IF EXISTS ${this.sourcesTable}`)
+    await this.sql(`DROP TABLE IF EXISTS ${this.bucketsTable}`)
     await this.sql(`DROP TABLE IF EXISTS ${this.documentsTable}`)
     await this.sql(`DROP TABLE IF EXISTS ${this.hashesTable}_run_times`)
     await this.sql(`DROP TABLE IF EXISTS ${this.hashesTable}`)
@@ -204,7 +204,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     const indexedAts: string[] = []
 
     for (const chunk of chunks) {
-      sourceIds.push(chunk.sourceId)
+      sourceIds.push(chunk.bucketId)
       tenantIds.push(chunk.tenantId ?? null)
       documentIds.push(chunk.documentId)
       idempotencyKeys.push(chunk.idempotencyKey)
@@ -219,13 +219,13 @@ export class PgVectorAdapter implements VectorStoreAdapter {
 
     await this.sql(
       `INSERT INTO ${table}
-        (source_id, tenant_id, document_id, idempotency_key, content, embedding,
+        (bucket_id, tenant_id, document_id, idempotency_key, content, embedding,
          embedding_model, chunk_index, total_chunks, metadata, indexed_at)
        SELECT * FROM unnest(
         $1::text[], $2::text[], $3::uuid[], $4::text[], $5::text[], $6::vector[],
         $7::text[], $8::int[], $9::int[], $10::jsonb[], $11::timestamptz[]
        )
-       ON CONFLICT (idempotency_key, chunk_index, source_id) DO UPDATE SET
+       ON CONFLICT (idempotency_key, chunk_index, bucket_id) DO UPDATE SET
         content         = EXCLUDED.content,
         embedding       = EXCLUDED.embedding,
         embedding_model = EXCLUDED.embedding_model,
@@ -321,13 +321,13 @@ export class PgVectorAdapter implements VectorStoreAdapter {
             LIMIT 60
           ),
           combined AS (
-            SELECT id, source_id, tenant_id, document_id, idempotency_key, content,
+            SELECT id, bucket_id, tenant_id, document_id, idempotency_key, content,
                    embedding, embedding_model, chunk_index, total_chunks, metadata, indexed_at,
                    similarity, NULL::double precision AS kw_score,
                    vrank, NULL::bigint AS krank
             FROM vector_ranked
             UNION ALL
-            SELECT id, source_id, tenant_id, document_id, idempotency_key, content,
+            SELECT id, bucket_id, tenant_id, document_id, idempotency_key, content,
                    embedding, embedding_model, chunk_index, total_chunks, metadata, indexed_at,
                    NULL::double precision AS similarity, kw_score,
                    NULL::bigint AS vrank, krank
@@ -342,14 +342,14 @@ export class PgVectorAdapter implements VectorStoreAdapter {
               ) AS dedup_rank
             FROM combined
           )
-        SELECT id, source_id, tenant_id, document_id, idempotency_key, content,
+        SELECT id, bucket_id, tenant_id, document_id, idempotency_key, content,
                embedding_model, chunk_index, total_chunks, metadata, indexed_at,
                MAX(similarity) AS similarity,
                MAX(kw_score) AS keyword_score,
                SUM(rrf_score) AS rrf_score
         FROM scored
         WHERE dedup_rank = 1
-        GROUP BY id, source_id, tenant_id, document_id, idempotency_key, content,
+        GROUP BY id, bucket_id, tenant_id, document_id, idempotency_key, content,
                  embedding_model, chunk_index, total_chunks, metadata, indexed_at
         ORDER BY SUM(rrf_score) DESC
         LIMIT $3`,
@@ -460,13 +460,13 @@ export class PgVectorAdapter implements VectorStoreAdapter {
             LIMIT 60
           ),
           combined AS (
-            SELECT id, source_id, tenant_id, document_id, idempotency_key, content,
+            SELECT id, bucket_id, tenant_id, document_id, idempotency_key, content,
                    embedding_model, chunk_index, total_chunks, metadata, indexed_at,
                    similarity, NULL::double precision AS kw_score,
                    vrank, NULL::bigint AS krank
             FROM vector_ranked
             UNION ALL
-            SELECT id, source_id, tenant_id, document_id, idempotency_key, content,
+            SELECT id, bucket_id, tenant_id, document_id, idempotency_key, content,
                    embedding_model, chunk_index, total_chunks, metadata, indexed_at,
                    NULL::double precision AS similarity, kw_score,
                    NULL::bigint AS vrank, krank
@@ -482,14 +482,14 @@ export class PgVectorAdapter implements VectorStoreAdapter {
             FROM combined
           ),
           final_chunks AS (
-            SELECT id, source_id, tenant_id, document_id, idempotency_key, content,
+            SELECT id, bucket_id, tenant_id, document_id, idempotency_key, content,
                    embedding_model, chunk_index, total_chunks, metadata, indexed_at,
                    MAX(similarity) AS similarity,
                    MAX(kw_score) AS keyword_score,
                    SUM(rrf_score) AS rrf_score
             FROM scored
             WHERE dedup_rank = 1
-            GROUP BY id, source_id, tenant_id, document_id, idempotency_key, content,
+            GROUP BY id, bucket_id, tenant_id, document_id, idempotency_key, content,
                      embedding_model, chunk_index, total_chunks, metadata, indexed_at
             ORDER BY SUM(rrf_score) DESC
             LIMIT $3
@@ -542,35 +542,35 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     return rows.map(row => mapRowToScoredChunk(row, {}))
   }
 
-  // --- Source persistence ---
+  // --- Bucket persistence ---
 
-  async upsertSource(source: Source): Promise<Source> {
+  async upsertBucket(bucket: Bucket): Promise<Bucket> {
     const rows = await this.sql(
-      `INSERT INTO ${this.sourcesTable} (id, name, description, status, tenant_id, updated_at)
+      `INSERT INTO ${this.bucketsTable} (id, name, description, status, tenant_id, updated_at)
        VALUES ($1, $2, $3, $4, $5, NOW())
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name, description = EXCLUDED.description,
          status = EXCLUDED.status, tenant_id = EXCLUDED.tenant_id, updated_at = NOW()
        RETURNING *`,
-      [source.id, source.name, source.description ?? null, source.status, source.tenantId ?? null]
+      [bucket.id, bucket.name, bucket.description ?? null, bucket.status, bucket.tenantId ?? null]
     )
-    return mapRowToSource(rows[0]!)
+    return mapRowToBucket(rows[0]!)
   }
 
-  async getSource(id: string): Promise<Source | null> {
-    const rows = await this.sql(`SELECT * FROM ${this.sourcesTable} WHERE id = $1`, [id])
-    return rows.length > 0 ? mapRowToSource(rows[0]!) : null
+  async getBucket(id: string): Promise<Bucket | null> {
+    const rows = await this.sql(`SELECT * FROM ${this.bucketsTable} WHERE id = $1`, [id])
+    return rows.length > 0 ? mapRowToBucket(rows[0]!) : null
   }
 
-  async listSources(tenantId?: string): Promise<Source[]> {
+  async listBuckets(tenantId?: string): Promise<Bucket[]> {
     const rows = tenantId
-      ? await this.sql(`SELECT * FROM ${this.sourcesTable} WHERE tenant_id = $1 ORDER BY created_at`, [tenantId])
-      : await this.sql(`SELECT * FROM ${this.sourcesTable} ORDER BY created_at`)
-    return rows.map(mapRowToSource)
+      ? await this.sql(`SELECT * FROM ${this.bucketsTable} WHERE tenant_id = $1 ORDER BY created_at`, [tenantId])
+      : await this.sql(`SELECT * FROM ${this.bucketsTable} ORDER BY created_at`)
+    return rows.map(mapRowToBucket)
   }
 
-  async deleteSource(id: string): Promise<void> {
-    await this.sql(`DELETE FROM ${this.sourcesTable} WHERE id = $1`, [id])
+  async deleteBucket(id: string): Promise<void> {
+    await this.sql(`DELETE FROM ${this.bucketsTable} WHERE id = $1`, [id])
   }
 
   // --- Job persistence ---
@@ -578,18 +578,18 @@ export class PgVectorAdapter implements VectorStoreAdapter {
   async upsertJob(job: Job): Promise<Job> {
     const rows = await this.sql(
       `INSERT INTO ${this.jobsTable}
-        (id, tenant_id, source_id, type, name, description, config, schedule,
+        (id, tenant_id, bucket_id, type, name, description, config, schedule,
          status, last_run_at, next_run_at, run_count, last_error, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
        ON CONFLICT (id) DO UPDATE SET
-         tenant_id = EXCLUDED.tenant_id, source_id = EXCLUDED.source_id,
+         tenant_id = EXCLUDED.tenant_id, bucket_id = EXCLUDED.bucket_id,
          type = EXCLUDED.type, name = EXCLUDED.name, description = EXCLUDED.description,
          config = EXCLUDED.config, schedule = EXCLUDED.schedule, status = EXCLUDED.status,
          last_run_at = EXCLUDED.last_run_at, next_run_at = EXCLUDED.next_run_at,
          run_count = EXCLUDED.run_count, last_error = EXCLUDED.last_error, updated_at = NOW()
        RETURNING *`,
       [
-        job.id, job.tenantId ?? null, job.sourceId ?? null, job.type, job.name,
+        job.id, job.tenantId ?? null, job.bucketId ?? null, job.type, job.name,
         job.description ?? null, JSON.stringify(job.config), job.schedule ?? null,
         job.status, job.lastRunAt?.toISOString() ?? null, job.nextRunAt?.toISOString() ?? null,
         job.runCount, job.lastError ?? null,
@@ -603,10 +603,10 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     return rows.length > 0 ? mapRowToJob(rows[0]!) : null
   }
 
-  async listJobs(filter?: { sourceId?: string; type?: string; tenantId?: string }): Promise<Job[]> {
+  async listJobs(filter?: { bucketId?: string; type?: string; tenantId?: string }): Promise<Job[]> {
     const conditions: string[] = []
     const params: unknown[] = []
-    if (filter?.sourceId) { params.push(filter.sourceId); conditions.push(`source_id = $${params.length}`) }
+    if (filter?.bucketId) { params.push(filter.bucketId); conditions.push(`bucket_id = $${params.length}`) }
     if (filter?.type) { params.push(filter.type); conditions.push(`type = $${params.length}`) }
     if (filter?.tenantId) { params.push(filter.tenantId); conditions.push(`tenant_id = $${params.length}`) }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
@@ -623,12 +623,12 @@ export class PgVectorAdapter implements VectorStoreAdapter {
   async createJobRun(run: JobRun): Promise<JobRun> {
     const rows = await this.sql(
       `INSERT INTO ${this.jobRunsTable}
-        (id, job_id, source_id, status, summary, documents_created, documents_updated,
+        (id, job_id, bucket_id, status, summary, documents_created, documents_updated,
          documents_deleted, metrics, error, duration_ms, started_at, completed_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [
-        run.id, run.jobId, run.sourceId ?? null, run.status, run.summary ?? null,
+        run.id, run.jobId, run.bucketId ?? null, run.status, run.summary ?? null,
         run.documentsCreated, run.documentsUpdated, run.documentsDeleted,
         JSON.stringify(run.metrics ?? {}), run.error ?? null, run.durationMs ?? null,
         run.startedAt.toISOString(), run.completedAt?.toISOString() ?? null,
@@ -730,9 +730,9 @@ function buildWhere(filter?: ChunkFilter): { where: string; params: unknown[] } 
   const conditions: string[] = []
   const params: unknown[] = []
 
-  if (filter.sourceId != null) {
-    params.push(filter.sourceId)
-    conditions.push(`source_id = $${params.length}`)
+  if (filter.bucketId != null) {
+    params.push(filter.bucketId)
+    conditions.push(`bucket_id = $${params.length}`)
   }
   if (filter.tenantId != null) {
     params.push(filter.tenantId)
@@ -759,7 +759,7 @@ function mapRowToScoredChunk(
 ): ScoredChunk {
   return {
     idempotencyKey: row.idempotency_key as string,
-    sourceId: row.source_id as string,
+    bucketId: row.bucket_id as string,
     tenantId: (row.tenant_id as string) ?? undefined,
     documentId: row.document_id as string,
     content: row.content as string,
@@ -777,12 +777,12 @@ function mapRowToScoredChunk(
   }
 }
 
-function mapRowToSource(row: Record<string, unknown>): Source {
+function mapRowToBucket(row: Record<string, unknown>): Bucket {
   return {
     id: row.id as string,
     name: row.name as string,
     description: (row.description as string) ?? undefined,
-    status: row.status as Source['status'],
+    status: row.status as Bucket['status'],
     tenantId: (row.tenant_id as string) ?? undefined,
   }
 }
@@ -791,7 +791,7 @@ function mapRowToJob(row: Record<string, unknown>): Job {
   return {
     id: row.id as string,
     tenantId: (row.tenant_id as string) ?? undefined,
-    sourceId: (row.source_id as string) ?? undefined,
+    bucketId: (row.bucket_id as string) ?? undefined,
     type: row.type as string,
     name: row.name as string,
     description: (row.description as string) ?? undefined,
@@ -811,7 +811,7 @@ function mapRowToJobRun(row: Record<string, unknown>): JobRun {
   return {
     id: row.id as string,
     jobId: row.job_id as string,
-    sourceId: (row.source_id as string) ?? undefined,
+    bucketId: (row.bucket_id as string) ?? undefined,
     status: row.status as JobRun['status'],
     summary: (row.summary as string) ?? undefined,
     documentsCreated: row.documents_created as number,
@@ -828,7 +828,7 @@ function mapRowToJobRun(row: Record<string, unknown>): JobRun {
 function mapRowToDocument(row: Record<string, unknown>): d8umDocument {
   return {
     id: row.doc_id as string,
-    sourceId: row.source_id as string,
+    bucketId: row.bucket_id as string,
     tenantId: (row.tenant_id as string) ?? undefined,
     title: row.doc_title as string,
     url: (row.doc_url as string) ?? undefined,

@@ -7,7 +7,7 @@ function d8umMakeResult(overrides: Partial<d8umResult> = {}): d8umResult {
     content: 'Test passage content',
     score: 0.85,
     scores: { vector: 0.85, rrf: 0.85 },
-    source: {
+    bucket: {
       id: 'src-1',
       documentId: 'doc-1',
       title: 'Test Document',
@@ -48,9 +48,9 @@ describe('assemble', () => {
 
   it('groups by source in XML', () => {
     const results = [
-      d8umMakeResult({ content: 'A', source: { ...d8umMakeResult().source, id: 'src-1' } }),
-      d8umMakeResult({ content: 'B', source: { ...d8umMakeResult().source, id: 'src-1' } }),
-      d8umMakeResult({ content: 'C', source: { ...d8umMakeResult().source, id: 'src-2', title: 'Other' } }),
+      d8umMakeResult({ content: 'A', bucket: { ...d8umMakeResult().bucket, id: 'src-1' } }),
+      d8umMakeResult({ content: 'B', bucket: { ...d8umMakeResult().bucket, id: 'src-1' } }),
+      d8umMakeResult({ content: 'C', bucket: { ...d8umMakeResult().bucket, id: 'src-2', title: 'Other' } }),
     ]
     const output = assemble(results)
     // Should have two <source> blocks
@@ -61,7 +61,7 @@ describe('assemble', () => {
   it('escapes XML special chars', () => {
     const results = [d8umMakeResult({
       content: 'Use <div> & "quotes"',
-      source: { ...d8umMakeResult().source, title: 'A & B <C>' },
+      bucket: { ...d8umMakeResult().bucket, title: 'A & B <C>' },
     })]
     const output = assemble(results)
     expect(output).toContain('&amp;')
@@ -85,7 +85,7 @@ describe('assemble', () => {
   it('assembles markdown with linked title when url present', () => {
     const results = [d8umMakeResult({
       content: 'Content here',
-      source: { ...d8umMakeResult().source, title: 'My Page', url: 'https://example.com' },
+      bucket: { ...d8umMakeResult().bucket, title: 'My Page', url: 'https://example.com' },
     })]
     const output = assemble(results, { format: 'markdown' })
     expect(output).toContain('# (My Page)[https://example.com]')
@@ -94,7 +94,7 @@ describe('assemble', () => {
   it('assembles markdown with plain title when no url', () => {
     const results = [d8umMakeResult({
       content: 'Content here',
-      source: { ...d8umMakeResult().source, title: 'FAQ Item', url: undefined },
+      bucket: { ...d8umMakeResult().bucket, title: 'FAQ Item', url: undefined },
     })]
     const output = assemble(results, { format: 'markdown' })
     expect(output).toContain('# FAQ Item')

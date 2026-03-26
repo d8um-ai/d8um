@@ -15,7 +15,7 @@ export const companiesJob: JobTypeDefinition = {
   label: 'HubSpot: Companies',
   description: 'Fetches companies from HubSpot CRM',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'HubSpotCompany',
   schedule: 'daily',
@@ -72,7 +72,7 @@ export const companiesJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

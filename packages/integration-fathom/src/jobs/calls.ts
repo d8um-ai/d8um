@@ -19,7 +19,7 @@ export const callsJob: JobTypeDefinition = {
   label: 'Fathom: Calls',
   description: 'Fetches call recordings and transcripts from Fathom',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'FathomCall',
   schedule: 'hourly',
@@ -99,7 +99,7 @@ export const callsJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

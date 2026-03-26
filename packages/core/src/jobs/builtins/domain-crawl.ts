@@ -10,7 +10,7 @@ export const domainCrawlJob: JobTypeDefinition = {
   label: 'Domain Crawl',
   description: 'Crawl and index pages from a domain',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   configSchema: [
     { key: 'domain', label: 'Domain', type: 'url', required: true },
@@ -48,7 +48,7 @@ export const domainCrawlJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: created,
       documentsUpdated: 0,

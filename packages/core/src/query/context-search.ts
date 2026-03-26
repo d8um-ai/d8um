@@ -41,8 +41,8 @@ export interface ContextSearchResponse {
  */
 export async function searchWithContext(
   adapter: VectorStoreAdapter,
-  sourceIds: string[],
-  sourceEmbeddings: Map<string, EmbeddingProvider>,
+  bucketIds: string[],
+  bucketEmbeddings: Map<string, EmbeddingProvider>,
   text: string,
   opts: ContextSearchOpts = {}
 ): Promise<ContextSearchResponse> {
@@ -56,13 +56,13 @@ export async function searchWithContext(
   const count = opts.count ?? 10
   const tenantId = opts.tenantId
 
-  // Build model groups from sourceEmbeddings
-  const modelGroups = new Map<string, { embedding: EmbeddingProvider; sourceIds: string[] }>()
-  for (const sid of sourceIds) {
-    const emb = sourceEmbeddings.get(sid)
+  // Build model groups from bucketEmbeddings
+  const modelGroups = new Map<string, { embedding: EmbeddingProvider; bucketIds: string[] }>()
+  for (const sid of bucketIds) {
+    const emb = bucketEmbeddings.get(sid)
     if (!emb) continue
-    const group = modelGroups.get(emb.model) ?? { embedding: emb, sourceIds: [] }
-    group.sourceIds.push(sid)
+    const group = modelGroups.get(emb.model) ?? { embedding: emb, bucketIds: [] }
+    group.bucketIds.push(sid)
     modelGroups.set(emb.model, group)
   }
 
@@ -78,8 +78,8 @@ export async function searchWithContext(
       keyword: r.rawScores.keyword,
       rrf: r.normalizedScore,
     },
-    source: {
-      id: r.sourceId,
+    bucket: {
+      id: r.bucketId,
       documentId: r.documentId,
       title: r.title ?? '',
       url: r.url,
@@ -104,7 +104,7 @@ export async function searchWithContext(
     }
   }
 
-  const firstModel = [...sourceEmbeddings.values()][0]
+  const firstModel = [...bucketEmbeddings.values()][0]
   if (!firstModel) {
     return {
       passages: [],
@@ -116,7 +116,7 @@ export async function searchWithContext(
   // Collect unique (documentId, chunkIndex) hits
   const hitsByDoc = new Map<string, { result: d8umResult; chunkIndex: number }[]>()
   for (const result of rawResults) {
-    const docId = result.source.documentId
+    const docId = result.bucket.documentId
     const existing = hitsByDoc.get(docId) ?? []
     existing.push({ result, chunkIndex: result.chunk.index })
     hitsByDoc.set(docId, existing)
@@ -152,10 +152,10 @@ export async function searchWithContext(
 
     passages.push({
       documentId: docId,
-      title: bestHit.result.source.title,
-      url: bestHit.result.source.url,
-      documentType: bestHit.result.source.documentType,
-      sourceType: bestHit.result.source.sourceType,
+      title: bestHit.result.bucket.title,
+      url: bestHit.result.bucket.url,
+      documentType: bestHit.result.bucket.documentType,
+      sourceType: bestHit.result.bucket.sourceType,
       rrfScore: bestHit.result.score,
       similarity: bestHit.result.scores.vector ?? 0,
       chunks: chunkList,

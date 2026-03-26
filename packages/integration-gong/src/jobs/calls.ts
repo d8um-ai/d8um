@@ -17,7 +17,7 @@ export const callsJob: JobTypeDefinition = {
   label: 'Gong: Calls',
   description: 'Fetches call recordings from Gong',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'GongCall',
   schedule: 'hourly',
@@ -82,7 +82,7 @@ export const callsJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

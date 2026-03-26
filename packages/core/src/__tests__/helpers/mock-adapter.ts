@@ -17,7 +17,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 function matchesFilter(chunk: EmbeddedChunk, filter: ChunkFilter): boolean {
-  if (filter.sourceId && chunk.sourceId !== filter.sourceId) return false
+  if (filter.bucketId && chunk.bucketId !== filter.bucketId) return false
   if (filter.tenantId && chunk.tenantId !== filter.tenantId) return false
   if (filter.documentId && chunk.documentId !== filter.documentId) return false
   if (filter.idempotencyKey && chunk.idempotencyKey !== filter.idempotencyKey) return false
@@ -54,25 +54,25 @@ export function createMockHashStore(): HashStoreAdapter & {
       data.delete(key)
     },
 
-    async listBySource(sourceId: string, tenantId?: string) {
+    async listByBucket(bucketId: string, tenantId?: string) {
       return [...data.values()].filter(r =>
-        r.sourceId === sourceId && (tenantId === undefined || r.tenantId === tenantId)
+        r.bucketId === bucketId && (tenantId === undefined || r.tenantId === tenantId)
       )
     },
 
-    async getLastRunTime(sourceId: string, tenantId?: string) {
-      const key = `${sourceId}::${tenantId ?? '__global__'}`
+    async getLastRunTime(bucketId: string, tenantId?: string) {
+      const key = `${bucketId}::${tenantId ?? '__global__'}`
       return lastRunTimes.get(key) ?? null
     },
 
-    async setLastRunTime(sourceId: string, tenantId: string | undefined, time: Date) {
-      const key = `${sourceId}::${tenantId ?? '__global__'}`
+    async setLastRunTime(bucketId: string, tenantId: string | undefined, time: Date) {
+      const key = `${bucketId}::${tenantId ?? '__global__'}`
       lastRunTimes.set(key, time)
     },
 
-    async deleteBySource(sourceId: string, tenantId?: string) {
+    async deleteByBucket(bucketId: string, tenantId?: string) {
       for (const [key, record] of data) {
-        if (record.sourceId === sourceId && (tenantId === undefined || record.tenantId === tenantId)) {
+        if (record.bucketId === bucketId && (tenantId === undefined || record.tenantId === tenantId)) {
           data.delete(key)
         }
       }
@@ -215,14 +215,14 @@ export function createMockAdapter(): VectorStoreAdapter & {
     async upsertDocumentRecord(input: UpsertDocumentInput): Promise<d8umDocument> {
       calls.push({ method: 'upsertDocumentRecord', args: [input] })
       const id = createHash('sha256')
-        .update(`${input.sourceId}::${input.url ?? input.title}`)
+        .update(`${input.bucketId}::${input.url ?? input.title}`)
         .digest('hex')
         .slice(0, 16)
       const now = new Date()
       const existing = documents.get(id)
       const doc: d8umDocument = {
         id,
-        sourceId: input.sourceId,
+        bucketId: input.bucketId,
         tenantId: input.tenantId,
         title: input.title,
         url: input.url,
@@ -251,7 +251,7 @@ export function createMockAdapter(): VectorStoreAdapter & {
     async listDocuments(filter: DocumentFilter): Promise<d8umDocument[]> {
       calls.push({ method: 'listDocuments', args: [filter] })
       return [...documents.values()].filter(d => {
-        if (filter.sourceId && d.sourceId !== filter.sourceId) return false
+        if (filter.bucketId && d.bucketId !== filter.bucketId) return false
         if (filter.tenantId && d.tenantId !== filter.tenantId) return false
         if (filter.status) {
           const statuses = Array.isArray(filter.status) ? filter.status : [filter.status]
@@ -266,7 +266,7 @@ export function createMockAdapter(): VectorStoreAdapter & {
       let count = 0
       for (const [id, d] of documents) {
         let match = true
-        if (filter.sourceId && d.sourceId !== filter.sourceId) match = false
+        if (filter.bucketId && d.bucketId !== filter.bucketId) match = false
         if (filter.tenantId && d.tenantId !== filter.tenantId) match = false
         if (match) {
           documents.delete(id)

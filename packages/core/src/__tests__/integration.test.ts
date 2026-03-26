@@ -2,28 +2,28 @@ import { describe, it, expect, vi } from 'vitest'
 import { d8umCreate } from '../d8um.js'
 import { createMockAdapter } from './helpers/mock-adapter.js'
 import { createMockEmbedding } from './helpers/mock-embedding.js'
-import { createMockSource } from './helpers/mock-source.js'
+import { createMockBucket } from './helpers/mock-source.js'
 import { createTestDocument, createTestDocuments } from './helpers/mock-connector.js'
 import type { d8umInstance } from '../d8um.js'
-import type { Source } from '../types/source.js'
+import type { Bucket } from '../types/bucket.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
 
-/** Register a pre-built Source + embedding on an instance (bypasses sources.create UUID generation). */
-function registerTestSource(instance: d8umInstance, source: Source, embedding: EmbeddingProvider) {
+/** Register a pre-built Bucket + embedding on an instance (bypasses buckets.create UUID generation). */
+function registerTestBucket(instance: d8umInstance, bucket: Bucket, embedding: EmbeddingProvider) {
   const impl = instance as any
-  impl._sources.set(source.id, source)
-  impl.sourceEmbeddings.set(source.id, embedding)
+  impl._buckets.set(bucket.id, bucket)
+  impl.bucketEmbeddings.set(bucket.id, embedding)
 }
 
 describe('integration', () => {
-  it('add source → index → query → assemble xml', async () => {
+  it('add bucket → index → query → assemble xml', async () => {
     const adapter = createMockAdapter()
     const embedding = createMockEmbedding()
     const instance = await d8umCreate({ vectorStore: adapter, embedding })
 
-    const { source, connector, indexConfig } = createMockSource({ documents: createTestDocuments(3) })
-    registerTestSource(instance, source, embedding)
-    await instance.indexWithConnector(source.id, connector, indexConfig)
+    const { bucket, connector, indexConfig } = createMockBucket({ documents: createTestDocuments(3) })
+    registerTestBucket(instance, bucket, embedding)
+    await instance.indexWithConnector(bucket.id, connector, indexConfig)
 
     const response = await instance.query('Document 1')
     expect(response.results.length).toBeGreaterThan(0)
@@ -40,29 +40,29 @@ describe('integration', () => {
     const instance = await d8umCreate({ vectorStore: adapter, embedding })
 
     const docs = [createTestDocument({ id: 'doc-1', content: 'Original content for testing' })]
-    const { source, connector, indexConfig } = createMockSource({ documents: docs })
-    registerTestSource(instance, source, embedding)
-    await instance.indexWithConnector(source.id, connector, indexConfig)
+    const { bucket, connector, indexConfig } = createMockBucket({ documents: docs })
+    registerTestBucket(instance, bucket, embedding)
+    await instance.indexWithConnector(bucket.id, connector, indexConfig)
 
     // Update the document content
     const updatedDocs = [createTestDocument({ id: 'doc-1', content: 'Updated content with new information' })]
-    const { connector: updatedConnector, indexConfig: updatedIndexConfig } = createMockSource({ documents: updatedDocs })
-    await instance.indexWithConnector(source.id, updatedConnector, updatedIndexConfig)
+    const { connector: updatedConnector, indexConfig: updatedIndexConfig } = createMockBucket({ documents: updatedDocs })
+    await instance.indexWithConnector(bucket.id, updatedConnector, updatedIndexConfig)
 
     const response = await instance.query('Updated content')
     expect(response.results.length).toBeGreaterThan(0)
     expect(response.results[0]!.content).toContain('Updated')
   })
 
-  it('multi-source → merged query results', async () => {
+  it('multi-bucket → merged query results', async () => {
     const adapter = createMockAdapter()
     const embedding = createMockEmbedding()
     const instance = await d8umCreate({ vectorStore: adapter, embedding })
 
-    const { source: source1, connector: connector1, indexConfig: indexConfig1 } = createMockSource({ id: 'src-1', documents: createTestDocuments(2, 'Alpha') })
-    const { source: source2, connector: connector2, indexConfig: indexConfig2 } = createMockSource({ id: 'src-2', documents: createTestDocuments(2, 'Beta') })
-    registerTestSource(instance, source1, embedding)
-    registerTestSource(instance, source2, embedding)
+    const { bucket: source1, connector: connector1, indexConfig: indexConfig1 } = createMockBucket({ id: 'src-1', documents: createTestDocuments(2, 'Alpha') })
+    const { bucket: source2, connector: connector2, indexConfig: indexConfig2 } = createMockBucket({ id: 'src-2', documents: createTestDocuments(2, 'Beta') })
+    registerTestBucket(instance, source1, embedding)
+    registerTestBucket(instance, source2, embedding)
 
     await instance.indexWithConnector('src-1', connector1, indexConfig1)
     await instance.indexWithConnector('src-2', connector2, indexConfig2)
@@ -70,20 +70,20 @@ describe('integration', () => {
     const response = await instance.query('content')
     expect(response.results.length).toBeGreaterThan(0)
     // Should have results from both sources
-    const sourceIds = new Set(response.results.map(r => r.source.id))
-    expect(sourceIds.size).toBeGreaterThanOrEqual(1)
+    const bucketIds = new Set(response.results.map(r => r.bucket.id))
+    expect(bucketIds.size).toBeGreaterThanOrEqual(1)
   })
 
-  it('multi-model (different embedding models per source)', async () => {
+  it('multi-model (different embedding models per bucket)', async () => {
     const adapter = createMockAdapter()
     const embeddingA = createMockEmbedding({ model: 'model-a', dimensions: 4 })
     const embeddingB = createMockEmbedding({ model: 'model-b', dimensions: 4 })
     const instance = await d8umCreate({ vectorStore: adapter, embedding: embeddingA })
 
-    const { source: source1, connector: connector1, indexConfig: indexConfig1 } = createMockSource({ id: 'src-1', documents: createTestDocuments(2, 'Alpha') })
-    const { source: source2, connector: connector2, indexConfig: indexConfig2 } = createMockSource({ id: 'src-2', documents: createTestDocuments(2, 'Beta') })
-    registerTestSource(instance, source1, embeddingA)
-    registerTestSource(instance, source2, embeddingB)
+    const { bucket: source1, connector: connector1, indexConfig: indexConfig1 } = createMockBucket({ id: 'src-1', documents: createTestDocuments(2, 'Alpha') })
+    const { bucket: source2, connector: connector2, indexConfig: indexConfig2 } = createMockBucket({ id: 'src-2', documents: createTestDocuments(2, 'Beta') })
+    registerTestBucket(instance, source1, embeddingA)
+    registerTestBucket(instance, source2, embeddingB)
 
     await instance.indexWithConnector('src-1', connector1, indexConfig1)
     await instance.indexWithConnector('src-2', connector2, indexConfig2)
@@ -98,11 +98,11 @@ describe('integration', () => {
     const embedding = createMockEmbedding()
     const instance = await d8umCreate({ vectorStore: adapter, embedding })
 
-    const { source, connector, indexConfig } = createMockSource({ documents: createTestDocuments(2) })
-    registerTestSource(instance, source, embedding)
+    const { bucket, connector, indexConfig } = createMockBucket({ documents: createTestDocuments(2) })
+    registerTestBucket(instance, bucket, embedding)
 
-    const result1 = await instance.indexWithConnector(source.id, connector, indexConfig)
-    const result2 = await instance.indexWithConnector(source.id, connector, indexConfig)
+    const result1 = await instance.indexWithConnector(bucket.id, connector, indexConfig)
+    const result2 = await instance.indexWithConnector(bucket.id, connector, indexConfig)
 
     expect(result1.inserted).toBe(2)
     expect(result2.skipped).toBe(2)
@@ -114,11 +114,11 @@ describe('integration', () => {
     const embedding = createMockEmbedding()
     const instance = await d8umCreate({ vectorStore: adapter, embedding })
 
-    const { source, connector, indexConfig } = createMockSource({ documents: createTestDocuments(2) })
-    registerTestSource(instance, source, embedding)
+    const { bucket, connector, indexConfig } = createMockBucket({ documents: createTestDocuments(2) })
+    registerTestBucket(instance, bucket, embedding)
 
-    await instance.indexWithConnector(source.id, connector, indexConfig, { tenantId: 'tenant-a' })
-    await instance.indexWithConnector(source.id, connector, indexConfig, { tenantId: 'tenant-b' })
+    await instance.indexWithConnector(bucket.id, connector, indexConfig, { tenantId: 'tenant-a' })
+    await instance.indexWithConnector(bucket.id, connector, indexConfig, { tenantId: 'tenant-b' })
 
     const responseA = await instance.query('Document', { tenantId: 'tenant-a' })
     const responseB = await instance.query('Document', { tenantId: 'tenant-b' })
@@ -132,15 +132,15 @@ describe('integration', () => {
     const embedding = createMockEmbedding()
     const instance = await d8umCreate({ vectorStore: adapter, embedding })
 
-    const { source } = createMockSource({ documents: [] })
-    registerTestSource(instance, source, embedding)
+    const { bucket } = createMockBucket({ documents: [] })
+    registerTestBucket(instance, bucket, embedding)
 
     const doc = createTestDocument({ content: 'Ingested document content' })
     const chunks = [
       { content: 'Chunk zero text', chunkIndex: 0 },
       { content: 'Chunk one text', chunkIndex: 1 },
     ]
-    await instance.ingestWithChunks(source.id, doc, chunks)
+    await instance.ingestWithChunks(bucket.id, doc, chunks)
 
     const response = await instance.query('Chunk zero text')
     expect(response.results.length).toBeGreaterThan(0)
@@ -152,13 +152,13 @@ describe('integration', () => {
     const instance = await d8umCreate({ vectorStore: adapter, embedding })
 
     const docs = createTestDocuments(3)
-    const { source, connector, indexConfig } = createMockSource({ documents: docs })
-    registerTestSource(instance, source, embedding)
-    await instance.indexWithConnector(source.id, connector, indexConfig)
+    const { bucket, connector, indexConfig } = createMockBucket({ documents: docs })
+    registerTestBucket(instance, bucket, embedding)
+    await instance.indexWithConnector(bucket.id, connector, indexConfig)
 
     // Remove 2 docs and prune
-    const { connector: reducedConnector, indexConfig: reducedIndexConfig } = createMockSource({ documents: [docs[0]!] })
-    const result = await instance.indexWithConnector(source.id, reducedConnector, reducedIndexConfig, { removeDeleted: true })
+    const { connector: reducedConnector, indexConfig: reducedIndexConfig } = createMockBucket({ documents: [docs[0]!] })
+    const result = await instance.indexWithConnector(bucket.id, reducedConnector, reducedIndexConfig, { removeDeleted: true })
     expect(result.pruned).toBe(2)
   })
 
@@ -167,9 +167,9 @@ describe('integration', () => {
     const embedding = createMockEmbedding()
     const instance = await d8umCreate({ vectorStore: adapter, embedding })
 
-    const { source, connector, indexConfig } = createMockSource({ documents: createTestDocuments(2) })
-    registerTestSource(instance, source, embedding)
-    await instance.indexWithConnector(source.id, connector, indexConfig)
+    const { bucket, connector, indexConfig } = createMockBucket({ documents: createTestDocuments(2) })
+    registerTestBucket(instance, bucket, embedding)
+    await instance.indexWithConnector(bucket.id, connector, indexConfig)
 
     const response = await instance.query('Document')
     const results = response.results
@@ -198,10 +198,10 @@ describe('integration', () => {
       hooks: { onIndexStart, onIndexComplete, onQueryResults },
     })
 
-    const { source, connector, indexConfig } = createMockSource({ documents: createTestDocuments(2) })
-    registerTestSource(instance, source, embedding)
+    const { bucket, connector, indexConfig } = createMockBucket({ documents: createTestDocuments(2) })
+    registerTestBucket(instance, bucket, embedding)
 
-    await instance.indexWithConnector(source.id, connector, indexConfig)
+    await instance.indexWithConnector(bucket.id, connector, indexConfig)
     expect(onIndexStart).toHaveBeenCalled()
     expect(onIndexComplete).toHaveBeenCalled()
 

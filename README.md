@@ -33,7 +33,7 @@ d8um closes that gap:
 - **TypeScript-native** - no Python runtime, no managed service, no vendor lock-in
 - **Lightweight infrastructure** - runs on Postgres+pgvector or SQLite. No Neo4j, no Redis, no Qdrant
 - **Composable** - works alongside your stack, not inside a framework
-- **Option for per-source embedding models** - different models for different content, merged at query time via RRF
+- **Option for per-bucket embedding models** - different models for different content, merged at query time via RRF
 - **Job system** - schedule memory consolidation, decay, and extraction as recurring tasks
 
 ## Quick Start
@@ -58,8 +58,8 @@ await d8um.deploy(config)
 // Runtime init — lightweight, no DDL (safe for serverless cold starts)
 await d8um.initialize(config)
 
-// Create a source
-const faq = await d8um.sources.create({ name: 'faq' })
+// Create a bucket
+const faq = await d8um.buckets.create({ name: 'faq' })
 
 // Ingest a document
 await d8um.ingest(faq.id, {
@@ -92,54 +92,70 @@ For local development or scripts, `d8umCreate(config)` is a convenience that cal
 
 ## Cognitive Memory
 
-d8um is also the **first TypeScript-native cognitive memory substrate** for AI agents. Inspired by human memory systems, it adds working memory, episodic recall, semantic knowledge graphs, and procedural learning.
+d8um includes a **cognitive memory system** inspired by human memory. Memory operations live directly on the d8um singleton - identity is per-call, Segment-style:
 
 ```ts
-import { d8umMemory } from '@d8um/memory'
+import { d8umCreate } from '@d8um/core'
+import { createGraphBridge } from '@d8um/graph'
 
-const memory = new d8umMemory({ memoryStore, embedding, llm, scope: { userId: 'alice' } })
+const d = await d8umCreate({
+  vectorStore: adapter,
+  embedding: model,
+  llm: myLLM,
+  graph: createGraphBridge({ memoryStore, embedding: model, llm: myLLM }),
+})
 
-await memory.addConversationTurn([
-  { role: 'user', content: 'I just switched from MySQL to PostgreSQL' }
-])
+// Remember facts - identity is per-call, not ambient
+await d.remember('Alice works at Acme Corp', { userId: 'alice', tenantId: 'org1' })
 
-const facts = await memory.recallFacts('database preference')
-// [{ content: 'alice uses PostgreSQL', subject: 'alice', predicate: 'uses', object: 'PostgreSQL' }]
+// Correct knowledge
+await d.correct('Actually, Alice moved to Beta Inc', { userId: 'alice', tenantId: 'org1' })
 
-await memory.correct('Actually, I use MariaDB now')
+// Ingest conversations with automatic fact extraction
+await d.addConversationTurn(messages, { userId: 'alice' })
 ```
 
 Memory operations are also schedulable jobs:
 
 ```ts
-import { registerConsolidationJobs } from '@d8um/consolidation'
+import { registerConsolidationJobs } from '@d8um/graph'
 registerConsolidationJobs()
 
-d8um.jobs.create({ type: 'memory_consolidation', schedule: '0 3 * * *' })
-d8um.jobs.create({ type: 'memory_decay', schedule: '0 * * * *' })
+d.jobs.create({ type: 'memory_consolidation', schedule: '0 3 * * *' })
+d.jobs.create({ type: 'memory_decay', schedule: '0 * * * *' })
 ```
 
 > **Deep dive:** [Agentic Memory Guide](guides/Agentic%20Memory/overview.md) - memory types, lifecycle, extraction pipeline, landscape analysis
 
 ## How It Works
 
-d8um queries across all sources in parallel, normalizes scores, merges via [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf), and returns a unified ranked result set.
+d8um supports five query modes - the caller chooses the cost/depth tradeoff:
 
+| Mode | What It Does | Latency |
+|------|-------------|---------|
+| `fast` | Pure vector ANN. No keyword, no graph. | ~10-30ms |
+| `hybrid` | Vector + keyword, RRF fusion. **Default.** | ~30-80ms |
+| `memory` | Cognitive memory only (facts, episodes, procedures). | ~30-80ms |
+| `neural` | All three in parallel: hybrid + memory + PPR graph walk. | ~100-400ms |
+| `auto` | Heuristic picks `hybrid` or `neural` per query. | Varies |
+
+```ts
+// Fast autocomplete
+d.query('sso', { mode: 'fast' })
+
+// Default hybrid search
+d.query('how do I configure SSO?')
+
+// Neural mode: hippocampal associative retrieval
+// Runs vector search + memory recall + Personalized PageRank in parallel
+d.query('what did Alice say about the SSO migration?', {
+  mode: 'neural',
+  userId: 'alice',
+  tenantId: 'org1',
+})
 ```
-d8um.query("how do I configure SSO?")
-        │
-   ┌────┼────┐
-   ▼    ▼    ▼
-indexed live cached    ← per-source embedding models
-   │    │    │
-   └────┼────┘
-        ▼
-  Score Merger (RRF)
-        ▼
-   assemble()
-        ▼
-  Prompt-ready context
-```
+
+When `graph` and `llm` are configured, document indexing automatically extracts entity-relation triples into a knowledge graph. Neural mode uses Personalized PageRank to traverse this graph, surfacing associatively-connected passages across documents and memory - enabling multi-hop reasoning in a single retrieval step.
 
 > **Deep dive:** [Agentic RAG Guide](guides/Agentic%20RAG/overview.md) - hybrid search, per-model fan-out, embedding providers, architecture
 
@@ -153,10 +169,8 @@ indexed live cached    ← per-source embedding models
 | [`@d8um/adapter-sqlite-vec`](packages/adapters/sqlite-vec) | SQLite + sqlite-vec - zero-infra local dev | Alpha |
 | [`@d8um/embedding-local`](packages/embeddings/local) | Local embeddings (bge-small-en-v1.5, MIT, ONNX) | Alpha |
 | [`@d8um/hosted`](packages/hosted) | Hosted client SDK | Alpha |
-| **Cognitive Memory** | | |
-| [`@d8um/memory`](packages/memory) | Memory types, working memory, extraction, scoping | Alpha |
-| [`@d8um/memory-graph`](packages/memory-graph) | Embedded graph - BFS/DFS traversal, no external DB | Alpha |
-| [`@d8um/consolidation`](packages/consolidation) | Decay, forgetting, consolidation, correction jobs | Alpha |
+| **Graph + Memory** | | |
+| [`@d8um/graph`](packages/graph) | Knowledge graph, cognitive memory, PPR, entity linking, consolidation | Alpha |
 | [`@d8um/mcp-server`](packages/mcp-server) | MCP tools + resources for agent frameworks | Alpha |
 | [`@d8um/vercel-ai-provider`](packages/vercel-ai-provider) | Vercel AI SDK memory tools + middleware | Alpha |
 | **Integrations** | | |

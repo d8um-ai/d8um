@@ -2,11 +2,11 @@ import { createHash } from 'crypto'
 
 export interface NormalizedResult {
   content: string
-  sourceId: string
+  bucketId: string
   documentId: string
-  rawScores: { vector?: number | undefined; keyword?: number | undefined; liveRelevance?: number | undefined }
+  rawScores: { vector?: number | undefined; keyword?: number | undefined; liveRelevance?: number | undefined; memory?: number | undefined; graph?: number | undefined }
   normalizedScore: number
-  mode: 'indexed' | 'live' | 'cached'
+  mode: 'indexed' | 'live' | 'cached' | 'memory' | 'graph'
   metadata: Record<string, unknown>
   chunk?: { index: number; total: number; isNeighbor: boolean } | undefined
   url?: string | undefined
@@ -41,9 +41,11 @@ export function minMaxNormalize(results: NormalizedResult[]): NormalizedResult[]
 }
 
 const DEFAULT_WEIGHTS: Record<string, number> = {
-  indexed: 0.7,
-  live: 0.2,
+  indexed: 0.5,
+  live: 0.1,
   cached: 0.1,
+  memory: 0.2,
+  graph: 0.3,
 }
 
 export function mergeAndRank(

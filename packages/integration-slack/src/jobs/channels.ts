@@ -14,7 +14,7 @@ export const channelsJob: JobTypeDefinition = {
   label: 'Slack: Channels',
   description: 'Fetches channels from Slack workspace',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'SlackChannel',
   schedule: 'daily',
@@ -68,7 +68,7 @@ export const channelsJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

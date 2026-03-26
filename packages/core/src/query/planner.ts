@@ -1,58 +1,102 @@
-import type { Source } from '../types/source.js'
+import type { Bucket } from '../types/bucket.js'
 import type { QueryOpts, QueryResponse, d8umResult } from '../types/query.js'
 import type { VectorStoreAdapter } from '../types/adapter.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
+import type { GraphBridge } from '../types/graph-bridge.js'
 import { IndexedRunner } from './runners/indexed.js'
+import { MemoryRunner } from './runners/memory-runner.js'
+import { GraphRunner } from './runners/graph-runner.js'
 import { mergeAndRank, type NormalizedResult } from './merger.js'
+import { classifyQuery } from './classifier.js'
 
 export class QueryPlanner {
   constructor(
     private adapter: VectorStoreAdapter,
-    private sourceIds: string[],
-    private sourceEmbeddings: Map<string, EmbeddingProvider>
+    private bucketIds: string[],
+    private bucketEmbeddings: Map<string, EmbeddingProvider>,
+    private graph?: GraphBridge
   ) {}
 
   async execute(text: string, opts: QueryOpts = {}): Promise<QueryResponse> {
     const startMs = Date.now()
     const count = opts.count ?? 10
     const tenantId = opts.tenantId
+    const resolvedMode = opts.mode === 'auto'
+      ? classifyQuery(text)
+      : (opts.mode ?? 'hybrid')
 
     // Filter to requested sources or use all
-    const activeSourceIds = opts.sources
-      ? opts.sources.filter(id => this.sourceIds.includes(id))
-      : this.sourceIds
+    const activeBucketIds = opts.buckets
+      ? opts.buckets.filter(id => this.bucketIds.includes(id))
+      : this.bucketIds
 
     // Group sources by embedding model
-    const modelGroups = new Map<string, { embedding: EmbeddingProvider; sourceIds: string[] }>()
+    const modelGroups = new Map<string, { embedding: EmbeddingProvider; bucketIds: string[] }>()
     const warnings: string[] = []
 
-    for (const sourceId of activeSourceIds) {
-      const emb = this.sourceEmbeddings.get(sourceId)
+    for (const bucketId of activeBucketIds) {
+      const emb = this.bucketEmbeddings.get(bucketId)
       if (!emb) {
-        warnings.push(`Source "${sourceId}" has no embedding provider - skipped`)
+        warnings.push(`Bucket "${bucketId}" has no embedding provider - skipped`)
         continue
       }
       const existing = modelGroups.get(emb.model)
       if (existing) {
-        existing.sourceIds.push(sourceId)
+        existing.bucketIds.push(bucketId)
       } else {
-        modelGroups.set(emb.model, { embedding: emb, sourceIds: [sourceId] })
+        modelGroups.set(emb.model, { embedding: emb, bucketIds: [bucketId] })
+      }
+    }
+
+    // Memory-only mode: skip indexed search entirely
+    if (resolvedMode === 'memory') {
+      if (!this.graph) {
+        return {
+          results: [],
+          buckets: {},
+          query: { text, tenantId, durationMs: Date.now() - startMs, mergeStrategy: 'rrf' },
+          warnings: ['Memory mode requires a graph bridge. Configure graph in d8umConfig.'],
+        }
+      }
+      const identity = { tenantId: opts.tenantId, groupId: opts.groupId, userId: opts.userId, agentId: opts.agentId, sessionId: opts.sessionId }
+      const memoryRunner = new MemoryRunner(this.graph)
+      const memResults = await memoryRunner.run(text, identity, count)
+      const results: d8umResult[] = memResults.map(r => ({
+        content: r.content,
+        score: r.normalizedScore,
+        scores: { memory: r.rawScores.memory, rrf: r.normalizedScore },
+        bucket: {
+          id: r.bucketId,
+          documentId: r.documentId,
+          title: r.title ?? '',
+          url: r.url,
+          updatedAt: r.updatedAt ?? new Date(),
+        },
+        chunk: r.chunk ?? { index: 0, total: 1, isNeighbor: false },
+        metadata: r.metadata,
+        tenantId: r.tenantId,
+      }))
+      return {
+        results,
+        buckets: { __memory__: { mode: 'cached', resultCount: results.length, durationMs: Date.now() - startMs, status: 'ok' } },
+        query: { text, tenantId, durationMs: Date.now() - startMs, mergeStrategy: 'rrf' },
       }
     }
 
     // Run indexed search
-    const sourceTimings: QueryResponse['sources'] = {}
+    const bucketTimings: QueryResponse['buckets'] = {}
     let allResults: NormalizedResult[] = []
 
     if (modelGroups.size > 0) {
       const runnerStart = Date.now()
       const runner = new IndexedRunner(this.adapter)
-      const results = await runner.run(text, modelGroups, count, tenantId, opts.documentFilter)
+      const vectorOnly = resolvedMode === 'fast'
+      const results = await runner.run(text, modelGroups, count, tenantId, opts.documentFilter, vectorOnly)
       const runnerDuration = Date.now() - runnerStart
 
-      for (const sourceId of activeSourceIds) {
-        const sourceResults = results.filter(r => r.sourceId === sourceId)
-        sourceTimings[sourceId] = {
+      for (const bucketId of activeBucketIds) {
+        const sourceResults = results.filter(r => r.bucketId === bucketId)
+        bucketTimings[bucketId] = {
           mode: 'indexed',
           resultCount: sourceResults.length,
           durationMs: runnerDuration,
@@ -63,14 +107,35 @@ export class QueryPlanner {
       allResults = results
     }
 
+    // Neural mode: also run memory + graph runners in parallel
+    const runnerArrays: NormalizedResult[][] = [allResults]
+    if (resolvedMode === 'neural' && this.graph) {
+      const identity = { tenantId: opts.tenantId, groupId: opts.groupId, userId: opts.userId, agentId: opts.agentId, sessionId: opts.sessionId }
+
+      const [memResults, graphResults] = await Promise.all([
+        new MemoryRunner(this.graph).run(text, identity, count).catch(() => [] as NormalizedResult[]),
+        new GraphRunner(this.graph).run(text, identity, count).catch(() => [] as NormalizedResult[]),
+      ])
+
+      if (memResults.length > 0) {
+        runnerArrays.push(memResults)
+        bucketTimings['__memory__'] = { mode: 'cached', resultCount: memResults.length, durationMs: Date.now() - startMs, status: 'ok' }
+      }
+      if (graphResults.length > 0) {
+        runnerArrays.push(graphResults)
+        bucketTimings['__graph__'] = { mode: 'cached', resultCount: graphResults.length, durationMs: Date.now() - startMs, status: 'ok' }
+      }
+    }
+
     // Merge and rank
     const weights = opts.mergeWeights
       ? Object.fromEntries(
           Object.entries(opts.mergeWeights).filter((e): e is [string, number] => e[1] != null)
         )
       : undefined
-    const mergedResults = modelGroups.size > 1
-      ? mergeAndRank([allResults], count, weights)
+    const needsMerge = runnerArrays.length > 1 || modelGroups.size > 1
+    const mergedResults = needsMerge
+      ? mergeAndRank(runnerArrays, count, weights)
       : allResults.slice(0, count)
 
     // Map NormalizedResult → d8umResult
@@ -82,8 +147,8 @@ export class QueryPlanner {
         keyword: r.rawScores.keyword,
         rrf: r.normalizedScore,
       },
-      source: {
-        id: r.sourceId,
+      bucket: {
+        id: r.bucketId,
         documentId: r.documentId,
         title: r.title ?? '',
         url: r.url,
@@ -102,7 +167,7 @@ export class QueryPlanner {
 
     return {
       results,
-      sources: sourceTimings,
+      buckets: bucketTimings,
       query: {
         text,
         tenantId,

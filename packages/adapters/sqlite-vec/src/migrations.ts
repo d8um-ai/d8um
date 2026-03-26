@@ -32,7 +32,7 @@ export const MODEL_CHUNKS_SQL = (chunksTable: string) => `
   CREATE TABLE IF NOT EXISTS ${chunksTable} (
     chunk_rowid     INTEGER PRIMARY KEY AUTOINCREMENT,
     id              TEXT NOT NULL,
-    source_id       TEXT NOT NULL,
+    bucket_id       TEXT NOT NULL,
     tenant_id       TEXT,
     document_id     TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
@@ -45,10 +45,10 @@ export const MODEL_CHUNKS_SQL = (chunksTable: string) => `
   );
 
   CREATE UNIQUE INDEX IF NOT EXISTS ${chunksTable}_ikey_chunk_idx
-    ON ${chunksTable} (idempotency_key, chunk_index, source_id);
+    ON ${chunksTable} (idempotency_key, chunk_index, bucket_id);
 
   CREATE INDEX IF NOT EXISTS ${chunksTable}_source_tenant_idx
-    ON ${chunksTable} (source_id, tenant_id);
+    ON ${chunksTable} (bucket_id, tenant_id);
 
   CREATE INDEX IF NOT EXISTS ${chunksTable}_doc_chunk_idx
     ON ${chunksTable} (document_id, chunk_index);
@@ -69,28 +69,28 @@ export const HASH_TABLE_SQL = (hashesTable: string) => `
     store_key       TEXT PRIMARY KEY,
     idempotency_key TEXT NOT NULL,
     content_hash    TEXT NOT NULL,
-    source_id       TEXT NOT NULL,
+    bucket_id       TEXT NOT NULL,
     tenant_id       TEXT,
     embedding_model TEXT NOT NULL,
     indexed_at      TEXT NOT NULL,
     chunk_count     INTEGER NOT NULL
   );
 
-  CREATE INDEX IF NOT EXISTS ${hashesTable}_source_idx
-    ON ${hashesTable} (source_id, tenant_id);
+  CREATE INDEX IF NOT EXISTS ${hashesTable}_bucket_idx
+    ON ${hashesTable} (bucket_id, tenant_id);
 
   CREATE TABLE IF NOT EXISTS ${hashesTable}_run_times (
-    source_id  TEXT NOT NULL,
+    bucket_id  TEXT NOT NULL,
     tenant_id  TEXT DEFAULT '',
     last_run   TEXT NOT NULL,
-    PRIMARY KEY (source_id, tenant_id)
+    PRIMARY KEY (bucket_id, tenant_id)
   );
 `
 
 /**
  * DDL for the sources table.
  */
-export const SOURCES_TABLE_SQL = (table: string) => `
+export const BUCKETS_TABLE_SQL = (table: string) => `
   CREATE TABLE IF NOT EXISTS ${table} (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
@@ -109,7 +109,7 @@ export const JOBS_TABLE_SQL = (table: string) => `
   CREATE TABLE IF NOT EXISTS ${table} (
     id          TEXT PRIMARY KEY,
     tenant_id   TEXT,
-    source_id   TEXT,
+    bucket_id   TEXT,
     type        TEXT NOT NULL,
     name        TEXT NOT NULL,
     description TEXT,
@@ -132,7 +132,7 @@ export const JOB_RUNS_TABLE_SQL = (table: string) => `
   CREATE TABLE IF NOT EXISTS ${table} (
     id                TEXT PRIMARY KEY,
     job_id            TEXT NOT NULL,
-    source_id         TEXT,
+    bucket_id         TEXT,
     status            TEXT NOT NULL DEFAULT 'running',
     summary           TEXT,
     documents_created INTEGER NOT NULL DEFAULT 0,

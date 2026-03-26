@@ -1,7 +1,7 @@
 import type { EmbeddedChunk, ChunkFilter, ScoredChunk } from './document.js'
 import type { d8umDocument, DocumentFilter, DocumentStatus, UpsertDocumentInput } from './d8um-document.js'
 import type { DocumentJobRelation, DocumentJobRelationFilter } from './document-job-relation.js'
-import type { Source } from './source.js'
+import type { Bucket } from './bucket.js'
 import type { Job, JobRun } from './job.js'
 
 export interface SearchOpts {
@@ -14,7 +14,7 @@ export interface SearchOpts {
 export interface HashRecord {
   idempotencyKey: string
   contentHash: string
-  sourceId: string
+  bucketId: string
   tenantId?: string | undefined
   embeddingModel: string
   indexedAt: Date
@@ -26,10 +26,10 @@ export interface HashStoreAdapter {
   get(key: string): Promise<HashRecord | null>
   set(key: string, record: HashRecord): Promise<void>
   delete(key: string): Promise<void>
-  listBySource(sourceId: string, tenantId?: string | undefined): Promise<HashRecord[]>
-  getLastRunTime(sourceId: string, tenantId?: string | undefined): Promise<Date | null>
-  setLastRunTime(sourceId: string, tenantId: string | undefined, time: Date): Promise<void>
-  deleteBySource(sourceId: string, tenantId?: string | undefined): Promise<void>
+  listByBucket(bucketId: string, tenantId?: string | undefined): Promise<HashRecord[]>
+  getLastRunTime(bucketId: string, tenantId?: string | undefined): Promise<Date | null>
+  setLastRunTime(bucketId: string, tenantId: string | undefined, time: Date): Promise<void>
+  deleteByBucket(bucketId: string, tenantId?: string | undefined): Promise<void>
 }
 
 export interface ScoredChunkWithDocument extends ScoredChunk {
@@ -106,16 +106,16 @@ export interface VectorStoreAdapter {
   /** Get document IDs where the given job is the ONLY related job (orphaned on job delete). */
   getOrphanedDocumentIds?(jobId: string): Promise<string[]>
 
-  // --- Source persistence (optional - adapters that support persistence implement these) ---
+  // --- Bucket persistence (optional - adapters that support persistence implement these) ---
 
-  /** Create or update a source. */
-  upsertSource?(source: Source): Promise<Source>
-  /** Get a source by ID. */
-  getSource?(id: string): Promise<Source | null>
-  /** List sources, optionally filtered by tenant. */
-  listSources?(tenantId?: string): Promise<Source[]>
-  /** Delete a source by ID. */
-  deleteSource?(id: string): Promise<void>
+  /** Create or update a bucket. */
+  upsertBucket?(bucket: Bucket): Promise<Bucket>
+  /** Get a bucket by ID. */
+  getBucket?(id: string): Promise<Bucket | null>
+  /** List buckets, optionally filtered by tenant. */
+  listBuckets?(tenantId?: string): Promise<Bucket[]>
+  /** Delete a bucket by ID. */
+  deleteBucket?(id: string): Promise<void>
 
   // --- Job persistence (optional) ---
 
@@ -124,7 +124,7 @@ export interface VectorStoreAdapter {
   /** Get a job by ID. */
   getJob?(id: string): Promise<Job | null>
   /** List jobs matching an optional filter. */
-  listJobs?(filter?: { sourceId?: string; type?: string; tenantId?: string }): Promise<Job[]>
+  listJobs?(filter?: { bucketId?: string; type?: string; tenantId?: string }): Promise<Job[]>
   /** Delete a job by ID. */
   deleteJob?(id: string): Promise<void>
 

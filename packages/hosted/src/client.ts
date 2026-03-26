@@ -1,5 +1,5 @@
-import type { d8umInstance, d8umConfig, SourcesApi, JobsApi, DocumentJobsApi, UndeployResult } from '@d8um/core'
-import type { Source, CreateSourceInput, IndexConfig } from '@d8um/core'
+import type { d8umInstance, d8umConfig, BucketsApi, JobsApi, DocumentJobsApi, UndeployResult } from '@d8um/core'
+import type { Bucket, CreateBucketInput, IndexConfig } from '@d8um/core'
 import type { Job, CreateJobInput, JobRunResult } from '@d8um/core'
 import type { DocumentJobRelation, DocumentJobRelationType } from '@d8um/core'
 import type { QueryOpts, QueryResponse, AssembleOpts, d8umResult } from '@d8um/core'
@@ -14,7 +14,7 @@ import { HttpClient } from './http-client.js'
 
 /**
  * Extended d8um instance for hosted mode.
- * Includes full CRUD for sources, jobs, and documents.
+ * Includes full CRUD for buckets, jobs, and documents.
  */
 export interface d8umHostedInstance extends d8umInstance {
   // Document CRUD
@@ -32,22 +32,22 @@ export interface d8umHostedInstance extends d8umInstance {
 export function d8umHosted(config: HostedConfig): d8umHostedInstance {
   const client = new HttpClient(config)
 
-  const sources: SourcesApi = {
-    async create(input: CreateSourceInput): Promise<Source> {
-      return client.post<Source>('/v1/sources', input)
+  const buckets: BucketsApi = {
+    async create(input: CreateBucketInput): Promise<Bucket> {
+      return client.post<Bucket>('/v1/buckets', input)
     },
-    async get(sourceId: string): Promise<Source | undefined> {
-      return client.get<Source>(`/v1/sources/${encodeURIComponent(sourceId)}`)
+    async get(bucketId: string): Promise<Bucket | undefined> {
+      return client.get<Bucket>(`/v1/buckets/${encodeURIComponent(bucketId)}`)
     },
-    async list(tenantId?: string): Promise<Source[]> {
+    async list(tenantId?: string): Promise<Bucket[]> {
       const params = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : ''
-      return client.get<Source[]>(`/v1/sources${params}`)
+      return client.get<Bucket[]>(`/v1/buckets${params}`)
     },
-    async update(sourceId: string, input): Promise<Source> {
-      return client.patch<Source>(`/v1/sources/${encodeURIComponent(sourceId)}`, input)
+    async update(bucketId: string, input): Promise<Bucket> {
+      return client.patch<Bucket>(`/v1/buckets/${encodeURIComponent(bucketId)}`, input)
     },
-    async delete(sourceId: string): Promise<void> {
-      await client.delete(`/v1/sources/${encodeURIComponent(sourceId)}`)
+    async delete(bucketId: string): Promise<void> {
+      await client.delete(`/v1/buckets/${encodeURIComponent(bucketId)}`)
     },
   }
 
@@ -60,7 +60,7 @@ export function d8umHosted(config: HostedConfig): d8umHostedInstance {
     },
     async list(filter?): Promise<Job[]> {
       const params = new URLSearchParams()
-      if (filter?.sourceId) params.set('sourceId', filter.sourceId)
+      if (filter?.bucketId) params.set('bucketId', filter.bucketId)
       if (filter?.type) params.set('type', filter.type)
       if (filter?.tenantId) params.set('tenantId', filter.tenantId)
       const qs = params.toString()
@@ -111,29 +111,29 @@ export function d8umHosted(config: HostedConfig): d8umHostedInstance {
       return { success: false, message: 'undeploy() is not available in hosted mode — infrastructure is managed server-side.' }
     },
 
-    sources,
+    buckets,
     jobs,
     documentJobs,
 
-    getEmbeddingForSource(_sourceId: string): EmbeddingProvider {
-      throw new Error('getEmbeddingForSource() is not available in hosted mode - embedding is managed server-side')
+    getEmbeddingForBucket(_bucketId: string): EmbeddingProvider {
+      throw new Error('getEmbeddingForBucket() is not available in hosted mode - embedding is managed server-side')
     },
 
     getDistinctEmbeddings(): Map<string, EmbeddingProvider> {
       throw new Error('getDistinctEmbeddings() is not available in hosted mode - embedding is managed server-side')
     },
 
-    groupSourcesByModel(): Map<string, string[]> {
-      throw new Error('groupSourcesByModel() is not available in hosted mode - embedding is managed server-side')
+    groupBucketsByModel(): Map<string, string[]> {
+      throw new Error('groupBucketsByModel() is not available in hosted mode - embedding is managed server-side')
     },
 
     async indexWithConnector(
-      sourceId: string,
+      bucketId: string,
       _connector: Connector,
       _indexConfig: IndexConfig,
       opts?: IndexOpts,
     ): Promise<IndexResult> {
-      return client.post<IndexResult>(`/v1/sources/${encodeURIComponent(sourceId)}/index`, opts)
+      return client.post<IndexResult>(`/v1/buckets/${encodeURIComponent(bucketId)}/index`, opts)
     },
 
     async query(text: string, opts?: QueryOpts): Promise<QueryResponse> {
@@ -145,31 +145,51 @@ export function d8umHosted(config: HostedConfig): d8umHostedInstance {
     },
 
     async ingest(
-      sourceId: string,
+      bucketId: string,
       doc: RawDocument,
       _indexConfig: IndexConfig,
       opts?: IndexOpts
     ): Promise<IndexResult> {
       return client.post<IndexResult>(
-        `/v1/sources/${encodeURIComponent(sourceId)}/ingest`,
+        `/v1/buckets/${encodeURIComponent(bucketId)}/ingest`,
         { doc, ...opts }
       )
     },
 
     async ingestWithChunks(
-      sourceId: string,
+      bucketId: string,
       doc: RawDocument,
       chunks: Chunk[],
       opts?: IndexOpts
     ): Promise<IndexResult> {
       return client.post<IndexResult>(
-        `/v1/sources/${encodeURIComponent(sourceId)}/ingest`,
+        `/v1/buckets/${encodeURIComponent(bucketId)}/ingest`,
         { doc, chunks, ...opts }
       )
     },
 
     assemble(results: d8umResult[], opts?: AssembleOpts): string {
       return assembleResults(results, opts)
+    },
+
+    async remember(content: string, identity: Record<string, unknown>, category?: string): Promise<unknown> {
+      return client.post('/v1/memory/remember', { content, identity, category })
+    },
+
+    async forget(id: string): Promise<void> {
+      await client.post('/v1/memory/forget', { id })
+    },
+
+    async correct(correction: string, identity: Record<string, unknown>): Promise<{ invalidated: number; created: number; summary: string }> {
+      return client.post('/v1/memory/correct', { correction, identity })
+    },
+
+    async addConversationTurn(
+      messages: Array<{ role: string; content: string; timestamp?: Date }>,
+      identity: Record<string, unknown>,
+      sessionId?: string,
+    ): Promise<unknown> {
+      return client.post('/v1/memory/conversation', { messages, identity, sessionId })
     },
 
     async destroy(): Promise<void> {

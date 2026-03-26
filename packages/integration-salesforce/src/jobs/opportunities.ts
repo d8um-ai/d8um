@@ -17,7 +17,7 @@ export const opportunitiesJob: JobTypeDefinition = {
   label: 'Salesforce: Opportunities',
   description: 'Fetches opportunities from Salesforce',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'SalesforceOpportunity',
   schedule: 'hourly',
@@ -96,7 +96,7 @@ export const opportunitiesJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

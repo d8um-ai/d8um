@@ -1,6 +1,6 @@
 export interface EmbeddedChunk {
   idempotencyKey: string
-  sourceId: string
+  bucketId: string
   tenantId?: string | undefined
   /** UUID referencing d8um_documents.id. */
   documentId: string
@@ -16,7 +16,7 @@ export interface EmbeddedChunk {
 }
 
 export interface ChunkFilter {
-  sourceId?: string | undefined
+  bucketId?: string | undefined
   tenantId?: string | undefined
   documentId?: string | undefined
   idempotencyKey?: string | undefined

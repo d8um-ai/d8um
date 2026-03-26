@@ -15,7 +15,7 @@ export const eventsJob: JobTypeDefinition = {
   label: 'Google Calendar: Events',
   description: 'Fetches events from Google Calendar',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'GoogleCalendarEvent',
   schedule: 'hourly',
@@ -91,7 +91,7 @@ export const eventsJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

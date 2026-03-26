@@ -1,6 +1,6 @@
 // Main public API
 export { d8um, d8umCreate, d8umDeploy, resolveEmbeddingProvider } from './d8um.js'
-export type { d8umConfig, d8umInstance, SourcesApi, JobsApi, DocumentJobsApi } from './d8um.js'
+export type { d8umConfig, d8umInstance, BucketsApi, JobsApi, DocumentJobsApi } from './d8um.js'
 
 // Types
 export type {
@@ -8,8 +8,8 @@ export type {
   ChunkOpts,
   Chunk,
   Connector,
-  Source,
-  CreateSourceInput,
+  Bucket,
+  CreateBucketInput,
   IndexConfig,
   EmbeddingInput,
   EmbeddedChunk,
@@ -21,6 +21,7 @@ export type {
   VectorStoreAdapter,
   UndeployResult,
   ScoredChunkWithDocument,
+  QueryMode,
   d8umQuery,
   d8umResult,
   QueryOpts,
@@ -50,6 +51,9 @@ export type {
   DocumentJobRelation,
   DocumentJobRelationFilter,
   d8umHooks,
+  LLMProvider,
+  d8umIdentity,
+  GraphBridge,
 } from './types/index.js'
 export { IndexError } from './types/index.js'
 

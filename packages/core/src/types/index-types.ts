@@ -8,7 +8,7 @@ export interface IndexOpts {
 
 export interface IndexProgressEvent {
   phase: 'fetch' | 'hash_check' | 'embed' | 'store' | 'prune'
-  sourceId: string
+  bucketId: string
   tenantId?: string | undefined
   total: number
   done: number
@@ -24,7 +24,7 @@ export interface IndexProgressEvent {
 }
 
 export interface IndexResult {
-  sourceId: string
+  bucketId: string
   tenantId?: string | undefined
   mode: 'upsert' | 'replace'
   total: number

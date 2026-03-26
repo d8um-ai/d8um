@@ -16,7 +16,7 @@ export const contactsJob: JobTypeDefinition = {
   label: 'Attio: Contacts',
   description: 'Fetches contacts from Attio workspace',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'AttioContact',
   schedule: 'daily',
@@ -64,7 +64,7 @@ export const contactsJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

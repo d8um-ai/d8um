@@ -6,7 +6,7 @@ import type { EmbeddedChunk } from '../types/document.js'
 function makeChunk(overrides: Partial<EmbeddedChunk> = {}): EmbeddedChunk {
   return {
     idempotencyKey: 'key-1',
-    sourceId: 'src-1',
+    bucketId: 'src-1',
     documentId: 'doc-1',
     content: 'Test chunk content',
     embedding: [0.1, 0.2, 0.3, 0.4],
@@ -98,28 +98,28 @@ describe('MockAdapter', () => {
   it('delete by filter', async () => {
     await adapter.ensureModel('model', 4)
     await adapter.upsertDocument('model', [
-      makeChunk({ sourceId: 'src-1', idempotencyKey: 'k1' }),
-      makeChunk({ sourceId: 'src-2', idempotencyKey: 'k2' }),
+      makeChunk({ bucketId: 'src-1', idempotencyKey: 'k1' }),
+      makeChunk({ bucketId: 'src-2', idempotencyKey: 'k2' }),
     ])
-    await adapter.delete('model', { sourceId: 'src-1' })
+    await adapter.delete('model', { bucketId: 'src-1' })
     expect(adapter._chunks.get('model')).toHaveLength(1)
-    expect(adapter._chunks.get('model')![0]!.sourceId).toBe('src-2')
+    expect(adapter._chunks.get('model')![0]!.bucketId).toBe('src-2')
   })
 
   it('countChunks by filter', async () => {
     await adapter.ensureModel('model', 4)
     await adapter.upsertDocument('model', [
-      makeChunk({ sourceId: 'src-1', idempotencyKey: 'k1' }),
-      makeChunk({ sourceId: 'src-1', idempotencyKey: 'k2', chunkIndex: 1 }),
-      makeChunk({ sourceId: 'src-2', idempotencyKey: 'k3' }),
+      makeChunk({ bucketId: 'src-1', idempotencyKey: 'k1' }),
+      makeChunk({ bucketId: 'src-1', idempotencyKey: 'k2', chunkIndex: 1 }),
+      makeChunk({ bucketId: 'src-2', idempotencyKey: 'k3' }),
     ])
-    const count = await adapter.countChunks('model', { sourceId: 'src-1' })
+    const count = await adapter.countChunks('model', { bucketId: 'src-1' })
     expect(count).toBe(2)
   })
 
   it('document records: upsert and retrieve', async () => {
     const doc = await adapter.upsertDocumentRecord!({
-      sourceId: 'src-1',
+      bucketId: 'src-1',
       title: 'Test',
       contentHash: 'abc',
       chunkCount: 5,
@@ -136,7 +136,7 @@ describe('MockAdapter', () => {
 
   it('updateDocumentStatus', async () => {
     const doc = await adapter.upsertDocumentRecord!({
-      sourceId: 'src-1',
+      bucketId: 'src-1',
       title: 'Test',
       contentHash: 'abc',
       chunkCount: 0,
@@ -174,7 +174,7 @@ describe('MockHashStore', () => {
     const record = {
       idempotencyKey: 'key-1',
       contentHash: 'hash-1',
-      sourceId: 'src-1',
+      bucketId: 'src-1',
       embeddingModel: 'model',
       indexedAt: new Date(),
       chunkCount: 3,
@@ -193,7 +193,7 @@ describe('MockHashStore', () => {
     await hashStore.set('key', {
       idempotencyKey: 'k',
       contentHash: 'h',
-      sourceId: 's',
+      bucketId: 's',
       embeddingModel: 'm',
       indexedAt: new Date(),
       chunkCount: 1,
@@ -202,11 +202,11 @@ describe('MockHashStore', () => {
     expect(await hashStore.get('key')).toBeNull()
   })
 
-  it('listBySource filters correctly', async () => {
+  it('listByBucket filters correctly', async () => {
     await hashStore.set('k1', {
       idempotencyKey: 'k1',
       contentHash: 'h1',
-      sourceId: 'src-1',
+      bucketId: 'src-1',
       embeddingModel: 'm',
       indexedAt: new Date(),
       chunkCount: 1,
@@ -214,14 +214,14 @@ describe('MockHashStore', () => {
     await hashStore.set('k2', {
       idempotencyKey: 'k2',
       contentHash: 'h2',
-      sourceId: 'src-2',
+      bucketId: 'src-2',
       embeddingModel: 'm',
       indexedAt: new Date(),
       chunkCount: 1,
     })
-    const results = await hashStore.listBySource('src-1')
+    const results = await hashStore.listByBucket('src-1')
     expect(results).toHaveLength(1)
-    expect(results[0]!.sourceId).toBe('src-1')
+    expect(results[0]!.bucketId).toBe('src-1')
   })
 
   it('manages lastRunTime', async () => {

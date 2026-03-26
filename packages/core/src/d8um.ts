@@ -1,5 +1,5 @@
 import type { VectorStoreAdapter, UndeployResult } from './types/adapter.js'
-import type { Source, CreateSourceInput, EmbeddingInput, IndexConfig } from './types/source.js'
+import type { Bucket, CreateBucketInput, EmbeddingInput, IndexConfig } from './types/bucket.js'
 import type {
   Job,
   CreateJobInput,
@@ -19,9 +19,13 @@ import type { IndexOpts, IndexResult } from './types/index-types.js'
 import type { EmbeddingProvider } from './embedding/provider.js'
 import type { RawDocument, Chunk, Connector } from './types/connector.js'
 import type { d8umHooks } from './types/hooks.js'
+import type { LLMProvider } from './types/llm-provider.js'
+import type { GraphBridge } from './types/graph-bridge.js'
+import type { d8umIdentity } from './types/identity.js'
 import type { ContextSearchOpts, ContextSearchResponse } from './query/context-search.js'
 import { aiSdkEmbeddingProvider, isAISDKEmbeddingInput } from './embedding/ai-sdk-adapter.js'
 import { IndexEngine } from './index-engine/engine.js'
+import { TripleExtractor } from './index-engine/triple-extractor.js'
 import { searchWithContext as searchWithContextFn } from './query/context-search.js'
 import { assemble as assembleResults } from './query/assemble.js'
 import { getJobType, registerJobType } from './jobs/registry.js'
@@ -37,6 +41,10 @@ export interface d8umConfig {
   integrations?: { jobs: JobTypeDefinition[] }[] | undefined
   /** Additional job type definitions to register on initialize(). */
   jobTypes?: JobTypeDefinition[] | undefined
+  /** Optional LLM provider for triple extraction, query classification, and memory operations. */
+  llm?: LLMProvider | undefined
+  /** Optional graph bridge for memory operations and neural query mode. */
+  graph?: GraphBridge | undefined
 }
 
 function isEmbeddingProvider(
@@ -52,14 +60,14 @@ export function resolveEmbeddingProvider(config: EmbeddingInput): EmbeddingProvi
   throw new Error('Invalid embedding configuration')
 }
 
-// ── Sources Sub-API ──
+// ── Buckets Sub-API ──
 
-export interface SourcesApi {
-  create(input: CreateSourceInput): Promise<Source>
-  get(sourceId: string): Promise<Source | undefined>
-  list(tenantId?: string): Promise<Source[]>
-  update(sourceId: string, input: Partial<Pick<Source, 'name' | 'description' | 'status'>>): Promise<Source>
-  delete(sourceId: string): Promise<void>
+export interface BucketsApi {
+  create(input: CreateBucketInput): Promise<Bucket>
+  get(bucketId: string): Promise<Bucket | undefined>
+  list(tenantId?: string): Promise<Bucket[]>
+  update(bucketId: string, input: Partial<Pick<Bucket, 'name' | 'description' | 'status'>>): Promise<Bucket>
+  delete(bucketId: string): Promise<void>
 }
 
 // ── Jobs Sub-API ──
@@ -67,7 +75,7 @@ export interface SourcesApi {
 export interface JobsApi {
   create(input: CreateJobInput): Promise<Job>
   get(jobId: string): Promise<Job | undefined>
-  list(filter?: { sourceId?: string; type?: string; tenantId?: string }): Promise<Job[]>
+  list(filter?: { bucketId?: string; type?: string; tenantId?: string }): Promise<Job[]>
   update(jobId: string, input: Partial<Pick<Job, 'name' | 'description' | 'config' | 'schedule' | 'status'>>): Promise<Job>
   /** Delete a job. cascade=true deletes orphaned documents (those with no other job relations). */
   delete(jobId: string, opts?: { cascade?: boolean }): Promise<void>
@@ -95,110 +103,125 @@ export interface d8umInstance {
   /** Remove all d8um infrastructure. Refuses if any table contains data. */
   undeploy(): Promise<UndeployResult>
 
-  sources: SourcesApi
+  buckets: BucketsApi
   jobs: JobsApi
   documentJobs: DocumentJobsApi
 
-  getEmbeddingForSource(sourceId: string): EmbeddingProvider
-  getDistinctEmbeddings(sourceIds?: string[]): Map<string, EmbeddingProvider>
-  groupSourcesByModel(sourceIds?: string[]): Map<string, string[]>
+  getEmbeddingForBucket(bucketId: string): EmbeddingProvider
+  getDistinctEmbeddings(bucketIds?: string[]): Map<string, EmbeddingProvider>
+  groupBucketsByModel(bucketIds?: string[]): Map<string, string[]>
 
-  /** Index documents from a connector into a source. */
+  /** Index documents from a connector into a bucket. */
   indexWithConnector(
-    sourceId: string,
+    bucketId: string,
     connector: Connector,
     indexConfig: IndexConfig,
     opts?: IndexOpts,
   ): Promise<IndexResult>
 
-  /** Ingest a single document directly into a source. No job needed. */
-  ingest(sourceId: string, doc: RawDocument, indexConfig: IndexConfig, opts?: IndexOpts): Promise<IndexResult>
+  /** Ingest a single document directly into a bucket. No job needed. */
+  ingest(bucketId: string, doc: RawDocument, indexConfig: IndexConfig, opts?: IndexOpts): Promise<IndexResult>
 
   /** Ingest a document with pre-chunked content. */
-  ingestWithChunks(sourceId: string, doc: RawDocument, chunks: Chunk[], opts?: IndexOpts): Promise<IndexResult>
+  ingestWithChunks(bucketId: string, doc: RawDocument, chunks: Chunk[], opts?: IndexOpts): Promise<IndexResult>
 
-  /** Search across sources. */
+  /** Search across buckets. */
   query(text: string, opts?: QueryOpts): Promise<QueryResponse>
   searchWithContext(text: string, opts?: ContextSearchOpts): Promise<ContextSearchResponse>
   assemble(results: d8umResult[], opts?: AssembleOpts): string
+
+  // ── Memory operations (require graph bridge) ──
+
+  /** Store a memory. LLM extracts triples → entity graph + memory record. */
+  remember(content: string, identity: d8umIdentity, category?: string): Promise<unknown>
+  /** Invalidate a memory and its associated graph edges. */
+  forget(id: string): Promise<void>
+  /** Apply a natural language correction. */
+  correct(correction: string, identity: d8umIdentity): Promise<{ invalidated: number; created: number; summary: string }>
+  /** Ingest a conversation turn with extraction. */
+  addConversationTurn(
+    messages: Array<{ role: string; content: string; timestamp?: Date }>,
+    identity: d8umIdentity,
+    sessionId?: string,
+  ): Promise<unknown>
 
   destroy(): Promise<void>
 }
 
 class d8umImpl implements d8umInstance {
-  private _sources = new Map<string, Source>()
+  private _buckets = new Map<string, Bucket>()
   private _jobs = new Map<string, Job>()
   private _documentJobRelations: DocumentJobRelation[] = []
-  private sourceEmbeddings = new Map<string, EmbeddingProvider>()
+  private bucketEmbeddings = new Map<string, EmbeddingProvider>()
   private adapter!: VectorStoreAdapter
   private defaultEmbedding!: EmbeddingProvider
   private config!: d8umConfig
   private configured = false
   private initialized = false
 
-  // ── Sources ──
+  // ── Buckets ──
 
-  sources: SourcesApi = {
-    create: async (input: CreateSourceInput): Promise<Source> => {
+  buckets: BucketsApi = {
+    create: async (input: CreateBucketInput): Promise<Bucket> => {
       this.assertConfigured()
-      const source: Source = {
+      const bucket: Bucket = {
         id: randomUUID(),
         name: input.name,
         description: input.description,
         status: 'active',
         tenantId: input.tenantId ?? this.config.tenantId,
       }
-      if (this.adapter.upsertSource) {
-        const persisted = await this.adapter.upsertSource(source)
-        this.sourceEmbeddings.set(persisted.id, this.defaultEmbedding)
+      if (this.adapter.upsertBucket) {
+        const persisted = await this.adapter.upsertBucket(bucket)
+        this.bucketEmbeddings.set(persisted.id, this.defaultEmbedding)
         return persisted
       }
-      this._sources.set(source.id, source)
-      this.sourceEmbeddings.set(source.id, this.defaultEmbedding)
-      return source
+      this._buckets.set(bucket.id, bucket)
+      this.bucketEmbeddings.set(bucket.id, this.defaultEmbedding)
+      return bucket
     },
 
-    get: async (sourceId: string): Promise<Source | undefined> => {
-      if (this.adapter.getSource) {
-        return (await this.adapter.getSource(sourceId)) ?? undefined
+    get: async (bucketId: string): Promise<Bucket | undefined> => {
+      if (this.adapter.getBucket) {
+        return (await this.adapter.getBucket(bucketId)) ?? undefined
       }
-      return this._sources.get(sourceId)
+      return this._buckets.get(bucketId)
     },
 
-    list: async (tenantId?: string): Promise<Source[]> => {
-      if (this.adapter.listSources) {
-        return this.adapter.listSources(tenantId)
+    list: async (tenantId?: string): Promise<Bucket[]> => {
+      if (this.adapter.listBuckets) {
+        return this.adapter.listBuckets(tenantId)
       }
-      const all = [...this._sources.values()]
+      const all = [...this._buckets.values()]
       if (tenantId) return all.filter(s => s.tenantId === tenantId)
       return all
     },
 
-    update: async (sourceId: string, input: Partial<Pick<Source, 'name' | 'description' | 'status'>>): Promise<Source> => {
-      const source = await this.sources.get(sourceId)
-      if (!source) throw new Error(`Source "${sourceId}" not found`)
-      if (input.name !== undefined) source.name = input.name
-      if (input.description !== undefined) source.description = input.description
-      if (input.status !== undefined) source.status = input.status
-      if (this.adapter.upsertSource) {
-        return this.adapter.upsertSource(source)
+    update: async (bucketId: string, input: Partial<Pick<Bucket, 'name' | 'description' | 'status'>>): Promise<Bucket> => {
+      const bucket = await this.buckets.get(bucketId)
+      if (!bucket) throw new Error(`Bucket "${bucketId}" not found`)
+      if (input.name !== undefined) bucket.name = input.name
+      if (input.description !== undefined) bucket.description = input.description
+      if (input.status !== undefined) bucket.status = input.status
+      if (this.adapter.upsertBucket) {
+        return this.adapter.upsertBucket(bucket)
       }
-      this._sources.set(source.id, source)
-      return source
+      this._buckets.set(bucket.id, bucket)
+      return bucket
     },
 
-    delete: async (sourceId: string): Promise<void> => {
-      // Delete source, cascade to jobs targeting it, and clean up relations
-      const jobs = await this.jobs.list({ sourceId })
+    delete: async (bucketId: string): Promise<void> => {
+      // Delete bucket, cascade to jobs targeting it, and clean up relations
+      const jobs = await this.jobs.list({ bucketId })
       for (const job of jobs) {
         await this.jobs.delete(job.id, { cascade: true })
       }
-      if (this.adapter.deleteSource) {
-        await this.adapter.deleteSource(sourceId)
+      if (this.adapter.deleteBucket) {
+        await this.adapter.deleteBucket(bucketId)
       } else {
-        this._sources.delete(sourceId)
+        this._buckets.delete(bucketId)
       }
-      this.sourceEmbeddings.delete(sourceId)
+      this.bucketEmbeddings.delete(bucketId)
     },
   }
 
@@ -208,23 +231,23 @@ class d8umImpl implements d8umInstance {
     create: async (input: CreateJobInput): Promise<Job> => {
       this.assertConfigured()
 
-      // Validate source exists if required
-      const source = input.sourceId ? await this.sources.get(input.sourceId) : undefined
-      if (input.sourceId && !source) {
-        throw new Error(`Source "${input.sourceId}" not found`)
+      // Validate bucket exists if required
+      const bucket = input.bucketId ? await this.buckets.get(input.bucketId) : undefined
+      if (input.bucketId && !bucket) {
+        throw new Error(`Bucket "${input.bucketId}" not found`)
       }
 
-      // Validate job type exists and check source requirement
+      // Validate job type exists and check bucket requirement
       const jobType = getJobType(input.type)
-      if (jobType?.requiresSource && !input.sourceId) {
-        throw new Error(`Job type "${input.type}" requires a sourceId`)
+      if (jobType?.requiresBucket && !input.bucketId) {
+        throw new Error(`Job type "${input.type}" requires a bucketId`)
       }
 
       const now = new Date()
       const job: Job = {
         id: randomUUID(),
         tenantId: input.tenantId ?? this.config.tenantId,
-        sourceId: input.sourceId,
+        bucketId: input.bucketId,
         type: input.type,
         name: input.name,
         description: input.description,
@@ -249,12 +272,12 @@ class d8umImpl implements d8umInstance {
       return this._jobs.get(jobId)
     },
 
-    list: async (filter?: { sourceId?: string; type?: string; tenantId?: string }): Promise<Job[]> => {
+    list: async (filter?: { bucketId?: string; type?: string; tenantId?: string }): Promise<Job[]> => {
       if (this.adapter.listJobs) {
         return this.adapter.listJobs(filter)
       }
       let jobs = [...this._jobs.values()]
-      if (filter?.sourceId) jobs = jobs.filter(j => j.sourceId === filter.sourceId)
+      if (filter?.bucketId) jobs = jobs.filter(j => j.bucketId === filter.bucketId)
       if (filter?.type) jobs = jobs.filter(j => j.type === filter.type)
       if (filter?.tenantId) jobs = jobs.filter(j => j.tenantId === filter.tenantId)
       return jobs
@@ -333,7 +356,7 @@ class d8umImpl implements d8umInstance {
       const jobRun: JobRun = {
         id: randomUUID(),
         jobId: job.id,
-        sourceId: job.sourceId,
+        bucketId: job.bucketId,
         status: 'running',
         documentsCreated: 0,
         documentsUpdated: 0,
@@ -359,7 +382,7 @@ class d8umImpl implements d8umInstance {
         } else {
           result = {
             jobId: job.id,
-            sourceId: job.sourceId,
+            bucketId: job.bucketId,
             status: 'completed',
             summary: 'No run() defined for this job type',
             documentsCreated: 0,
@@ -415,7 +438,7 @@ class d8umImpl implements d8umInstance {
 
         return {
           jobId: job.id,
-          sourceId: job.sourceId,
+          bucketId: job.bucketId,
           status: 'failed',
           documentsCreated: 0,
           documentsUpdated: 0,
@@ -519,11 +542,11 @@ class d8umImpl implements d8umInstance {
     await this.adapter.connect()
 
     // Hydrate in-memory state from persistent storage (for adapters that support it)
-    if (this.adapter.listSources) {
-      const sources = await this.adapter.listSources()
-      for (const s of sources) {
-        this._sources.set(s.id, s)
-        this.sourceEmbeddings.set(s.id, this.defaultEmbedding)
+    if (this.adapter.listBuckets) {
+      const allBuckets = await this.adapter.listBuckets()
+      for (const s of allBuckets) {
+        this._buckets.set(s.id, s)
+        this.bucketEmbeddings.set(s.id, this.defaultEmbedding)
       }
     }
     if (this.adapter.listJobs) {
@@ -560,37 +583,37 @@ class d8umImpl implements d8umInstance {
     }
     const result = await this.adapter.undeploy()
     if (result.success) {
-      this._sources.clear()
+      this._buckets.clear()
       this._jobs.clear()
       this._documentJobRelations = []
-      this.sourceEmbeddings.clear()
+      this.bucketEmbeddings.clear()
       this.configured = false
       this.initialized = false
     }
     return result
   }
 
-  getEmbeddingForSource(sourceId: string): EmbeddingProvider {
-    const embedding = this.sourceEmbeddings.get(sourceId)
-    if (!embedding) throw new Error(`Source "${sourceId}" not found`)
+  getEmbeddingForBucket(bucketId: string): EmbeddingProvider {
+    const embedding = this.bucketEmbeddings.get(bucketId)
+    if (!embedding) throw new Error(`Bucket "${bucketId}" not found`)
     return embedding
   }
 
-  getDistinctEmbeddings(sourceIds?: string[]): Map<string, EmbeddingProvider> {
+  getDistinctEmbeddings(bucketIds?: string[]): Map<string, EmbeddingProvider> {
     const map = new Map<string, EmbeddingProvider>()
-    const ids = sourceIds ?? [...this._sources.keys()]
+    const ids = bucketIds ?? [...this._buckets.keys()]
     for (const id of ids) {
-      const emb = this.sourceEmbeddings.get(id)
+      const emb = this.bucketEmbeddings.get(id)
       if (emb) map.set(emb.model, emb)
     }
     return map
   }
 
-  groupSourcesByModel(sourceIds?: string[]): Map<string, string[]> {
+  groupBucketsByModel(bucketIds?: string[]): Map<string, string[]> {
     const groups = new Map<string, string[]>()
-    const ids = sourceIds ?? [...this._sources.keys()]
+    const ids = bucketIds ?? [...this._buckets.keys()]
     for (const id of ids) {
-      const emb = this.sourceEmbeddings.get(id)
+      const emb = this.bucketEmbeddings.get(id)
       if (!emb) continue
       const group = groups.get(emb.model) ?? []
       group.push(id)
@@ -600,53 +623,53 @@ class d8umImpl implements d8umInstance {
   }
 
   async indexWithConnector(
-    sourceId: string,
+    bucketId: string,
     connector: Connector,
     indexConfig: IndexConfig,
     opts?: IndexOpts,
   ): Promise<IndexResult> {
     await this.ensureInitialized()
-    const source = await this.sources.get(sourceId)
-    if (!source) throw new Error(`Source "${sourceId}" not found`)
+    const bucket = await this.buckets.get(bucketId)
+    if (!bucket) throw new Error(`Bucket "${bucketId}" not found`)
 
-    const embedding = this.getEmbeddingForSource(sourceId)
-    const engine = new IndexEngine(this.adapter, embedding)
+    const embedding = this.getEmbeddingForBucket(bucketId)
+    const engine = this.createIndexEngine(embedding)
 
-    await this.config.hooks?.onIndexStart?.(sourceId, opts ?? {})
-    const result = await engine.indexWithConnector(sourceId, connector, indexConfig, opts)
-    await this.config.hooks?.onIndexComplete?.(sourceId, result)
+    await this.config.hooks?.onIndexStart?.(bucketId, opts ?? {})
+    const result = await engine.indexWithConnector(bucketId, connector, indexConfig, opts)
+    await this.config.hooks?.onIndexComplete?.(bucketId, result)
     return result
   }
 
   async ingest(
-    sourceId: string,
+    bucketId: string,
     doc: RawDocument,
     indexConfig: IndexConfig,
     opts?: IndexOpts
   ): Promise<IndexResult> {
     await this.ensureInitialized()
-    const source = await this.sources.get(sourceId)
-    if (!source) throw new Error(`Source "${sourceId}" not found`)
+    const bucket = await this.buckets.get(bucketId)
+    if (!bucket) throw new Error(`Bucket "${bucketId}" not found`)
     const { defaultChunker: chunker } = await import('./index-engine/chunker.js')
     const chunks = chunker(doc, indexConfig)
-    return this.ingestWithChunks(sourceId, doc, chunks, opts)
+    return this.ingestWithChunks(bucketId, doc, chunks, opts)
   }
 
   async ingestWithChunks(
-    sourceId: string,
+    bucketId: string,
     doc: RawDocument,
     chunks: Chunk[],
     opts?: IndexOpts
   ): Promise<IndexResult> {
     await this.ensureInitialized()
-    const source = await this.sources.get(sourceId)
-    if (!source) throw new Error(`Source "${sourceId}" not found`)
-    const embedding = this.getEmbeddingForSource(sourceId)
-    const engine = new IndexEngine(this.adapter, embedding)
+    const bucket = await this.buckets.get(bucketId)
+    if (!bucket) throw new Error(`Bucket "${bucketId}" not found`)
+    const embedding = this.getEmbeddingForBucket(bucketId)
+    const engine = this.createIndexEngine(embedding)
 
-    await this.config.hooks?.onIndexStart?.(sourceId, opts ?? {})
-    const result = await engine.ingestWithChunks(sourceId, doc, chunks, opts)
-    await this.config.hooks?.onIndexComplete?.(sourceId, result)
+    await this.config.hooks?.onIndexStart?.(bucketId, opts ?? {})
+    const result = await engine.ingestWithChunks(bucketId, doc, chunks, opts)
+    await this.config.hooks?.onIndexComplete?.(bucketId, result)
     return result
   }
 
@@ -655,8 +678,9 @@ class d8umImpl implements d8umInstance {
     const { QueryPlanner } = await import('./query/planner.js')
     const planner = new QueryPlanner(
       this.adapter,
-      [...this._sources.keys()],
-      this.sourceEmbeddings,
+      [...this._buckets.keys()],
+      this.bucketEmbeddings,
+      this.config.graph,
     )
     const response = await planner.execute(text, {
       ...opts,
@@ -670,8 +694,8 @@ class d8umImpl implements d8umInstance {
     await this.ensureInitialized()
     const response = await searchWithContextFn(
       this.adapter,
-      [...this._sources.keys()],
-      this.sourceEmbeddings,
+      [...this._buckets.keys()],
+      this.bucketEmbeddings,
       text,
       { ...opts, tenantId: opts.tenantId ?? this.config.tenantId }
     )
@@ -683,8 +707,45 @@ class d8umImpl implements d8umInstance {
     return assembleResults(results, opts)
   }
 
+  // ── Memory operations ──
+
+  private requireGraph(): GraphBridge {
+    if (!this.config.graph) {
+      throw new Error('Graph not configured. Pass a graph bridge to d8umConfig to enable memory operations.')
+    }
+    return this.config.graph
+  }
+
+  async remember(content: string, identity: d8umIdentity, category?: string): Promise<unknown> {
+    return this.requireGraph().remember(content, identity, category)
+  }
+
+  async forget(id: string): Promise<void> {
+    return this.requireGraph().forget(id)
+  }
+
+  async correct(correction: string, identity: d8umIdentity): Promise<{ invalidated: number; created: number; summary: string }> {
+    return this.requireGraph().correct(correction, identity)
+  }
+
+  async addConversationTurn(
+    messages: Array<{ role: string; content: string; timestamp?: Date }>,
+    identity: d8umIdentity,
+    sessionId?: string,
+  ): Promise<unknown> {
+    return this.requireGraph().addConversationTurn(messages, identity, sessionId)
+  }
+
   async destroy(): Promise<void> {
     await this.adapter?.destroy?.()
+  }
+
+  private createIndexEngine(embedding: EmbeddingProvider): IndexEngine {
+    const engine = new IndexEngine(this.adapter, embedding)
+    if (this.config.llm && this.config.graph) {
+      engine.tripleExtractor = new TripleExtractor({ llm: this.config.llm, graph: this.config.graph })
+    }
+    return engine
   }
 
   private assertConfigured(): void {

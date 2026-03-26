@@ -1,4 +1,4 @@
-import type { d8umMemory } from '@d8um/memory'
+import type { d8umMemory } from '@d8um/graph'
 
 // ── Middleware ──
 // Structural type matching Vercel AI SDK's middleware pattern.

@@ -2,17 +2,17 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { d8umCreate } from '../d8um.js'
 import { createMockAdapter } from './helpers/mock-adapter.js'
 import { createMockEmbedding } from './helpers/mock-embedding.js'
-import { createMockSource } from './helpers/mock-source.js'
+import { createMockBucket } from './helpers/mock-source.js'
 import { createTestDocument } from './helpers/mock-connector.js'
 import type { d8umInstance } from '../d8um.js'
-import type { Source } from '../types/source.js'
+import type { Bucket } from '../types/bucket.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
 
-/** Register a pre-built Source + embedding on an instance (bypasses sources.create UUID generation). */
-function registerTestSource(instance: d8umInstance, source: Source, embedding: EmbeddingProvider) {
+/** Register a pre-built Bucket + embedding on an instance (bypasses buckets.create UUID generation). */
+function registerTestBucket(instance: d8umInstance, bucket: Bucket, embedding: EmbeddingProvider) {
   const impl = instance as any
-  impl._sources.set(source.id, source)
-  impl.sourceEmbeddings.set(source.id, embedding)
+  impl._buckets.set(bucket.id, bucket)
+  impl.bucketEmbeddings.set(bucket.id, embedding)
 }
 
 describe('searchWithContext', () => {
@@ -35,13 +35,13 @@ describe('searchWithContext', () => {
       title: 'Long Document',
       url: 'https://example.com/long',
     })
-    const { source, connector, indexConfig } = createMockSource({
+    const { bucket, connector, indexConfig } = createMockBucket({
       documents: [doc],
       chunkSize: 50,
       chunkOverlap: 10,
     })
-    registerTestSource(instance, source, embedding)
-    await instance.indexWithConnector(source.id, connector, indexConfig)
+    registerTestBucket(instance, bucket, embedding)
+    await instance.indexWithConnector(bucket.id, connector, indexConfig)
   })
 
   it('returns passages with neighbor chunks', async () => {
@@ -68,8 +68,8 @@ describe('searchWithContext', () => {
   it('returns empty passages when no results', async () => {
     const emptyAdapter = createMockAdapter()
     const emptyInstance = await d8umCreate({ vectorStore: emptyAdapter, embedding })
-    const { source: emptySource } = createMockSource({ documents: [] })
-    registerTestSource(emptyInstance, emptySource, embedding)
+    const { bucket: emptyBucket } = createMockBucket({ documents: [] })
+    registerTestBucket(emptyInstance, emptyBucket, embedding)
     const response = await emptyInstance.searchWithContext('nonexistent')
     expect(response.passages).toHaveLength(0)
   })

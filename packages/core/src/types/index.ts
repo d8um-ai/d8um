@@ -6,11 +6,11 @@ export type {
 } from './connector.js'
 
 export type {
-  Source,
-  CreateSourceInput,
+  Bucket,
+  CreateBucketInput,
   IndexConfig,
   EmbeddingInput,
-} from './source.js'
+} from './bucket.js'
 
 export type {
   EmbeddedChunk,
@@ -28,6 +28,7 @@ export type {
 } from './adapter.js'
 
 export type {
+  QueryMode,
   d8umQuery,
   d8umResult,
   QueryOpts,
@@ -73,3 +74,9 @@ export type {
 } from './document-job-relation.js'
 
 export type { d8umHooks } from './hooks.js'
+
+export type { LLMProvider } from './llm-provider.js'
+
+export type { d8umIdentity } from './identity.js'
+
+export type { GraphBridge } from './graph-bridge.js'

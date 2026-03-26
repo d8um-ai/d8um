@@ -19,7 +19,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@d8um/memory": "workspace:*"
+    "@d8um/graph": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

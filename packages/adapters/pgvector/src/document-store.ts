@@ -4,7 +4,7 @@ import type { SqlExecutor } from './adapter.js'
 function mapDocRow(row: Record<string, unknown>): d8umDocument {
   return {
     id: row.id as string,
-    sourceId: row.source_id as string,
+    bucketId: row.bucket_id as string,
     tenantId: (row.tenant_id as string) ?? undefined,
     title: row.title as string,
     url: (row.url as string) ?? undefined,
@@ -32,10 +32,10 @@ export class PgDocumentStore {
   async upsert(input: UpsertDocumentInput): Promise<d8umDocument> {
     const rows = await this.sql(
       `INSERT INTO ${this.tableName}
-        (source_id, tenant_id, title, url, content_hash, chunk_count, status,
+        (bucket_id, tenant_id, title, url, content_hash, chunk_count, status,
          scope, group_id, user_id, document_type, source_type, metadata, indexed_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
-       ON CONFLICT (source_id, COALESCE(tenant_id, ''), content_hash)
+       ON CONFLICT (bucket_id, COALESCE(tenant_id, ''), content_hash)
          DO UPDATE SET
            title = EXCLUDED.title,
            url = EXCLUDED.url,
@@ -51,7 +51,7 @@ export class PgDocumentStore {
            updated_at = NOW()
        RETURNING *`,
       [
-        input.sourceId,
+        input.bucketId,
         input.tenantId ?? null,
         input.title,
         input.url ?? null,
@@ -121,9 +121,9 @@ function buildDocWhere(filter: DocumentFilter): { where: string; params: unknown
   const conditions: string[] = []
   const params: unknown[] = []
 
-  if (filter.sourceId != null) {
-    params.push(filter.sourceId)
-    conditions.push(`source_id = $${params.length}`)
+  if (filter.bucketId != null) {
+    params.push(filter.bucketId)
+    conditions.push(`bucket_id = $${params.length}`)
   }
   if (filter.tenantId != null) {
     params.push(filter.tenantId)

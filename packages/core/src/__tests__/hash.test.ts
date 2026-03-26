@@ -51,7 +51,7 @@ describe('resolveIdempotencyKey', () => {
 })
 
 describe('buildHashStoreKey', () => {
-  it('joins tenantId::sourceId::idempotencyKey', () => {
+  it('joins tenantId::bucketId::idempotencyKey', () => {
     const key = buildHashStoreKey('tenant-1', 'source-1', 'key-1')
     expect(key).toBe('tenant-1::source-1::key-1')
   })

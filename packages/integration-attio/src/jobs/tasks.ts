@@ -16,7 +16,7 @@ export const tasksJob: JobTypeDefinition = {
   label: 'Attio: Tasks',
   description: 'Fetches tasks from Attio workspace',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'AttioTask',
   schedule: 'hourly',
@@ -76,7 +76,7 @@ export const tasksJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

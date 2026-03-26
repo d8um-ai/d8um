@@ -4,7 +4,7 @@ import { dedupKey, minMaxNormalize, mergeAndRank, type NormalizedResult } from '
 function makeResult(overrides: Partial<NormalizedResult> = {}): NormalizedResult {
   return {
     content: 'Test content',
-    sourceId: 'src-1',
+    bucketId: 'src-1',
     documentId: 'doc-1',
     rawScores: { vector: 0.9 },
     normalizedScore: 0.9,

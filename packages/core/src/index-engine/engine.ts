@@ -1,4 +1,4 @@
-import type { IndexConfig } from '../types/source.js'
+import type { IndexConfig } from '../types/bucket.js'
 import type { VectorStoreAdapter } from '../types/adapter.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
 import type { IndexOpts, IndexResult } from '../types/index-types.js'
@@ -8,8 +8,11 @@ import { IndexError } from '../types/index-types.js'
 import { sha256, resolveIdempotencyKey, buildHashStoreKey } from './hash.js'
 import { defaultChunker } from './chunker.js'
 import { stripMarkdown } from './strip-markdown.js'
+import type { TripleExtractor } from './triple-extractor.js'
 
 export class IndexEngine {
+  tripleExtractor?: TripleExtractor
+
   constructor(
     private adapter: VectorStoreAdapter,
     private embedding: EmbeddingProvider
@@ -20,7 +23,7 @@ export class IndexEngine {
    * This is the primary method for ingestion jobs.
    */
   async indexWithConnector(
-    sourceId: string,
+    bucketId: string,
     connector: Connector,
     indexConfig: IndexConfig,
     opts: IndexOpts = {},
@@ -33,7 +36,7 @@ export class IndexEngine {
       onProgress,
     } = opts
 
-    if (!connector.fetch) throw new Error(`Connector for source "${sourceId}" has no fetch()`)
+    if (!connector.fetch) throw new Error(`Connector for bucket "${bucketId}" has no fetch()`)
 
     const modelId = this.embedding.model
 
@@ -43,7 +46,7 @@ export class IndexEngine {
 
     const startMs = Date.now()
     const result: IndexResult = {
-      sourceId,
+      bucketId,
       tenantId,
       mode,
       total: 0,
@@ -55,12 +58,12 @@ export class IndexEngine {
     }
 
     if (mode === 'replace' && !dryRun) {
-      await this.adapter.delete(modelId, { sourceId, tenantId })
-      await this.adapter.hashStore.deleteBySource(sourceId, tenantId)
+      await this.adapter.delete(modelId, { bucketId, tenantId })
+      await this.adapter.hashStore.deleteByBucket(bucketId, tenantId)
     }
 
     const lastRunTime = mode === 'upsert'
-      ? await this.adapter.hashStore.getLastRunTime(sourceId, tenantId)
+      ? await this.adapter.hashStore.getLastRunTime(bucketId, tenantId)
       : null
 
     const supportsIncremental = typeof connector.fetchSince === 'function'
@@ -76,7 +79,7 @@ export class IndexEngine {
         result.total++
         const ikey = resolveIdempotencyKey(doc, indexConfig.deduplicateBy)
         const contentHash = sha256(doc.content)
-        const storeKey = buildHashStoreKey(tenantId, sourceId, ikey)
+        const storeKey = buildHashStoreKey(tenantId, bucketId, ikey)
         seenKeys.add(ikey)
 
         onProgress?.({
@@ -91,7 +94,7 @@ export class IndexEngine {
 
         if (stored?.contentHash === contentHash && stored.embeddingModel === modelId) {
           const actualChunks = await this.adapter.countChunks(modelId, {
-            sourceId,
+            bucketId,
             tenantId,
             idempotencyKey: ikey,
           })
@@ -110,7 +113,7 @@ export class IndexEngine {
 
         if (stored && stored.embeddingModel !== modelId) {
           await this.adapter.delete(stored.embeddingModel, {
-            sourceId,
+            bucketId,
             tenantId,
             idempotencyKey: ikey,
           })
@@ -119,7 +122,7 @@ export class IndexEngine {
         let documentId = doc.id ?? randomUUID()
         if (this.adapter.upsertDocumentRecord && !dryRun) {
           const docRecord = await this.adapter.upsertDocumentRecord({
-            sourceId,
+            bucketId,
             tenantId,
             title: doc.title,
             url: doc.url,
@@ -153,7 +156,7 @@ export class IndexEngine {
 
         const embeddedChunks = chunks.map((chunk, i) => ({
           idempotencyKey: ikey,
-          sourceId,
+          bucketId,
           tenantId,
           documentId,
           content: chunk.content,
@@ -164,6 +167,13 @@ export class IndexEngine {
           metadata: { ...propagated, ...chunk.metadata },
           indexedAt: new Date(),
         }))
+
+        // Extract triples for entity graph (non-blocking)
+        if (this.tripleExtractor && !dryRun) {
+          for (const chunk of chunks) {
+            this.tripleExtractor.extractFromChunk(chunk.content, bucketId, chunk.chunkIndex).catch(() => {})
+          }
+        }
 
         if (!dryRun) {
           onProgress?.({
@@ -182,7 +192,7 @@ export class IndexEngine {
           await this.adapter.hashStore.set(storeKey, {
             idempotencyKey: ikey,
             contentHash,
-            sourceId,
+            bucketId,
             tenantId,
             embeddingModel: modelId,
             indexedAt: new Date(),
@@ -195,14 +205,14 @@ export class IndexEngine {
     } catch (error) {
       result.durationMs = Date.now() - startMs
       throw new IndexError(
-        `Index failed for source "${sourceId}"`,
+        `Index failed for bucket "${bucketId}"`,
         result,
         error as Error
       )
     }
 
     if (removeDeleted && mode === 'upsert' && !dryRun) {
-      const storedRecords = await this.adapter.hashStore.listBySource(sourceId, tenantId)
+      const storedRecords = await this.adapter.hashStore.listByBucket(bucketId, tenantId)
       const deletedKeys = storedRecords
         .map(r => r.idempotencyKey)
         .filter(k => !seenKeys.has(k))
@@ -216,14 +226,14 @@ export class IndexEngine {
         })
         const record = storedRecords.find(r => r.idempotencyKey === key)
         const deleteModel = record?.embeddingModel ?? modelId
-        await this.adapter.delete(deleteModel, { sourceId, tenantId, idempotencyKey: key })
-        await this.adapter.hashStore.delete(buildHashStoreKey(tenantId, sourceId, key))
+        await this.adapter.delete(deleteModel, { bucketId, tenantId, idempotencyKey: key })
+        await this.adapter.hashStore.delete(buildHashStoreKey(tenantId, bucketId, key))
         result.pruned++
       }
     }
 
     if (!dryRun) {
-      await this.adapter.hashStore.setLastRunTime(sourceId, tenantId, new Date())
+      await this.adapter.hashStore.setLastRunTime(bucketId, tenantId, new Date())
     }
 
     result.durationMs = Date.now() - startMs
@@ -235,7 +245,7 @@ export class IndexEngine {
    * Skips the default chunker - uses the provided chunks directly.
    */
   async ingestWithChunks(
-    sourceId: string,
+    bucketId: string,
     doc: RawDocument,
     chunks: Chunk[],
     opts: IndexOpts = {},
@@ -257,7 +267,7 @@ export class IndexEngine {
     let documentId = doc.id ?? randomUUID()
     if (this.adapter.upsertDocumentRecord && !dryRun) {
       const docRecord = await this.adapter.upsertDocumentRecord({
-        sourceId,
+        bucketId,
         tenantId,
         title: doc.title,
         url: doc.url,
@@ -282,7 +292,7 @@ export class IndexEngine {
 
       const embeddedChunks = chunks.map((chunk, i) => ({
         idempotencyKey: ikey,
-        sourceId,
+        bucketId,
         tenantId,
         documentId,
         content: chunk.content,
@@ -294,6 +304,13 @@ export class IndexEngine {
         indexedAt: new Date(),
       }))
 
+      // Extract triples for entity graph (non-blocking)
+      if (this.tripleExtractor && !dryRun) {
+        for (const chunk of chunks) {
+          this.tripleExtractor.extractFromChunk(chunk.content, bucketId, chunk.chunkIndex).catch(() => {})
+        }
+      }
+
       if (!dryRun) {
         await this.adapter.upsertDocument(modelId, embeddedChunks)
 
@@ -301,11 +318,11 @@ export class IndexEngine {
           await this.adapter.updateDocumentStatus(documentId, 'complete', chunks.length)
         }
 
-        const storeKey = buildHashStoreKey(tenantId, sourceId, ikey)
+        const storeKey = buildHashStoreKey(tenantId, bucketId, ikey)
         await this.adapter.hashStore.set(storeKey, {
           idempotencyKey: ikey,
           contentHash,
-          sourceId,
+          bucketId,
           tenantId,
           embeddingModel: modelId,
           indexedAt: new Date(),
@@ -314,7 +331,7 @@ export class IndexEngine {
       }
 
       return {
-        sourceId,
+        bucketId,
         tenantId,
         mode: 'upsert',
         total: 1,

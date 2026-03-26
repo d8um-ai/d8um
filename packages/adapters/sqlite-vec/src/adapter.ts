@@ -1,6 +1,6 @@
 import type { VectorStoreAdapter, SearchOpts, UndeployResult } from '@d8um/core'
 import type { EmbeddedChunk, ChunkFilter, ScoredChunk } from '@d8um/core'
-import type { Source } from '@d8um/core'
+import type { Bucket } from '@d8um/core'
 import type { Job, JobRun } from '@d8um/core'
 import type { DocumentJobRelation, DocumentJobRelationFilter } from '@d8um/core'
 import Database from 'better-sqlite3'
@@ -11,7 +11,7 @@ import {
   MODEL_CHUNKS_SQL,
   MODEL_VEC_SQL,
   HASH_TABLE_SQL,
-  SOURCES_TABLE_SQL,
+  BUCKETS_TABLE_SQL,
   JOBS_TABLE_SQL,
   JOB_RUNS_TABLE_SQL,
   DOCUMENT_JOB_RELATIONS_TABLE_SQL,
@@ -25,7 +25,7 @@ export interface SqliteVecAdapterConfig {
   tablePrefix?: string | undefined
   /** Table name for the hash store. Defaults to 'd8um_hashes'. */
   hashesTable?: string | undefined
-  sourcesTable?: string | undefined
+  bucketsTable?: string | undefined
   jobsTable?: string | undefined
   jobRunsTable?: string | undefined
   relationsTable?: string | undefined
@@ -38,7 +38,7 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
   private tablePrefix: string
   private hashesTable: string
   private registryTable: string
-  private sourcesTable: string
+  private bucketsTable: string
   private jobsTable: string
   private jobRunsTable: string
   private relationsTable: string
@@ -53,7 +53,7 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
 
     this.tablePrefix = config.tablePrefix ?? 'd8um_chunks'
     this.hashesTable = config.hashesTable ?? 'd8um_hashes'
-    this.sourcesTable = config.sourcesTable ?? 'd8um_sources'
+    this.bucketsTable = config.bucketsTable ?? 'd8um_buckets'
     this.jobsTable = config.jobsTable ?? 'd8um_jobs'
     this.jobRunsTable = config.jobRunsTable ?? 'd8um_job_runs'
     this.relationsTable = config.relationsTable ?? 'd8um_document_job_relations'
@@ -64,7 +64,7 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
   async deploy(): Promise<void> {
     this.db.exec(REGISTRY_SQL(this.registryTable))
     this.db.exec(HASH_TABLE_SQL(this.hashesTable))
-    this.db.exec(SOURCES_TABLE_SQL(this.sourcesTable))
+    this.db.exec(BUCKETS_TABLE_SQL(this.bucketsTable))
     this.db.exec(JOBS_TABLE_SQL(this.jobsTable))
     this.db.exec(JOB_RUNS_TABLE_SQL(this.jobRunsTable))
     this.db.exec(DOCUMENT_JOB_RELATIONS_TABLE_SQL(this.relationsTable))
@@ -105,7 +105,7 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
       this.registryTable,
       this.hashesTable,
       `${this.hashesTable}_run_times`,
-      this.sourcesTable,
+      this.bucketsTable,
       this.jobsTable,
       this.jobRunsTable,
       this.relationsTable,
@@ -145,7 +145,7 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
     this.db.exec(`DROP TABLE IF EXISTS ${this.relationsTable}`)
     this.db.exec(`DROP TABLE IF EXISTS ${this.jobRunsTable}`)
     this.db.exec(`DROP TABLE IF EXISTS ${this.jobsTable}`)
-    this.db.exec(`DROP TABLE IF EXISTS ${this.sourcesTable}`)
+    this.db.exec(`DROP TABLE IF EXISTS ${this.bucketsTable}`)
     this.db.exec(`DROP TABLE IF EXISTS ${this.hashesTable}_run_times`)
     this.db.exec(`DROP TABLE IF EXISTS ${this.hashesTable}`)
     this.db.exec(`DROP TABLE IF EXISTS ${this.registryTable}`)
@@ -187,10 +187,10 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
 
     const upsertChunk = this.db.prepare(
       `INSERT INTO ${chunksTable}
-        (id, source_id, tenant_id, document_id, idempotency_key, content,
+        (id, bucket_id, tenant_id, document_id, idempotency_key, content,
          embedding_model, chunk_index, total_chunks, metadata, indexed_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (idempotency_key, chunk_index, source_id) DO UPDATE SET
+       ON CONFLICT (idempotency_key, chunk_index, bucket_id) DO UPDATE SET
         id              = excluded.id,
         content         = excluded.content,
         embedding_model = excluded.embedding_model,
@@ -200,7 +200,7 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
     )
 
     const getRowid = this.db.prepare(
-      `SELECT chunk_rowid FROM ${chunksTable} WHERE idempotency_key = ? AND chunk_index = ? AND source_id = ?`
+      `SELECT chunk_rowid FROM ${chunksTable} WHERE idempotency_key = ? AND chunk_index = ? AND bucket_id = ?`
     )
 
     const deleteVec = this.db.prepare(
@@ -216,7 +216,7 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
         const id = crypto.randomUUID()
         upsertChunk.run(
           id,
-          chunk.sourceId,
+          chunk.bucketId,
           chunk.tenantId ?? null,
           chunk.documentId,
           chunk.idempotencyKey,
@@ -231,7 +231,7 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
         const row = getRowid.get(
           chunk.idempotencyKey,
           chunk.chunkIndex,
-          chunk.sourceId
+          chunk.bucketId
         ) as { chunk_rowid: number }
 
         const vecJson = JSON.stringify(chunk.embedding)
@@ -317,34 +317,34 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
     return row.count
   }
 
-  // --- Source persistence ---
+  // --- Bucket persistence ---
 
-  async upsertSource(source: Source): Promise<Source> {
+  async upsertBucket(bucket: Bucket): Promise<Bucket> {
     this.db.prepare(
-      `INSERT INTO ${this.sourcesTable} (id, name, description, status, tenant_id, updated_at)
+      `INSERT INTO ${this.bucketsTable} (id, name, description, status, tenant_id, updated_at)
        VALUES (?, ?, ?, ?, ?, datetime('now'))
        ON CONFLICT (id) DO UPDATE SET
          name = excluded.name, description = excluded.description,
          status = excluded.status, tenant_id = excluded.tenant_id, updated_at = datetime('now')`
-    ).run(source.id, source.name, source.description ?? null, source.status, source.tenantId ?? null)
-    return source
+    ).run(bucket.id, bucket.name, bucket.description ?? null, bucket.status, bucket.tenantId ?? null)
+    return bucket
   }
 
-  async getSource(id: string): Promise<Source | null> {
-    const row = this.db.prepare(`SELECT * FROM ${this.sourcesTable} WHERE id = ?`).get(id) as Record<string, unknown> | undefined
+  async getBucket(id: string): Promise<Bucket | null> {
+    const row = this.db.prepare(`SELECT * FROM ${this.bucketsTable} WHERE id = ?`).get(id) as Record<string, unknown> | undefined
     if (!row) return null
-    return { id: row.id as string, name: row.name as string, description: (row.description as string) ?? undefined, status: row.status as Source['status'], tenantId: (row.tenant_id as string) ?? undefined }
+    return { id: row.id as string, name: row.name as string, description: (row.description as string) ?? undefined, status: row.status as Bucket['status'], tenantId: (row.tenant_id as string) ?? undefined }
   }
 
-  async listSources(tenantId?: string): Promise<Source[]> {
+  async listBuckets(tenantId?: string): Promise<Bucket[]> {
     const rows = tenantId
-      ? this.db.prepare(`SELECT * FROM ${this.sourcesTable} WHERE tenant_id = ? ORDER BY created_at`).all(tenantId) as Record<string, unknown>[]
-      : this.db.prepare(`SELECT * FROM ${this.sourcesTable} ORDER BY created_at`).all() as Record<string, unknown>[]
-    return rows.map(r => ({ id: r.id as string, name: r.name as string, description: (r.description as string) ?? undefined, status: r.status as Source['status'], tenantId: (r.tenant_id as string) ?? undefined }))
+      ? this.db.prepare(`SELECT * FROM ${this.bucketsTable} WHERE tenant_id = ? ORDER BY created_at`).all(tenantId) as Record<string, unknown>[]
+      : this.db.prepare(`SELECT * FROM ${this.bucketsTable} ORDER BY created_at`).all() as Record<string, unknown>[]
+    return rows.map(r => ({ id: r.id as string, name: r.name as string, description: (r.description as string) ?? undefined, status: r.status as Bucket['status'], tenantId: (r.tenant_id as string) ?? undefined }))
   }
 
-  async deleteSource(id: string): Promise<void> {
-    this.db.prepare(`DELETE FROM ${this.sourcesTable} WHERE id = ?`).run(id)
+  async deleteBucket(id: string): Promise<void> {
+    this.db.prepare(`DELETE FROM ${this.bucketsTable} WHERE id = ?`).run(id)
   }
 
   // --- Job persistence ---
@@ -352,17 +352,17 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
   async upsertJob(job: Job): Promise<Job> {
     this.db.prepare(
       `INSERT INTO ${this.jobsTable}
-        (id, tenant_id, source_id, type, name, description, config, schedule,
+        (id, tenant_id, bucket_id, type, name, description, config, schedule,
          status, last_run_at, next_run_at, run_count, last_error, updated_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
        ON CONFLICT (id) DO UPDATE SET
-         tenant_id=excluded.tenant_id, source_id=excluded.source_id, type=excluded.type,
+         tenant_id=excluded.tenant_id, bucket_id=excluded.bucket_id, type=excluded.type,
          name=excluded.name, description=excluded.description, config=excluded.config,
          schedule=excluded.schedule, status=excluded.status, last_run_at=excluded.last_run_at,
          next_run_at=excluded.next_run_at, run_count=excluded.run_count,
          last_error=excluded.last_error, updated_at=datetime('now')`
     ).run(
-      job.id, job.tenantId ?? null, job.sourceId ?? null, job.type, job.name,
+      job.id, job.tenantId ?? null, job.bucketId ?? null, job.type, job.name,
       job.description ?? null, JSON.stringify(job.config), job.schedule ?? null,
       job.status, job.lastRunAt?.toISOString() ?? null, job.nextRunAt?.toISOString() ?? null,
       job.runCount, job.lastError ?? null
@@ -376,11 +376,11 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
     return mapSqliteRowToJob(row)
   }
 
-  async listJobs(filter?: { sourceId?: string; type?: string; tenantId?: string }): Promise<Job[]> {
+  async listJobs(filter?: { bucketId?: string; type?: string; tenantId?: string }): Promise<Job[]> {
     let query = `SELECT * FROM ${this.jobsTable}`
     const conditions: string[] = []
     const params: unknown[] = []
-    if (filter?.sourceId) { conditions.push('source_id = ?'); params.push(filter.sourceId) }
+    if (filter?.bucketId) { conditions.push('bucket_id = ?'); params.push(filter.bucketId) }
     if (filter?.type) { conditions.push('type = ?'); params.push(filter.type) }
     if (filter?.tenantId) { conditions.push('tenant_id = ?'); params.push(filter.tenantId) }
     if (conditions.length) query += ` WHERE ${conditions.join(' AND ')}`
@@ -398,11 +398,11 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
   async createJobRun(run: JobRun): Promise<JobRun> {
     this.db.prepare(
       `INSERT INTO ${this.jobRunsTable}
-        (id, job_id, source_id, status, summary, documents_created, documents_updated,
+        (id, job_id, bucket_id, status, summary, documents_created, documents_updated,
          documents_deleted, metrics, error, duration_ms, started_at, completed_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(
-      run.id, run.jobId, run.sourceId ?? null, run.status, run.summary ?? null,
+      run.id, run.jobId, run.bucketId ?? null, run.status, run.summary ?? null,
       run.documentsCreated, run.documentsUpdated, run.documentsDeleted,
       JSON.stringify(run.metrics ?? {}), run.error ?? null, run.durationMs ?? null,
       run.startedAt.toISOString(), run.completedAt?.toISOString() ?? null
@@ -433,7 +433,7 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
     ).all(jobId, limit ?? 50) as Record<string, unknown>[]
     return rows.map(r => ({
       id: r.id as string, jobId: r.job_id as string,
-      sourceId: (r.source_id as string) ?? undefined, status: r.status as JobRun['status'],
+      bucketId: (r.bucket_id as string) ?? undefined, status: r.status as JobRun['status'],
       summary: (r.summary as string) ?? undefined,
       documentsCreated: r.documents_created as number, documentsUpdated: r.documents_updated as number,
       documentsDeleted: r.documents_deleted as number,
@@ -494,7 +494,7 @@ function mapSqliteRowToJob(row: Record<string, unknown>): Job {
   return {
     id: row.id as string,
     tenantId: (row.tenant_id as string) ?? undefined,
-    sourceId: (row.source_id as string) ?? undefined,
+    bucketId: (row.bucket_id as string) ?? undefined,
     type: row.type as string,
     name: row.name as string,
     description: (row.description as string) ?? undefined,
@@ -516,9 +516,9 @@ function buildWhere(filter?: ChunkFilter): { where: string; params: unknown[] } 
   const conditions: string[] = []
   const params: unknown[] = []
 
-  if (filter.sourceId != null) {
-    conditions.push(`source_id = ?`)
-    params.push(filter.sourceId)
+  if (filter.bucketId != null) {
+    conditions.push(`bucket_id = ?`)
+    params.push(filter.bucketId)
   }
   if (filter.tenantId != null) {
     conditions.push(`tenant_id = ?`)
@@ -547,7 +547,7 @@ function mapRowToScoredChunk(row: Record<string, unknown>): ScoredChunk {
 
   return {
     idempotencyKey: row.idempotency_key as string,
-    sourceId: row.source_id as string,
+    bucketId: row.bucket_id as string,
     tenantId: (row.tenant_id as string) ?? undefined,
     documentId: row.document_id as string,
     content: row.content as string,

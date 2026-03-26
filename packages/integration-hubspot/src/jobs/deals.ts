@@ -18,7 +18,7 @@ export const dealsJob: JobTypeDefinition = {
   label: 'HubSpot: Deals',
   description: 'Fetches deals from HubSpot CRM incrementally',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'HubSpotDeal',
   schedule: 'hourly',
@@ -98,7 +98,7 @@ export const dealsJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

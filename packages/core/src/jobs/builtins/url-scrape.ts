@@ -13,7 +13,7 @@ export const urlScrapeJob: JobTypeDefinition = {
   label: 'URL Scrape',
   description: 'Scrape and index a single web page',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   configSchema: [
     { key: 'url', label: 'URL', type: 'url', required: true },
@@ -32,7 +32,7 @@ export const urlScrapeJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: created,
       documentsUpdated: 0,

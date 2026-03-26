@@ -27,8 +27,8 @@ export function resolveIdempotencyKey(
 
 export function buildHashStoreKey(
   tenantId: string | undefined,
-  sourceId: string,
+  bucketId: string,
   idempotencyKey: string
 ): string {
-  return [tenantId ?? '__global__', sourceId, idempotencyKey].join('::')
+  return [tenantId ?? '__global__', bucketId, idempotencyKey].join('::')
 }

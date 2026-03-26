@@ -17,7 +17,7 @@ export const issuesJob: JobTypeDefinition = {
   label: 'Linear: Issues',
   description: 'Fetches issues from Linear workspace',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'LinearIssue',
   schedule: 'hourly',
@@ -102,7 +102,7 @@ export const issuesJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

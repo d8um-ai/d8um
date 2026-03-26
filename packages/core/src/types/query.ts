@@ -1,6 +1,8 @@
+export type QueryMode = 'fast' | 'hybrid' | 'memory' | 'neural' | 'auto'
+
 export interface d8umQuery {
   text: string
-  sources?: string[] | undefined
+  buckets?: string[] | undefined
   count?: number | undefined
   filters?: Record<string, unknown> | undefined
 }
@@ -15,7 +17,7 @@ export interface d8umResult {
     rrf?: number | undefined
   }
 
-  source: {
+  bucket: {
     id: string
     documentId: string
     title: string
@@ -40,10 +42,18 @@ export interface d8umResult {
 }
 
 export interface QueryOpts {
-  sources?: string[] | undefined
+  /** Retrieval strategy. Default: 'hybrid'. */
+  mode?: QueryMode | undefined
+  buckets?: string[] | undefined
   count?: number | undefined
-  tenantId?: string | undefined
   filters?: Record<string, unknown> | undefined
+
+  // Identity fields (per-call scoping)
+  tenantId?: string | undefined
+  groupId?: string | undefined
+  userId?: string | undefined
+  agentId?: string | undefined
+  sessionId?: string | undefined
   /** Filter results by document-level fields (status, scope, type, etc.). */
   documentFilter?: import('./d8um-document.js').DocumentFilter | undefined
 
@@ -60,7 +70,7 @@ export interface QueryOpts {
     cached?: number | undefined
   } | undefined
 
-  onSourceError?: 'omit' | 'warn' | 'throw' | undefined
+  onBucketError?: 'omit' | 'warn' | 'throw' | undefined
 
   /** Point-in-time query: only return results valid at this timestamp */
   temporalAt?: Date | undefined
@@ -70,7 +80,7 @@ export interface QueryOpts {
 
 export interface QueryResponse {
   results: d8umResult[]
-  sources: Record<string, {
+  buckets: Record<string, {
     mode: 'indexed' | 'live' | 'cached'
     resultCount: number
     durationMs: number
@@ -89,7 +99,7 @@ export interface QueryResponse {
 export interface AssembleOpts {
   format?: 'xml' | 'markdown' | 'plain' | ((results: d8umResult[]) => string) | undefined
   maxTokens?: number | undefined
-  citeSources?: boolean | undefined
-  groupBySource?: boolean | undefined
+  citeBuckets?: boolean | undefined
+  groupByBucket?: boolean | undefined
   neighborJoining?: boolean | undefined
 }

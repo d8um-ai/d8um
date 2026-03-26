@@ -16,7 +16,7 @@ export const filesJob: JobTypeDefinition = {
   label: 'Google Drive: Files',
   description: 'Fetches files from Google Drive',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'GoogleDriveFile',
   schedule: 'daily',
@@ -105,7 +105,7 @@ export const filesJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

@@ -19,7 +19,7 @@ export const REGISTRY_SQL = (registryTable: string) => `
 export const MODEL_TABLE_SQL = (chunksTable: string, dimensions: number) => `
   CREATE TABLE IF NOT EXISTS ${chunksTable} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_id       TEXT NOT NULL,
+    bucket_id       TEXT NOT NULL,
     tenant_id       TEXT,
     document_id     UUID NOT NULL,
     idempotency_key TEXT NOT NULL,
@@ -42,7 +42,7 @@ export const MODEL_TABLE_SQL = (chunksTable: string, dimensions: number) => `
     ON ${chunksTable} (tenant_id);
 
   CREATE INDEX IF NOT EXISTS ${chunksTable}_source_tenant_idx
-    ON ${chunksTable} (source_id, tenant_id);
+    ON ${chunksTable} (bucket_id, tenant_id);
 
   CREATE INDEX IF NOT EXISTS ${chunksTable}_fts_idx
     ON ${chunksTable} USING gin (search_vector);
@@ -51,7 +51,7 @@ export const MODEL_TABLE_SQL = (chunksTable: string, dimensions: number) => `
     ON ${chunksTable} (document_id, chunk_index);
 
   CREATE UNIQUE INDEX IF NOT EXISTS ${chunksTable}_ikey_chunk_idx
-    ON ${chunksTable} (idempotency_key, chunk_index, source_id);
+    ON ${chunksTable} (idempotency_key, chunk_index, bucket_id);
 `
 
 /**
@@ -62,21 +62,21 @@ export const HASH_TABLE_SQL = (hashesTable: string) => `
     store_key       TEXT PRIMARY KEY,
     idempotency_key TEXT NOT NULL,
     content_hash    TEXT NOT NULL,
-    source_id       TEXT NOT NULL,
+    bucket_id       TEXT NOT NULL,
     tenant_id       TEXT,
     embedding_model TEXT NOT NULL,
     indexed_at      TIMESTAMPTZ NOT NULL,
     chunk_count     INTEGER NOT NULL
   );
 
-  CREATE INDEX IF NOT EXISTS ${hashesTable}_source_idx
-    ON ${hashesTable} (source_id, tenant_id);
+  CREATE INDEX IF NOT EXISTS ${hashesTable}_bucket_idx
+    ON ${hashesTable} (bucket_id, tenant_id);
 
   CREATE TABLE IF NOT EXISTS ${hashesTable}_run_times (
-    source_id  TEXT NOT NULL,
+    bucket_id  TEXT NOT NULL,
     tenant_id  TEXT,
     last_run   TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (source_id, COALESCE(tenant_id, ''))
+    PRIMARY KEY (bucket_id, COALESCE(tenant_id, ''))
   );
 `
 
@@ -87,7 +87,7 @@ export const HASH_TABLE_SQL = (hashesTable: string) => `
 export const DOCUMENTS_TABLE_SQL = (documentsTable: string) => `
   CREATE TABLE IF NOT EXISTS ${documentsTable} (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_id       TEXT NOT NULL,
+    bucket_id       TEXT NOT NULL,
     tenant_id       TEXT,
     title           TEXT NOT NULL DEFAULT '',
     url             TEXT,
@@ -107,10 +107,10 @@ export const DOCUMENTS_TABLE_SQL = (documentsTable: string) => `
   );
 
   CREATE UNIQUE INDEX IF NOT EXISTS ${documentsTable}_source_hash_idx
-    ON ${documentsTable} (source_id, COALESCE(tenant_id, ''), content_hash);
+    ON ${documentsTable} (bucket_id, COALESCE(tenant_id, ''), content_hash);
 
-  CREATE INDEX IF NOT EXISTS ${documentsTable}_source_idx
-    ON ${documentsTable} (source_id, tenant_id);
+  CREATE INDEX IF NOT EXISTS ${documentsTable}_bucket_idx
+    ON ${documentsTable} (bucket_id, tenant_id);
 
   CREATE INDEX IF NOT EXISTS ${documentsTable}_status_idx
     ON ${documentsTable} (status);
@@ -123,9 +123,9 @@ export const DOCUMENTS_TABLE_SQL = (documentsTable: string) => `
 `
 
 /**
- * DDL for the sources table - persists d8um Source records.
+ * DDL for the sources table - persists d8um Bucket records.
  */
-export const SOURCES_TABLE_SQL = (table: string) => `
+export const BUCKETS_TABLE_SQL = (table: string) => `
   CREATE TABLE IF NOT EXISTS ${table} (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
@@ -148,7 +148,7 @@ export const JOBS_TABLE_SQL = (table: string) => `
   CREATE TABLE IF NOT EXISTS ${table} (
     id          TEXT PRIMARY KEY,
     tenant_id   TEXT,
-    source_id   TEXT,
+    bucket_id   TEXT,
     type        TEXT NOT NULL,
     name        TEXT NOT NULL,
     description TEXT,
@@ -167,8 +167,8 @@ export const JOBS_TABLE_SQL = (table: string) => `
   CREATE INDEX IF NOT EXISTS ${table}_tenant_idx
     ON ${table} (tenant_id);
 
-  CREATE INDEX IF NOT EXISTS ${table}_source_idx
-    ON ${table} (source_id);
+  CREATE INDEX IF NOT EXISTS ${table}_bucket_idx
+    ON ${table} (bucket_id);
 
   CREATE INDEX IF NOT EXISTS ${table}_type_idx
     ON ${table} (type);
@@ -181,7 +181,7 @@ export const JOB_RUNS_TABLE_SQL = (table: string) => `
   CREATE TABLE IF NOT EXISTS ${table} (
     id                TEXT PRIMARY KEY,
     job_id            TEXT NOT NULL,
-    source_id         TEXT,
+    bucket_id         TEXT,
     status            TEXT NOT NULL DEFAULT 'running'
                       CHECK (status IN ('running', 'completed', 'failed')),
     summary           TEXT,

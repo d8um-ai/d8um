@@ -14,10 +14,11 @@ export class IndexedRunner {
    */
   async run(
     text: string,
-    sourcesByModel: Map<string, { embedding: EmbeddingProvider; sourceIds: string[] }>,
+    sourcesByModel: Map<string, { embedding: EmbeddingProvider; bucketIds: string[] }>,
     count: number,
     tenantId?: string,
-    documentFilter?: DocumentFilter
+    documentFilter?: DocumentFilter,
+    vectorOnly?: boolean
   ): Promise<NormalizedResult[]> {
     const allResults: NormalizedResult[] = []
 
@@ -26,7 +27,7 @@ export class IndexedRunner {
 
       const filter = {
         tenantId,
-        sourceId: group.sourceIds.length === 1 ? group.sourceIds[0] : undefined,
+        bucketId: group.bucketIds.length === 1 ? group.bucketIds[0] : undefined,
       }
 
       // Prefer searchWithDocuments if available and documentFilter is set
@@ -38,13 +39,13 @@ export class IndexedRunner {
         })
 
         for (const chunk of chunks) {
-          if (group.sourceIds.length > 1 && !group.sourceIds.includes(chunk.sourceId)) {
+          if (group.bucketIds.length > 1 && !group.bucketIds.includes(chunk.bucketId)) {
             continue
           }
 
           allResults.push({
             content: chunk.content,
-            sourceId: chunk.sourceId,
+            bucketId: chunk.bucketId,
             documentId: chunk.documentId,
             rawScores: {
               vector: chunk.scores.vector,
@@ -72,19 +73,19 @@ export class IndexedRunner {
           })
         }
       } else {
-        // Fall back to standard hybrid/vector search
-        const chunks = this.adapter.hybridSearch
+        // Fall back to standard hybrid/vector search (or vector-only in fast mode)
+        const chunks = (!vectorOnly && this.adapter.hybridSearch)
           ? await this.adapter.hybridSearch(modelId, queryEmbedding, text, { count, filter })
           : await this.adapter.search(modelId, queryEmbedding, { count, filter })
 
         for (const chunk of chunks) {
-          if (group.sourceIds.length > 1 && !group.sourceIds.includes(chunk.sourceId)) {
+          if (group.bucketIds.length > 1 && !group.bucketIds.includes(chunk.bucketId)) {
             continue
           }
 
           allResults.push({
             content: chunk.content,
-            sourceId: chunk.sourceId,
+            bucketId: chunk.bucketId,
             documentId: chunk.documentId,
             rawScores: {
               vector: chunk.scores.vector,

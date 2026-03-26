@@ -16,7 +16,7 @@ export const accountsJob: JobTypeDefinition = {
   label: 'Salesforce: Accounts',
   description: 'Fetches accounts from Salesforce',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'SalesforceAccount',
   schedule: 'daily',
@@ -92,7 +92,7 @@ export const accountsJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

@@ -14,7 +14,7 @@ export const usersJob: JobTypeDefinition = {
   label: 'Gong: Users',
   description: 'Fetches users from Gong workspace',
   category: 'ingestion',
-  requiresSource: true,
+  requiresBucket: true,
   available: true,
   entity: 'GongUser',
   schedule: 'daily',
@@ -60,7 +60,7 @@ export const usersJob: JobTypeDefinition = {
 
     return {
       jobId: ctx.job.id,
-      sourceId: ctx.job.sourceId,
+      bucketId: ctx.job.bucketId,
       status: 'completed',
       documentsCreated: 0,
       documentsUpdated: 0,

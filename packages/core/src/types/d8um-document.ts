@@ -5,7 +5,7 @@ export interface d8umDocument {
   /** UUID primary key. */
   id: string
   /** The d8um source that produced this document. */
-  sourceId: string
+  bucketId: string
   /** Multi-tenant isolation. Maps to organization_id in many apps. */
   tenantId?: string | undefined
   title: string
@@ -31,7 +31,7 @@ export interface d8umDocument {
 }
 
 export interface DocumentFilter {
-  sourceId?: string | undefined
+  bucketId?: string | undefined
   tenantId?: string | undefined
   status?: DocumentStatus | DocumentStatus[] | undefined
   scope?: DocumentScope | DocumentScope[] | undefined
@@ -43,7 +43,7 @@ export interface DocumentFilter {
 }
 
 export interface UpsertDocumentInput {
-  sourceId: string
+  bucketId: string
   tenantId?: string | undefined
   title: string
   url?: string | undefined
