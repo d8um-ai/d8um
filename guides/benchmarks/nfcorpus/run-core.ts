@@ -133,7 +133,7 @@ async function main() {
   const d = await d8umCreate({
     vectorStore: adapter,
     embedding: {
-      model: gateway.textEmbeddingModel(EMBEDDING_MODEL),
+      model: gateway.embeddingModel(EMBEDDING_MODEL),
       dimensions: EMBEDDING_DIMS,
     },
   })

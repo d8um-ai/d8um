@@ -56,7 +56,7 @@ const adapter = new SqliteVecAdapter({ dbPath: './nfcorpus-core.db' })
 const d = await d8umCreate({
   vectorStore: adapter,
   embedding: {
-    model: gateway.textEmbeddingModel('openai/text-embedding-3-small'),
+    model: gateway.embeddingModel('openai/text-embedding-3-small'),
     dimensions: 1536,
   },
 })

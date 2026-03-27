@@ -16,11 +16,10 @@
  *   npx tsx run-neural.ts
  */
 
-import { d8umCreate } from '@d8um/core'
+import { d8umCreate, aiSdkLlmProvider } from '@d8um/core'
 import { SqliteVecAdapter } from '@d8um/adapter-sqlite-vec'
 import { createGraphBridge } from '@d8um/graph'
 import { gateway } from '@ai-sdk/gateway'
-import { generateText } from 'ai'
 import { existsSync, unlinkSync, writeFileSync } from 'fs'
 
 // ── Configuration ──
@@ -34,34 +33,6 @@ const CHUNK_OVERLAP = 64
 const K = 10
 
 const HF_BASE = 'https://datasets-server.huggingface.co'
-
-// ── LLM Provider (wraps AI SDK gateway for d8um's LLMProvider interface) ──
-
-function createLLMProvider() {
-  const model = gateway(LLM_MODEL)
-
-  return {
-    async generateText(prompt: string, systemPrompt?: string): Promise<string> {
-      const result = await generateText({
-        model,
-        prompt,
-        ...(systemPrompt ? { system: systemPrompt } : {}),
-      })
-      return result.text
-    },
-
-    async generateJSON<T = unknown>(prompt: string, systemPrompt?: string): Promise<T> {
-      const result = await generateText({
-        model,
-        prompt: prompt + '\n\nRespond with valid JSON only, no markdown fences.',
-        ...(systemPrompt ? { system: systemPrompt } : {}),
-      })
-      // Strip markdown fences if present
-      const text = result.text.replace(/^```(?:json)?\s*/m, '').replace(/\s*```\s*$/m, '').trim()
-      return JSON.parse(text) as T
-    },
-  }
-}
 
 // ── HuggingFace Data Fetching ──
 
@@ -160,8 +131,9 @@ async function main() {
   console.log('Phase 1: Initializing d8um with graph bridge...')
 
   const adapter = new SqliteVecAdapter({ dbPath: DB_PATH })
-  const llm = createLLMProvider()
-  const embeddingModel = gateway.textEmbeddingModel(EMBEDDING_MODEL)
+  const llmModel = gateway(LLM_MODEL)
+  const llm = aiSdkLlmProvider({ model: llmModel })
+  const embeddingModel = gateway.embeddingModel(EMBEDDING_MODEL)
 
   // The embedding config used by d8um core
   const embeddingConfig = { model: embeddingModel, dimensions: EMBEDDING_DIMS }
