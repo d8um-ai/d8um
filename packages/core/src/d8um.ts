@@ -23,13 +23,18 @@ import type { LLMProvider } from './types/llm-provider.js'
 import type { GraphBridge } from './types/graph-bridge.js'
 import type { d8umIdentity } from './types/identity.js'
 import type { ContextSearchOpts, ContextSearchResponse } from './query/context-search.js'
+import type { AISDKLLMInput } from './llm/ai-sdk-adapter.js'
 import { aiSdkEmbeddingProvider, isAISDKEmbeddingInput } from './embedding/ai-sdk-adapter.js'
+import { aiSdkLlmProvider, isAISDKLLMInput } from './llm/ai-sdk-adapter.js'
 import { IndexEngine } from './index-engine/engine.js'
 import { TripleExtractor } from './index-engine/triple-extractor.js'
 import { searchWithContext as searchWithContextFn } from './query/context-search.js'
 import { assemble as assembleResults } from './query/assemble.js'
 import { getJobType, registerJobType } from './jobs/registry.js'
 import { randomUUID } from 'crypto'
+
+/** Union type: pass a native LLMProvider or an AI SDK model wrapped as { model }. */
+export type LLMInput = LLMProvider | AISDKLLMInput
 
 export interface d8umConfig {
   vectorStore: VectorStoreAdapter
@@ -42,7 +47,7 @@ export interface d8umConfig {
   /** Additional job type definitions to register on initialize(). */
   jobTypes?: JobTypeDefinition[] | undefined
   /** Optional LLM provider for triple extraction, query classification, and memory operations. */
-  llm?: LLMProvider | undefined
+  llm?: LLMInput | undefined
   /** Optional graph bridge for memory operations and neural query mode. */
   graph?: GraphBridge | undefined
 }
@@ -58,6 +63,17 @@ export function resolveEmbeddingProvider(config: EmbeddingInput): EmbeddingProvi
   if (isAISDKEmbeddingInput(config)) return aiSdkEmbeddingProvider(config)
 
   throw new Error('Invalid embedding configuration')
+}
+
+function isLLMProvider(value: LLMInput): value is LLMProvider {
+  return 'generateText' in value && 'generateJSON' in value
+}
+
+export function resolveLLMProvider(config: LLMInput): LLMProvider {
+  if (isLLMProvider(config)) return config
+  if (isAISDKLLMInput(config)) return aiSdkLlmProvider(config)
+
+  throw new Error('Invalid LLM configuration')
 }
 
 // ── Buckets Sub-API ──
@@ -748,7 +764,8 @@ class d8umImpl implements d8umInstance {
   private createIndexEngine(embedding: EmbeddingProvider): IndexEngine {
     const engine = new IndexEngine(this.adapter, embedding)
     if (this.config.llm && this.config.graph) {
-      engine.tripleExtractor = new TripleExtractor({ llm: this.config.llm, graph: this.config.graph })
+      const llm = resolveLLMProvider(this.config.llm)
+      engine.tripleExtractor = new TripleExtractor({ llm, graph: this.config.graph })
     }
     return engine
   }

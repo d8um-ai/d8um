@@ -1,6 +1,6 @@
 // Main public API
-export { d8um, d8umCreate, d8umDeploy, resolveEmbeddingProvider } from './d8um.js'
-export type { d8umConfig, d8umInstance, BucketsApi, JobsApi, DocumentJobsApi } from './d8um.js'
+export { d8um, d8umCreate, d8umDeploy, resolveEmbeddingProvider, resolveLLMProvider } from './d8um.js'
+export type { d8umConfig, d8umInstance, BucketsApi, JobsApi, DocumentJobsApi, LLMInput } from './d8um.js'
 
 // Types
 export type {
@@ -61,6 +61,10 @@ export { IndexError } from './types/index.js'
 export type { EmbeddingProvider } from './embedding/index.js'
 export { aiSdkEmbeddingProvider, isAISDKEmbeddingInput } from './embedding/index.js'
 export type { AISDKEmbeddingModel, AISDKEmbeddingInput } from './embedding/index.js'
+
+// LLM
+export { aiSdkLlmProvider, isAISDKLLMInput } from './llm/index.js'
+export type { AISDKLanguageModel, AISDKLLMInput } from './llm/index.js'
 
 // Index engine
 export { IndexEngine, defaultChunker, sha256, stripMarkdown } from './index-engine/index.js'

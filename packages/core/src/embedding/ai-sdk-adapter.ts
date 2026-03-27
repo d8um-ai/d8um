@@ -10,7 +10,7 @@ export interface AISDKEmbeddingModel {
   readonly modelId: string
   readonly maxEmbeddingsPerCall: number | PromiseLike<number | undefined> | undefined
   readonly supportsParallelCalls: boolean | PromiseLike<boolean>
-  doEmbed(options: { values: string[] }): Promise<{ embeddings: number[][] }>
+  doEmbed(options: { values: string[] }): PromiseLike<{ embeddings: number[][] }>
 }
 
 /**

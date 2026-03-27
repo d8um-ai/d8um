@@ -91,14 +91,14 @@ const llm = createLLMProvider() // wraps gateway('google/gemini-3.1-flash-lite-p
 
 const graph = createGraphBridge({
   memoryStore: adapter,
-  embedding: embeddingProvider, // wraps gateway.textEmbeddingModel(...)
+  embedding: embeddingProvider, // wraps gateway.embeddingModel(...)
   llm,
   scope: { agentId: 'nfcorpus-benchmark' },
 })
 
 const d = await d8umCreate({
   vectorStore: adapter,
-  embedding: { model: gateway.textEmbeddingModel('openai/text-embedding-3-small'), dimensions: 1536 },
+  embedding: { model: gateway.embeddingModel('openai/text-embedding-3-small'), dimensions: 1536 },
   llm,
   graph,
 })
