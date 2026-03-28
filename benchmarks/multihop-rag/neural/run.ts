@@ -1,26 +1,19 @@
 #!/usr/bin/env npx tsx
 /**
- * AU Tax Guidance Retrieval Benchmark — d8um Graph (Neural Search)
+ * MultiHop-RAG Benchmark — d8um Graph (Neural Search)
  *
- * Reseed with fixed neural pipeline (PPR score propagation + log-scaled edge weight accumulation).
- *
- * Runs the isaacus/australian-tax-guidance-retrieval benchmark
+ * Runs the yixuantt/MultiHopRAG benchmark (609 docs, ~2556 queries)
  * using d8um graph with neural search (hybrid + memory recall + PPR graph traversal).
  *
  * During ingestion, an LLM extracts S-P-O triples from each chunk, building
  * a knowledge graph that powers Personalized PageRank at query time.
  *
- * Uses Neon Postgres (pgvector) for persistent storage and
- * Vercel Blob for cached dataset downloads.
- *
  * Required env vars:
- *   NEON_DATABASE_URL       — Neon Postgres connection string
- *   AI_GATEWAY_API_KEY      — AI Gateway API key (embeddings + LLM)
- *   BLOB_READ_WRITE_TOKEN   — Vercel Blob token (dataset download)
+ *   NEON_DATABASE_URL, AI_GATEWAY_API_KEY, BLOB_READ_WRITE_TOKEN
  *
  * Usage:
- *   npx tsx australian-tax-guidance-retrieval/neural/run.ts           # query-only (uses existing index)
- *   npx tsx australian-tax-guidance-retrieval/neural/run.ts --seed    # re-index corpus, then query
+ *   npx tsx multihop-rag/neural/run.ts           # query-only
+ *   npx tsx multihop-rag/neural/run.ts --seed    # re-index
  */
 
 import { d8umCreate, aiSdkLlmProvider } from '@d8um/core'
@@ -29,15 +22,15 @@ import { gateway } from '@ai-sdk/gateway'
 import { neon } from '@neondatabase/serverless'
 import { createBenchmarkAdapter } from '../../lib/adapter.js'
 import { loadCorpus, loadQueries, loadQrels, buildQrelsMap } from '../../lib/datasets.js'
-import { scoreAllQueries, deduplicateToDocuments } from '../../lib/metrics.js'
+import { scoreAllQueriesExtended, deduplicateToDocuments } from '../../lib/metrics.js'
 import { printResults, type BenchmarkResult } from '../../lib/report.js'
 
 // ── Configuration ──
 
-const DATASET = 'australian-tax-guidance-retrieval'
-const BLOB_PREFIX = 'datasets/isaacus'
-const BUCKET_NAME = 'au-tax-guidance-neural'
-const TABLE_PREFIX = 'bench_au_tax_neural_'
+const DATASET = 'multihop-rag'
+const BLOB_PREFIX = 'datasets'
+const BUCKET_NAME = 'multihop-rag-neural'
+const TABLE_PREFIX = 'bench_multihop_neural_'
 const EMBEDDING_MODEL = 'openai/text-embedding-3-small'
 const EMBEDDING_DIMS = 1536
 const LLM_MODEL = 'google/gemini-3.1-flash-lite-preview'
@@ -54,7 +47,7 @@ async function main() {
   const totalStart = performance.now()
 
   console.log('╔══════════════════════════════════════════════════════════════════╗')
-  console.log('║  AU Tax Guidance Retrieval — d8um Graph (Neural Search)         ║')
+  console.log('║  MultiHop-RAG — d8um Graph (Neural Search)                      ║')
   console.log('╚══════════════════════════════════════════════════════════════════╝')
   console.log()
   console.log(`  Mode: ${shouldSeed ? 'seed + query' : 'query-only (use --seed to re-index)'}`)
@@ -77,7 +70,6 @@ async function main() {
 
   const embeddingConfig = { model: embeddingModel, dimensions: EMBEDDING_DIMS }
 
-  // Graph bridge needs its own memory store adapter (for entities/edges)
   const memoryStore = new PgMemoryStoreAdapter({
     sql: (q, p) => sql(q, p as any) as any,
     memoriesTable: `${TABLE_PREFIX}memories`,
@@ -102,7 +94,7 @@ async function main() {
       model: EMBEDDING_MODEL,
     },
     llm,
-    scope: { agentId: 'au-tax-guidance-benchmark' },
+    scope: { agentId: 'multihop-rag-benchmark' },
   })
 
   const d = await d8umCreate({
@@ -116,7 +108,6 @@ async function main() {
   console.log(`  LLM: ${LLM_MODEL} (triple extraction during ingest)`)
   console.log()
 
-  // Find or create bucket
   const existingBuckets = await d.buckets.list()
   let bucket = existingBuckets.find(b => b.name === BUCKET_NAME)
 
@@ -130,7 +121,7 @@ async function main() {
   console.log()
 
   // ── Phase 2: Load Dataset from Vercel Blob ──
-  console.log('Phase 2: Loading Australian Tax Guidance Retrieval from Vercel Blob...')
+  console.log('Phase 2: Loading MultiHop-RAG from Vercel Blob...')
 
   const [corpus, queries, qrels] = await Promise.all([
     loadCorpus(DATASET, BLOB_PREFIX),
@@ -240,7 +231,7 @@ async function main() {
     allResults.set(queryId, deduplicateToDocuments(response.results, K))
 
     queriesDone++
-    if (queriesDone % 20 === 0 || queriesDone === testQueries.length) {
+    if (queriesDone % 50 === 0 || queriesDone === testQueries.length) {
       process.stdout.write(`\r  Queries: ${queriesDone}/${testQueries.length}`)
     }
   }
@@ -253,12 +244,12 @@ async function main() {
   // ── Phase 5: Score ──
   console.log('Phase 5: Computing IR metrics...')
 
-  const { metrics, scored } = scoreAllQueries(allResults, qrelsMap, K)
+  const { metrics, scored } = scoreAllQueriesExtended(allResults, qrelsMap, K)
   const totalDuration = (performance.now() - totalStart) / 1000
 
   // ── Phase 6: Results ──
   const result: BenchmarkResult = {
-    benchmark: 'Australian Tax Guidance Retrieval (isaacus)',
+    benchmark: 'MultiHop-RAG (yixuantt)',
     dataset: DATASET,
     mode: 'neural',
     variant: 'graph',
@@ -289,7 +280,4 @@ async function main() {
   console.log('══════════════════════════════════════════════════════')
 }
 
-main().catch(err => {
-  console.error('Benchmark failed:', err)
-  process.exit(1)
-})
+main().catch(err => { console.error('Benchmark failed:', err); process.exit(1) })
