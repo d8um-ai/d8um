@@ -117,7 +117,7 @@ async function main() {
 
       const result = await d.ingest(
         bucket.id, docs,
-        { chunkSize: CHUNK_SIZE, chunkOverlap: CHUNK_OVERLAP, deduplicateBy: ['content'] },
+        { chunkSize: CHUNK_SIZE, chunkOverlap: CHUNK_OVERLAP, deduplicateBy: ['content'], propagateMetadata: ['metadata.corpusId'] },
       )
 
       ingested += batch.length
@@ -148,6 +148,7 @@ async function main() {
   let queriesDone = 0
   let totalRetrieved = 0
   let totalWithCorpusId = 0
+  let debugInfo: Record<string, unknown> | undefined
 
   for (const q of qa) {
     const queryId = String(q.id)
@@ -163,23 +164,18 @@ async function main() {
     totalRetrieved += response.results.length
     totalWithCorpusId += retrievedIds.length
 
-    // Debug: log first query's details
+    // Capture first query diagnostics for the result JSON
     if (queriesDone === 0) {
-      console.log(`\n  [Debug] First query: "${q.question.slice(0, 80)}..."`)
-      console.log(`  [Debug] Results returned: ${response.results.length}`)
-      console.log(`  [Debug] Results with corpusId: ${retrievedIds.length}`)
-      console.log(`  [Debug] Expected relevant: ${q.relevant_passage_id}`)
-      if (response.results.length > 0) {
-        const r0 = response.results[0]
-        console.log(`  [Debug] First result metadata keys: ${Object.keys(r0.metadata).join(', ')}`)
-        console.log(`  [Debug] First result metadata: ${JSON.stringify(r0.metadata)}`)
-        console.log(`  [Debug] First result content preview: ${r0.content?.slice(0, 100)}...`)
-      }
-      if (retrievedIds.length > 0) {
-        console.log(`  [Debug] Retrieved IDs (first 5): ${retrievedIds.slice(0, 5).join(', ')}`)
-      }
-      if (response.warnings && response.warnings.length > 0) {
-        console.log(`  [Debug] Warnings: ${response.warnings.join('; ')}`)
+      const r0 = response.results[0]
+      debugInfo = {
+        firstQuery: q.question.slice(0, 120),
+        expectedRelevantId: q.relevant_passage_id,
+        resultsReturned: response.results.length,
+        resultsWithCorpusId: retrievedIds.length,
+        retrievedIds: retrievedIds.slice(0, 5),
+        firstResultMetadata: r0 ? r0.metadata : null,
+        firstResultContent: r0 ? r0.content?.slice(0, 150) : null,
+        warnings: response.warnings ?? [],
       }
     }
 

@@ -133,6 +133,7 @@ async function main() {
           chunkSize: CHUNK_SIZE,
           chunkOverlap: CHUNK_OVERLAP,
           deduplicateBy: ['content'],
+          propagateMetadata: ['metadata.corpusId'],
         },
       )
 
