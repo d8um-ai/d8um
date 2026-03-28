@@ -11,7 +11,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 jobs:
@@ -162,7 +162,10 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const path = require('path');
 
+            const dataset = '${{ matrix.dataset }}';
+            const variant = '${{ matrix.variant }}';
             const branch = context.ref.replace('refs/heads/', '');
             const prs = await github.rest.pulls.list({
               owner: context.repo.owner,
@@ -176,31 +179,23 @@ jobs:
             }
             const prNumber = prs.data[0].number;
 
-            // Read result JSON from file (not from step output) to avoid template literal escaping issues
+            // Read result JSON from file
             let resultJson = '';
             try {
               resultJson = fs.readFileSync('/tmp/bench-result.json', 'utf8').trim();
-            } catch (e) {
-              // File may not exist if benchmark crashed very early
-            }
+            } catch (e) {}
 
             let result;
             try {
               if (resultJson) result = JSON.parse(resultJson);
-            } catch (e) {
-              // Invalid JSON — treat as failure
-            }
+            } catch (e) {}
 
             if (!result || !result.metrics) {
-              // Read full output log for error details
               let log = '';
               try {
                 const full = fs.readFileSync('/tmp/bench-output.txt', 'utf8');
-                const lines = full.split('\n');
-                log = lines.slice(-80).join('\n').trim();
-              } catch (e) {
-                // No output file
-              }
+                log = full.split('\n').slice(-80).join('\n').trim();
+              } catch (e) {}
               const logBlock = log
                 ? '\n<details><summary>Output (last 80 lines)</summary>\n\n```\n' + log + '\n```\n\n</details>'
                 : '';
@@ -208,7 +203,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: prNumber,
-                body: '## Benchmark Failed: ${{ matrix.dataset }}/${{ matrix.variant }}\n\nNo result JSON was produced. The benchmark likely crashed before completing.\n\n[View logs](' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId + ')' + logBlock,
+                body: '## Benchmark Failed: ' + dataset + '/' + variant + '\n\nNo result JSON was produced. The benchmark likely crashed before completing.\n\n[View logs](' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId + ')' + logBlock,
               });
               return;
             }
@@ -217,15 +212,65 @@ jobs:
             const t = result.timing;
             const seedLabel = '${{ matrix.seed }}' === 'true' ? ' (seeded)' : '';
 
+            // Load baselines
+            let baselines = [];
+            try {
+              const bl = JSON.parse(fs.readFileSync('benchmarks/' + dataset + '/baselines.json', 'utf8'));
+              baselines = bl.baselines || [];
+            } catch (e) {
+              console.log('No baselines.json found for ' + dataset);
+            }
+
+            // Load history
+            const historyPath = 'benchmarks/' + dataset + '/' + variant + '/history.json';
+            let history = [];
+            try {
+              history = JSON.parse(fs.readFileSync(historyPath, 'utf8'));
+            } catch (e) {
+              console.log('No history.json found');
+            }
+
+            // Build comparison table header
+            const metricNames = ['nDCG@10', 'MAP@10', 'Recall@10', 'Precision@10'];
+            const baselineCols = baselines.filter(b => b.metrics['nDCG@10'] != null).slice(0, 3);
+            const prevRun = history.length > 0 ? history[history.length - 1] : null;
+
+            let header = '| Metric | d8um |';
+            let separator = '|--------|------|';
+            for (const b of baselineCols) {
+              header += ' ' + b.system + ' |';
+              separator += '------|';
+            }
+            if (prevRun) {
+              header += ' Δ prev |';
+              separator += '--------|';
+            }
+
+            const rows = metricNames.map(metric => {
+              let row = '| ' + metric + ' | **' + m[metric].toFixed(4) + '** |';
+              for (const b of baselineCols) {
+                const bv = b.metrics[metric];
+                row += ' ' + (bv != null ? bv.toFixed(4) : '—') + ' |';
+              }
+              if (prevRun) {
+                const prev = prevRun.metrics[metric];
+                if (prev != null) {
+                  const delta = m[metric] - prev;
+                  const sign = delta >= 0 ? '+' : '';
+                  row += ' ' + sign + delta.toFixed(4) + ' |';
+                } else {
+                  row += ' — |';
+                }
+              }
+              return row;
+            });
+
             const lines = [
-              '## Benchmark: ' + result.benchmark + ' — ' + result.variant + ' (' + result.mode + ')' + seedLabel,
+              '## Benchmark: ' + result.benchmark + ' — ' + variant + ' (' + result.mode + ')' + seedLabel,
               '',
-              '| Metric | Value |',
-              '|--------|-------|',
-              '| nDCG@10 | ' + m['nDCG@10'].toFixed(4) + ' |',
-              '| MAP@10 | ' + m['MAP@10'].toFixed(4) + ' |',
-              '| Recall@10 | ' + m['Recall@10'].toFixed(4) + ' |',
-              '| Precision@10 | ' + m['Precision@10'].toFixed(4) + ' |',
+              header,
+              separator,
+              ...rows,
               '',
               '**Corpus:** ' + (result.corpus ?? 0).toLocaleString() + ' docs | **Queries:** ' + result.queries + ' | **Mode:** ' + result.mode,
             ];
@@ -236,6 +281,25 @@ jobs:
               lines.push('**Timing:** avg query ' + t.avgQueryMs.toFixed(1) + 'ms, total ' + Math.floor(t.totalSeconds / 60) + 'm' + Math.round(t.totalSeconds % 60) + 's');
             }
 
+            // History section
+            if (history.length > 0) {
+              const recent = history.slice(-5).reverse();
+              lines.push('', '<details><summary>Progress (last ' + Math.min(history.length, 5) + ' runs)</summary>', '');
+              lines.push('| Commit | Date | nDCG@10 | Δ | Avg Query |');
+              lines.push('|--------|------|---------|---|-----------|');
+              for (let i = 0; i < recent.length; i++) {
+                const h = recent[i];
+                const prev = recent[i + 1];
+                let delta = '—';
+                if (prev) {
+                  const d = h.metrics['nDCG@10'] - prev.metrics['nDCG@10'];
+                  delta = (d >= 0 ? '+' : '') + d.toFixed(4);
+                }
+                lines.push('| ' + h.commit + ' | ' + h.date + ' | ' + h.metrics['nDCG@10'].toFixed(4) + ' | ' + delta + ' | ' + h.avgQueryMs.toFixed(1) + 'ms |');
+              }
+              lines.push('', '</details>');
+            }
+
             lines.push('', '<details><summary>Full JSON</summary>', '', '```json', JSON.stringify(result, null, 2), '```', '', '</details>');
 
             await github.rest.issues.createComment({
@@ -244,6 +308,28 @@ jobs:
               issue_number: prNumber,
               body: lines.join('\n'),
             });
+
+            // Append to history and save
+            const newEntry = {
+              commit: context.sha.slice(0, 7),
+              date: new Date().toISOString().slice(0, 10),
+              metrics: m,
+              avgQueryMs: t.avgQueryMs,
+              config: result.config || {},
+            };
+            history.push(newEntry);
+            fs.mkdirSync(path.dirname(historyPath), { recursive: true });
+            fs.writeFileSync(historyPath, JSON.stringify(history, null, 2) + '\n');
+      - name: Commit history update
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add benchmarks/${{ matrix.dataset }}/${{ matrix.variant }}/history.json
+          git diff --cached --quiet && exit 0
+          git commit -m "bench: update ${{ matrix.dataset }}/${{ matrix.variant }} history [skip ci]"
+          git pull --rebase origin ${{ github.ref_name }}
+          git push origin HEAD:${{ github.ref_name }}
 
   summary:
     needs: [parse, run]

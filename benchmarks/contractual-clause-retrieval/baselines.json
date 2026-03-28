@@ -1,0 +1,16 @@
+{
+  "dataset": "contractual-clause-retrieval",
+  "description": "Legal contract clause retrieval (isaacus)",
+  "baselines": [
+    {
+      "system": "BM25",
+      "metrics": { "nDCG@10": 0.3850 },
+      "source": "isaacus baseline"
+    },
+    {
+      "system": "all-MiniLM-L6-v2",
+      "metrics": { "nDCG@10": 0.4620 },
+      "source": "isaacus baseline"
+    }
+  ]
+}

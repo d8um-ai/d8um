@@ -1,0 +1,46 @@
+{
+  "dataset": "nfcorpus",
+  "description": "Biomedical information retrieval (BEIR suite)",
+  "baselines": [
+    {
+      "system": "BM25",
+      "metrics": { "nDCG@10": 0.3218, "Recall@10": 0.3108 },
+      "source": "BEIR (Thakur et al., 2021)"
+    },
+    {
+      "system": "DocT5Query",
+      "metrics": { "nDCG@10": 0.3280 },
+      "source": "BEIR (Thakur et al., 2021)"
+    },
+    {
+      "system": "ANCE",
+      "metrics": { "nDCG@10": 0.2371 },
+      "source": "BEIR (Thakur et al., 2021)"
+    },
+    {
+      "system": "TAS-B",
+      "metrics": { "nDCG@10": 0.3192 },
+      "source": "BEIR (Thakur et al., 2021)"
+    },
+    {
+      "system": "ColBERT v2",
+      "metrics": { "nDCG@10": 0.3380 },
+      "source": "Santhanam et al., 2022"
+    },
+    {
+      "system": "SPLADE++ ED",
+      "metrics": { "nDCG@10": 0.3470 },
+      "source": "Formal et al., 2022"
+    },
+    {
+      "system": "text-embedding-3-small",
+      "metrics": { "nDCG@10": 0.3390 },
+      "source": "MTEB Leaderboard"
+    },
+    {
+      "system": "text-embedding-3-large",
+      "metrics": { "nDCG@10": 0.3650 },
+      "source": "MTEB Leaderboard"
+    }
+  ]
+}

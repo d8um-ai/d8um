@@ -1,0 +1,16 @@
+{
+  "dataset": "license-tldr-retrieval",
+  "description": "Software license TLDR-to-full-text retrieval (isaacus)",
+  "baselines": [
+    {
+      "system": "BM25",
+      "metrics": { "nDCG@10": 0.4520 },
+      "source": "isaacus baseline"
+    },
+    {
+      "system": "all-MiniLM-L6-v2",
+      "metrics": { "nDCG@10": 0.5180 },
+      "source": "isaacus baseline"
+    }
+  ]
+}

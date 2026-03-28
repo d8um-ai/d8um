@@ -1,0 +1,16 @@
+{
+  "dataset": "legal-rag-bench",
+  "description": "Victorian Criminal Charge Book legal QA retrieval (isaacus)",
+  "baselines": [
+    {
+      "system": "BM25",
+      "metrics": { "nDCG@10": 0.3200 },
+      "source": "isaacus baseline"
+    },
+    {
+      "system": "all-MiniLM-L6-v2",
+      "metrics": { "nDCG@10": 0.3950 },
+      "source": "isaacus baseline"
+    }
+  ]
+}

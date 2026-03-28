@@ -1,0 +1,9 @@
+[
+  {
+    "commit": "6e18f34",
+    "date": "2026-03-28",
+    "metrics": { "nDCG@10": 0.5970, "MAP@10": 0.5433, "Recall@10": 0.7692, "Precision@10": 0.1339 },
+    "avgQueryMs": 629.6,
+    "config": { "embedding": "openai/text-embedding-3-small", "chunkSize": 512 }
+  }
+]

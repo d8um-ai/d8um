@@ -48,8 +48,6 @@ export function formatMarkdown(result: BenchmarkResult): string {
   }
 
   lines.push('')
-  lines.push('**Reference:** BM25 nDCG@10 = 0.325')
-  lines.push('')
 
   return lines.join('\n')
 }
@@ -69,9 +67,6 @@ export function printResults(result: BenchmarkResult): void {
   console.log(`  MAP@${result.k}:        ${result.metrics['MAP@10'].toFixed(4)}`)
   console.log(`  Recall@${result.k}:     ${result.metrics['Recall@10'].toFixed(4)}`)
   console.log(`  Precision@${result.k}:  ${result.metrics['Precision@10'].toFixed(4)}`)
-  console.log()
-  console.log('  ── Reference Baselines ──')
-  console.log('  BM25:          nDCG@10 = 0.325')
   console.log()
   console.log('  ── Timing ──')
   if (result.timing.ingestionSeconds != null) {

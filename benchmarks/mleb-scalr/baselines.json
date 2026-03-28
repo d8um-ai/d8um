@@ -1,0 +1,16 @@
+{
+  "dataset": "mleb-scalr",
+  "description": "Multi-language evaluation benchmark (isaacus)",
+  "baselines": [
+    {
+      "system": "BM25",
+      "metrics": { "nDCG@10": 0.3750 },
+      "source": "isaacus baseline"
+    },
+    {
+      "system": "all-MiniLM-L6-v2",
+      "metrics": { "nDCG@10": 0.4380 },
+      "source": "isaacus baseline"
+    }
+  ]
+}
