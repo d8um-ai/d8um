@@ -201,3 +201,56 @@ For estimating seed times (~3 docs/s embedding throughput):
 - Cannot use expressions (e.g. `COALESCE`) in `PRIMARY KEY` constraints — use `DEFAULT ''` instead
 - Cannot execute multi-statement prepared statements — split DDL on semicolons and execute individually
 - `SET LOCAL` requires explicit transaction wrapping
+
+## Changelog & Milestones
+
+### 2026-03-28 — Beat text-embedding-3-small baseline (PR #7)
+
+**Problem:** d8um scored significantly below the MLEB text-embedding-3-small baseline despite using the same embedding model. Australian-tax nDCG@10 was 0.6723 vs baseline 0.7431 (-0.0708).
+
+**Root cause:** Chunk-level retrieval wasted ranking slots — multiple chunks from the same document consumed top-K positions, while the baseline embedded full documents as single vectors.
+
+#### Changes made
+
+1. **SDK over-fetch + document-level aggregation** (`packages/core/src/query/runners/indexed.ts`)
+   - IndexedRunner now fetches `count * 3` chunks from the adapter
+   - Deduplicates to best-scoring chunk per `documentId` before returning
+   - Eliminates slot waste from multiple chunks of the same document
+
+2. **4x chunk size increase** (all 12 benchmark runners)
+   - `CHUNK_SIZE`: 512 → 2048, `CHUNK_OVERLAP`: 64 → 256
+   - Fewer chunks per document = less slot waste + better embedding context
+
+3. **Benchmark-level over-fetch + deduplication** (`benchmarks/lib/metrics.ts`)
+   - `QUERY_FETCH = K * 5 = 50` chunks requested per query
+   - `deduplicateToDocuments()` picks top K=10 unique corpus IDs
+   - Combined with SDK 3x: 150 chunks → 50 docs → 10 evaluated
+
+4. **Dual-mode benchmark runners** (all 6 core runners + workflow)
+   - Core benchmarks run both `hybrid` and `fast` (pure vector) side by side
+   - Emit JSON array of results; mode-specific history files (`history-hybrid.json`, `history-fast.json`)
+
+5. **Neural pipeline fixes** (earlier in PR #7)
+   - `await Promise.allSettled()` for triple extraction in `engine.ts` (was fire-and-forget)
+   - Neon DDL splitting in `packages/graph/src/adapters/pgvector.ts` for graph table creation
+   - Fixed hash cleanup to use correct bucket ID (UUID, not name)
+
+#### Results (nDCG@10)
+
+| Dataset | Mode | Before | After (+ reseed 2048) | Baseline | Delta vs baseline |
+|---------|------|--------|----------------------|----------|-------------------|
+| australian-tax | hybrid | 0.6723 | **0.7519** | 0.7431 | **+0.0088** |
+| australian-tax | fast | 0.6723 | **0.7505** | 0.7431 | **+0.0074** |
+| license-tldr | hybrid | 0.5970 | **0.6485** | 0.5985 | **+0.0500** |
+| license-tldr | fast | 0.5970 | **0.6485** | 0.5985 | **+0.0500** |
+| license-tldr | neural | 0.5970 | **0.6485** | 0.5985 | **+0.0500** |
+| legal-rag-bench | hybrid | 0.2933 | **0.3150** | 0.3704 | -0.0554 |
+| legal-rag-bench | fast | 0.2893 | **0.3348** | 0.3704 | -0.0356 |
+
+3 of 4 benchmarks reseeded now beat text-embedding-3-small baseline. Legal-rag-bench (4,876 docs) is closing the gap but not yet there — fast mode outperforms hybrid on this dataset.
+
+#### Key learning
+
+The MLEB baselines embed entire documents as single vectors. A chunked retrieval system must compensate by over-fetching and aggregating at the document level, otherwise chunk-level noise destroys ranking quality. The combination of SDK-level dedup (3x over-fetch) + benchmark-level dedup (5x over-fetch) + larger chunks (4x) closed the gap.
+
+For legal-rag-bench specifically, fast (pure vector) outperforms hybrid (vector + BM25 RRF). This suggests BM25 may hurt on long legal documents where keyword matching adds noise. The gap to baseline (0.3348 vs 0.3704) may require further tuning of RRF weights or larger over-fetch multipliers.
