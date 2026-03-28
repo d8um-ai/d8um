@@ -128,3 +128,76 @@ cd benchmarks && npm install  # Install benchmark deps (separate npm)
 - `NEON_DATABASE_URL` — Neon Postgres connection string
 - `AI_GATEWAY_API_KEY` — Vercel AI Gateway key (embeddings + LLM)
 - `BLOB_READ_WRITE_TOKEN` — Vercel Blob storage token
+
+## Operational Knowledge
+
+Hard-won learnings from debugging the benchmark pipeline. Read this before running benchmarks or DB queries.
+
+### Database Table Naming
+
+Chunk tables use the full embedding model path, not a numeric ID:
+- Chunks: `{prefix}_gateway_openai_text_embedding_3_small`
+- Registry: `{prefix}_registry`
+- Shared across all benchmarks: `d8um_documents`, `d8um_hashes`, `d8um_buckets`
+
+Example table prefixes per benchmark runner:
+- `bench_license_core_` → `bench_license_core__gateway_openai_text_embedding_3_small`
+- `bench_legalrag_core_` → `bench_legalrag_core__gateway_openai_text_embedding_3_small`
+
+### Core vs Neural Variant Isolation
+
+Core and neural variants are fully isolated — no DB cleanup needed between them:
+- Separate table prefixes: `bench_license_core_*` vs `bench_license_neural_*`
+- Separate buckets: `license-tldr` vs `license-tldr-neural`
+- Neural adds graph tables: `*_memories`, `*_entities`, `*_edges`
+
+### Seeding Behavior
+
+**`--seed` does NOT drop or recreate tables.** It re-ingests via upsert.
+
+- Hash store (`deduplicateBy: ['content']`) creates entries keyed by SHA256 of content
+- On re-seed, hash store check skips docs where content + embedding model haven't changed
+- `ON CONFLICT (idempotency_key, chunk_index, bucket_id) DO UPDATE` prevents row duplication at DB level
+- Interrupted seeds resume correctly — completed docs have hash entries and get skipped on retry
+
+**Metadata propagation caveat:** If data was seeded WITHOUT `propagateMetadata: ['metadata.corpusId']`, re-seeding won't fix it — the hash store matches on content+model (unchanged) and skips the doc before the upsert fires. To fix: clear hash entries for that bucket, or force re-ingestion.
+
+### DB Query Workflow Gotchas
+
+- **`[skip ci]` prevents ALL workflows** including db-inspect — never use it on query pushes
+- **Empty commits won't trigger** — the `query.sql` file must appear in the commit diff (HEAD~1 vs HEAD)
+- Results are committed back as `db-queries/{name}/result.json`
+- The workflow may push results while you're working — pull before pushing to avoid rejected pushes
+
+### Benchmark CI Notes
+
+- Concurrency groups prevent the same dataset/variant from running in parallel
+- History commit step uses fetch/reset/re-apply pattern (not rebase) for concurrent push safety
+- `contents: write` permission is required for both PR comments and history commits
+- Build is scoped: `pnpm turbo run build --filter=@d8um/adapter-pgvector`
+
+### Corpus Sizes
+
+For estimating seed times (~3 docs/s embedding throughput):
+
+| Dataset | Corpus | Queries | Est. Seed Time |
+|---------|--------|---------|----------------|
+| license-tldr-retrieval | 65 | 65 | ~30s |
+| contractual-clause-retrieval | ~90 | ~90 | ~30s |
+| australian-tax-guidance-retrieval | ~105 | ~112 | ~35s |
+| nfcorpus | ~3,633 | ~323 | ~20min |
+| legal-rag-bench | 4,876 | 100 | ~27min |
+| mleb-scalr | unknown | unknown | unknown |
+
+### Baselines & History Files
+
+- External baselines: `benchmarks/{dataset}/baselines.json` — compared in PR comments
+- Run history: `benchmarks/{dataset}/{variant}/history.json` — auto-committed by CI
+- PR comments show comparison table (d8um vs top-3 baselines) + delta from previous run
+- Only nDCG@10 has cross-system baselines; MAP/Recall/Precision are d8um-internal tracking only
+
+### Neon Postgres Compatibility
+
+- Cannot use expressions (e.g. `COALESCE`) in `PRIMARY KEY` constraints — use `DEFAULT ''` instead
+- Cannot execute multi-statement prepared statements — split DDL on semicolons and execute individually
+- `SET LOCAL` requires explicit transaction wrapping
