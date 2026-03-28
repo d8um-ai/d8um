@@ -213,6 +213,16 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
       addEdgeToAdjacency(edge.targetEntityId, edge.sourceEntityId, edge.weight)
     }
 
+    // Log-scale accumulated weights to prevent extreme PPR concentration.
+    // Without this, an entity pair with 50 parallel edges (weight 50) dominates
+    // transition probabilities (50/52 = 96%), making PPR too narrow.
+    // Log2: 1→1.0, 2→1.58, 10→3.46, 50→5.67 — preserves ranking, reduces dominance.
+    for (const [, edges] of adjacency) {
+      for (const edge of edges) {
+        edge.weight = Math.log2(1 + edge.weight)
+      }
+    }
+
     return adjacency
   }
 
