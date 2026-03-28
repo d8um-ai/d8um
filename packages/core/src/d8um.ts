@@ -558,6 +558,12 @@ class d8umImpl implements d8umInstance {
     // Lightweight connect — load model registrations, no DDL
     await this.adapter.connect()
 
+    // Ensure default embedding model table exists even in query-only mode
+    // (ensureModel is normally called during ingest, but query-only skips ingest)
+    if (this.adapter.ensureModel) {
+      await this.adapter.ensureModel(this.defaultEmbedding.model, this.defaultEmbedding.dimensions)
+    }
+
     // Hydrate in-memory state from persistent storage (for adapters that support it)
     if (this.adapter.listBuckets) {
       const allBuckets = await this.adapter.listBuckets()

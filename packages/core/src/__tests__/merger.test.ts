@@ -31,6 +31,7 @@ describe('dedupKey', () => {
     expect(key).toHaveLength(64)
     expect(key).toMatch(/^[0-9a-f]{64}$/)
   })
+
 })
 
 describe('minMaxNormalize', () => {
