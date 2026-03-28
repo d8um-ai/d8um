@@ -369,6 +369,18 @@ export class IndexEngine {
 
     const deduplicateBy = indexConfig?.deduplicateBy ?? ['url']
 
+    const result: IndexResult = {
+      bucketId,
+      tenantId,
+      mode: 'upsert',
+      total: items.length,
+      skipped: 0,
+      updated: 0,
+      inserted: 0,
+      pruned: 0,
+      durationMs: 0,
+    }
+
     // Phase 1: Prepare all docs and collect all texts for a single embedBatch call
     const prepared: Array<{
       doc: RawDocument
@@ -383,6 +395,24 @@ export class IndexEngine {
     for (const { doc, chunks } of items) {
       const contentHash = sha256(doc.content)
       const ikey = resolveIdempotencyKey(doc, deduplicateBy)
+
+      // Hash store dedup: skip docs whose content + model haven't changed
+      if (!dryRun) {
+        const storeKey = buildHashStoreKey(tenantId, bucketId, ikey)
+        const stored = await this.adapter.hashStore.get(storeKey)
+        if (stored?.contentHash === contentHash && stored.embeddingModel === modelId) {
+          const actualChunks = await this.adapter.countChunks(modelId, {
+            bucketId,
+            tenantId,
+            idempotencyKey: ikey,
+          })
+          if (actualChunks === stored.chunkCount) {
+            result.skipped++
+            continue
+          }
+        }
+      }
+
       let documentId = doc.id ?? randomUUID()
 
       if (this.adapter.upsertDocumentRecord && !dryRun) {
@@ -417,18 +447,6 @@ export class IndexEngine {
       : []
 
     // Phase 3: Per-document upsert + hash store
-    const result: IndexResult = {
-      bucketId,
-      tenantId,
-      mode: 'upsert',
-      total: items.length,
-      skipped: 0,
-      updated: 0,
-      inserted: 0,
-      pruned: 0,
-      durationMs: 0,
-    }
-
     for (const item of prepared) {
       const { doc, chunks, ikey, contentHash, documentId, textOffset } = item
       const embeddings = allEmbeddings.slice(textOffset, textOffset + chunks.length)
