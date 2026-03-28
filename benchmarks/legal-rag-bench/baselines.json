@@ -3,14 +3,19 @@
   "description": "Victorian Criminal Charge Book legal QA retrieval (isaacus)",
   "baselines": [
     {
-      "system": "BM25",
-      "metrics": { "nDCG@10": 0.3200 },
-      "source": "isaacus baseline"
+      "system": "Kanon 2 Embedder",
+      "metrics": { "nDCG@10": 0.6795 },
+      "source": "MLEB Leaderboard (isaacus)"
     },
     {
-      "system": "all-MiniLM-L6-v2",
-      "metrics": { "nDCG@10": 0.3950 },
-      "source": "isaacus baseline"
+      "system": "Voyage 4 Large",
+      "metrics": { "nDCG@10": 0.6480 },
+      "source": "MLEB Leaderboard (isaacus)"
+    },
+    {
+      "system": "text-embedding-3-small",
+      "metrics": { "nDCG@10": 0.3704 },
+      "source": "MLEB Leaderboard (isaacus)"
     }
   ]
 }

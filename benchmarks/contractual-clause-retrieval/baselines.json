@@ -1,16 +1,21 @@
 {
   "dataset": "contractual-clause-retrieval",
-  "description": "Legal contract clause retrieval (isaacus)",
+  "description": "Legal contract clause retrieval (isaacus MLEB)",
   "baselines": [
     {
-      "system": "BM25",
-      "metrics": { "nDCG@10": 0.3850 },
-      "source": "isaacus baseline"
+      "system": "Voyage 4 Large",
+      "metrics": { "nDCG@10": 0.9277 },
+      "source": "MLEB Leaderboard (isaacus)"
     },
     {
-      "system": "all-MiniLM-L6-v2",
-      "metrics": { "nDCG@10": 0.4620 },
-      "source": "isaacus baseline"
+      "system": "text-embedding-3-large",
+      "metrics": { "nDCG@10": 0.8678 },
+      "source": "MLEB Leaderboard (isaacus)"
+    },
+    {
+      "system": "text-embedding-3-small",
+      "metrics": { "nDCG@10": 0.7739 },
+      "source": "MLEB Leaderboard (isaacus)"
     }
   ]
 }

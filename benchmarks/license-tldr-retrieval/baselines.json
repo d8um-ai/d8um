@@ -1,16 +1,21 @@
 {
   "dataset": "license-tldr-retrieval",
-  "description": "Software license TLDR-to-full-text retrieval (isaacus)",
+  "description": "Software license TLDR-to-full-text retrieval (isaacus MLEB)",
   "baselines": [
     {
-      "system": "BM25",
-      "metrics": { "nDCG@10": 0.4520 },
-      "source": "isaacus baseline"
+      "system": "Voyage 4 Large",
+      "metrics": { "nDCG@10": 0.8142 },
+      "source": "MLEB Leaderboard (isaacus)"
     },
     {
-      "system": "all-MiniLM-L6-v2",
-      "metrics": { "nDCG@10": 0.5180 },
-      "source": "isaacus baseline"
+      "system": "text-embedding-3-large",
+      "metrics": { "nDCG@10": 0.6668 },
+      "source": "MLEB Leaderboard (isaacus)"
+    },
+    {
+      "system": "text-embedding-3-small",
+      "metrics": { "nDCG@10": 0.5985 },
+      "source": "MLEB Leaderboard (isaacus)"
     }
   ]
 }
