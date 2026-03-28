@@ -179,7 +179,7 @@ async function main() {
       try {
         const result = await d.ingest(
           bucket.id, docs,
-          { chunkSize: CHUNK_SIZE, chunkOverlap: CHUNK_OVERLAP, deduplicateBy: ['content'] },
+          { chunkSize: CHUNK_SIZE, chunkOverlap: CHUNK_OVERLAP, deduplicateBy: ['content'], propagateMetadata: ['metadata.corpusId'] },
         )
         totalChunks += result.inserted
 
