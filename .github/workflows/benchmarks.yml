@@ -127,7 +127,7 @@ jobs:
           node-version: '20'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
+      - run: pnpm turbo run build --filter=@d8um/adapter-pgvector
       - name: Install benchmark dependencies
         working-directory: benchmarks
         run: npm install
