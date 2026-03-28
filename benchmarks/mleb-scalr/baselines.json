@@ -1,16 +1,21 @@
 {
   "dataset": "mleb-scalr",
-  "description": "Multi-language evaluation benchmark (isaacus)",
+  "description": "US Supreme Court question-to-holdings retrieval (isaacus MLEB)",
   "baselines": [
     {
-      "system": "BM25",
-      "metrics": { "nDCG@10": 0.3750 },
-      "source": "isaacus baseline"
+      "system": "Voyage 4 Large",
+      "metrics": { "nDCG@10": 0.7918 },
+      "source": "MLEB Leaderboard (isaacus)"
     },
     {
-      "system": "all-MiniLM-L6-v2",
-      "metrics": { "nDCG@10": 0.4380 },
-      "source": "isaacus baseline"
+      "system": "text-embedding-3-large",
+      "metrics": { "nDCG@10": 0.7448 },
+      "source": "MLEB Leaderboard (isaacus)"
+    },
+    {
+      "system": "text-embedding-3-small",
+      "metrics": { "nDCG@10": 0.6528 },
+      "source": "MLEB Leaderboard (isaacus)"
     }
   ]
 }
