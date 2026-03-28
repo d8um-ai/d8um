@@ -70,5 +70,25 @@
       "chunkOverlap": 64,
       "includesFootnotes": false
     }
+  },
+  {
+    "commit": "307d68c",
+    "date": "2026-03-28",
+    "metrics": {
+      "nDCG@10": 0.2932846656344805,
+      "MAP@10": 0.2513730158730159,
+      "Recall@10": 0.43,
+      "Precision@10": 0.04300000000000001
+    },
+    "avgQueryMs": 385.5,
+    "mode": "hybrid",
+    "config": {
+      "embedding": "openai/text-embedding-3-small",
+      "embeddingDims": 1536,
+      "chunkSize": 512,
+      "chunkOverlap": 64,
+      "includesFootnotes": true,
+      "queryFetch": 50
+    }
   }
 ]
