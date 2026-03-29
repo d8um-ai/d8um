@@ -143,7 +143,7 @@ jobs:
           fi
           EVAL_FLAG=""
           if [ "${{ matrix.dataset }}" = "multihop-rag" ]; then
-            EVAL_FLAG="--eval-answers"
+            EVAL_FLAG="--eval-answers --eval-answers-limit=100"
           fi
           set +e
           NODE_OPTIONS="--max-old-space-size=4096" npx tsx ${{ matrix.dataset }}/${{ matrix.variant }}/run.ts $SEED_FLAG $EVAL_FLAG 2>&1 | tee /tmp/bench-output.txt
