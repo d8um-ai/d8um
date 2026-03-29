@@ -174,39 +174,44 @@ async function main() {
     console.log(`Phase ${phaseNum}: Computing IR metrics (${mode})...`)
     const { metrics, scored } = scoreAllQueriesExtended(allResults, qrelsMap, K)
 
-    // ── Answer-generation evaluation (optional) ──
+    // ── Answer-generation evaluation (optional, non-fatal) ──
     if (evalAnswers) {
       phaseNum++
       console.log(`Phase ${phaseNum}: Evaluating answer generation (${mode})...`)
-      const goldAnswers = await loadAnswers(DATASET, BLOB_PREFIX)
-      const corpusMap = new Map(corpus.map(d => [d._id, d]))
+      try {
+        const goldAnswers = await loadAnswers(DATASET, BLOB_PREFIX)
+        const corpusMap = new Map(corpus.map(d => [d._id, d]))
 
-      let sumEM = 0, sumF1 = 0, answered = 0
-      for (const [queryId, docIds] of allResults) {
-        const gold = goldAnswers.get(queryId)
-        if (!gold) continue
+        let sumEM = 0, sumF1 = 0, answered = 0
+        for (const [queryId, docIds] of allResults) {
+          const gold = goldAnswers.get(queryId)
+          if (!gold) continue
 
-        const queryText = testQueries.find(q => String(q['_id']) === queryId)?.text ?? ''
-        const context = docIds.slice(0, K)
-          .map(id => corpusMap.get(id)?.text ?? '')
-          .filter(Boolean)
-          .join('\n\n---\n\n')
+          const queryText = testQueries.find(q => String(q['_id']) === queryId)?.text ?? ''
+          const context = docIds.slice(0, K)
+            .map(id => corpusMap.get(id)?.text ?? '')
+            .filter(Boolean)
+            .join('\n\n---\n\n')
 
-        const { text: predicted } = await generateText({
-          model: gateway(LLM_MODEL),
-          prompt: `Answer the question based only on the provided context. Be concise.\n\nContext:\n${context}\n\nQuestion: ${queryText}\n\nAnswer:`,
-        })
+          const { text: predicted } = await generateText({
+            model: gateway(LLM_MODEL),
+            prompt: `Answer the question based only on the provided context. Be concise.\n\nContext:\n${context}\n\nQuestion: ${queryText}\n\nAnswer:`,
+          })
 
-        sumEM += exactMatch(predicted, gold)
-        sumF1 += tokenF1(predicted, gold)
-        answered++
-        if (answered % 50 === 0) {
-          process.stdout.write(`\r  Answers: ${answered}/${goldAnswers.size}`)
+          sumEM += exactMatch(predicted, gold)
+          sumF1 += tokenF1(predicted, gold)
+          answered++
+          if (answered % 50 === 0) {
+            process.stdout.write(`\r  Answers: ${answered}/${goldAnswers.size}`)
+          }
         }
+        console.log(`\n  Answer eval complete: ${answered} queries, EM=${(sumEM / answered).toFixed(4)}, F1=${(sumF1 / answered).toFixed(4)}`)
+        metrics['EM'] = sumEM / answered
+        metrics['F1'] = sumF1 / answered
+      } catch (err) {
+        console.log(`  Answer eval skipped: ${err instanceof Error ? err.message : err}`)
+        console.log('  (Run seed-datasets.ts to upload answers.json, then retry)')
       }
-      console.log(`\n  Answer eval complete: ${answered} queries, EM=${(sumEM / answered).toFixed(4)}, F1=${(sumF1 / answered).toFixed(4)}`)
-      metrics['EM'] = sumEM / answered
-      metrics['F1'] = sumF1 / answered
     }
 
     benchResults.push({
