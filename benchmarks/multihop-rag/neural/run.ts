@@ -184,11 +184,12 @@ async function main() {
       })
 
       try {
-        console.log(`  [${new Date().toISOString()}] Starting batch ${batchNum}/${totalBatches} (${batch.length} docs)...`)
+        const mem = process.memoryUsage()
+        console.log(`  [batch ${batchNum}/${totalBatches}] Starting ${batch.length} docs (heap: ${(mem.heapUsed / 1024 / 1024).toFixed(0)}MB / ${(mem.heapTotal / 1024 / 1024).toFixed(0)}MB, rss: ${(mem.rss / 1024 / 1024).toFixed(0)}MB)`)
         const result = await d.ingest(
           bucket.id, docs,
           { chunkSize: CHUNK_SIZE, chunkOverlap: CHUNK_OVERLAP, deduplicateBy: ['content'], propagateMetadata: ['metadata.corpusId'] },
-          { concurrency: 10 },
+          { concurrency: 5 },
         )
         totalChunks += result.inserted
 
