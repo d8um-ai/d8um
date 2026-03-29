@@ -1,5 +1,5 @@
--- Clear license-tldr neural data for reseed with fixed graph pipeline
--- Fixes: CO_OCCURS explosion, embedding COALESCE, HNSW index, entity dedup cache
+-- Clear license-tldr neural to verify embedding perf + concurrency fix
+-- Testing on small dataset before retrying multihop-rag
 
 TRUNCATE TABLE bench_license_neural__gateway_openai_text_embedding_3_small;
 TRUNCATE TABLE bench_license_neural__registry;
