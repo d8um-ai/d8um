@@ -138,7 +138,7 @@ jobs:
             SEED_FLAG="--seed"
           fi
           set +e
-          npx tsx ${{ matrix.dataset }}/${{ matrix.variant }}/run.ts $SEED_FLAG 2>&1 | tee /tmp/bench-output.txt
+          NODE_OPTIONS="--max-old-space-size=4096" npx tsx ${{ matrix.dataset }}/${{ matrix.variant }}/run.ts $SEED_FLAG 2>&1 | tee /tmp/bench-output.txt
           EXIT_CODE=${PIPESTATUS[0]}
           set -e
           # Extract JSON between delimiters
