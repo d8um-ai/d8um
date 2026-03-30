@@ -42,6 +42,10 @@ const QUERY_FETCH = K * 5
 
 const shouldSeed = process.argv.includes('--seed')
 const evalAnswers = process.argv.includes('--eval-answers')
+const evalAnswersLimit = (() => {
+  const arg = process.argv.find(a => a.startsWith('--eval-answers-limit='))
+  return arg ? parseInt(arg.split('=')[1]!, 10) : Infinity
+})()
 
 // ── Main ──
 
@@ -265,13 +269,15 @@ async function main() {
 
   // ── Phase 5b: Answer-generation evaluation (optional, non-fatal) ──
   if (evalAnswers) {
-    console.log('Phase 5b: Evaluating answer generation (neural)...')
+    const limitLabel = evalAnswersLimit < Infinity ? ` (limit: ${evalAnswersLimit})` : ''
+    console.log(`Phase 5b: Evaluating answer generation (neural)${limitLabel}...`)
     try {
       const goldAnswers = await loadAnswers(DATASET, BLOB_PREFIX)
       const corpusMap = new Map(corpus.map(d => [d._id, d]))
 
       let sumEM = 0, sumF1 = 0, answered = 0
       for (const [queryId, docIds] of allResults) {
+        if (answered >= evalAnswersLimit) break
         const gold = goldAnswers.get(queryId)
         if (!gold) continue
 
@@ -289,8 +295,8 @@ async function main() {
         sumEM += exactMatch(predicted, gold)
         sumF1 += tokenF1(predicted, gold)
         answered++
-        if (answered % 50 === 0) {
-          process.stdout.write(`\r  Answers: ${answered}/${goldAnswers.size}`)
+        if (answered % 50 === 0 || answered === evalAnswersLimit) {
+          process.stdout.write(`\r  Answers: ${answered}/${Math.min(goldAnswers.size, evalAnswersLimit)}`)
         }
       }
       console.log(`\n  Answer eval complete: ${answered} queries, EM=${(sumEM / answered).toFixed(4)}, F1=${(sumF1 / answered).toFixed(4)}`)
