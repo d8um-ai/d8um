@@ -118,9 +118,16 @@ export class QueryPlanner {
         ? Promise.resolve([] as NormalizedResult[])
         : new MemoryRunner(this.graph).run(text, identity, count).catch(() => [] as NormalizedResult[])
 
+      // 30s timeout on graph runner: if a DB call hangs (e.g., Neon connection stall),
+      // fall back to empty results so the query proceeds with indexed results only.
+      const graphPromise = Promise.race([
+        new GraphRunner(this.graph).run(text, identity, count),
+        new Promise<NormalizedResult[]>(resolve => setTimeout(() => resolve([]), 30_000)),
+      ]).catch(() => [] as NormalizedResult[])
+
       const [memResults, graphResults] = await Promise.all([
         memoryPromise,
-        new GraphRunner(this.graph).run(text, identity, count).catch(() => [] as NormalizedResult[]),
+        graphPromise,
       ])
 
       if (memResults.length > 0) {
