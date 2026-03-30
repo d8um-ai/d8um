@@ -300,11 +300,23 @@ Note: neural graph tables use `{prefix}memories` (no extra underscore), e.g. `be
 
 #### Procedure
 
+**CRITICAL: Follow these steps IN ORDER. Do NOT skip steps. Do NOT push a seed benchmark until you have VERIFIED the DB is clear. Skipping verification wastes hours of LLM/DB compute.**
+
 1. Write SQL to `db-queries/clear-{name}/query.sql` using the templates above
 2. Use `SELECT id FROM d8um_buckets WHERE name = '{bucket_name}'` in the WHERE clause (avoids hardcoding UUIDs)
 3. Commit and push (do NOT use `[skip ci]`) — wait for `result.json`
-4. Verify all statements show `TRUNCATE TABLE` or `DELETE N`
-5. Then push a commit with `[bench:{dataset}/{variant}:seed]` to reseed
+4. **VERIFY the result.json** — read it via GitHub MCP or git pull. Check:
+   - All `TRUNCATE TABLE` statements succeeded
+   - `DELETE` statements show `DELETE N` where N > 0 for hashes/documents. **If N = 0, the hash store was NOT cleared** — investigate why (wrong bucket name? bucket doesn't exist? hashes use different key?)
+   - If DELETE shows 0 rows, **DO NOT proceed to seeding.** The seed will skip all docs because hash entries still exist. Push a diagnostic query to check the hash store schema first.
+5. **Only after verification passes**, push a commit with `[bench:{dataset}/{variant}:seed]` to reseed
+6. **Do NOT push any other commits while the seed is running.** The `concurrency: cancel-in-progress: true` setting means any push that triggers a benchmark workflow run will cancel the in-progress seed job.
+
+**Common mistakes that waste compute:**
+- Pushing `[bench:dataset/variant:answers:seed]` — this does NOT seed. It runs answer-only with `eval_model="seed"` (invalid).
+- Pushing `[bench:dataset/variant:seed]` without clearing the DB first — hash store skips all docs, triple extraction never runs, edge properties unchanged.
+- Pushing a new commit while a seed is running — cancels the seed job.
+- Not verifying `DELETE N > 0` in the clear result — hash entries remain, seed skips everything.
 
 ### Benchmark Results Readout
 
