@@ -44,7 +44,8 @@ const shouldSeed = process.argv.includes('--seed')
 const evalAnswers = process.argv.includes('--eval-answers') || process.argv.includes('--eval-answers-only')
 const evalAnswersOnly = process.argv.includes('--eval-answers-only')
 const evalAnswersLimitArg = process.argv.find(a => a.startsWith('--eval-answers-limit='))
-const evalAnswersLimit = evalAnswersLimitArg ? parseInt(evalAnswersLimitArg.split('=')[1]!, 10) : Infinity
+const evalAnswersLimitDefault = evalAnswersOnly ? 100 : Infinity
+const evalAnswersLimit = evalAnswersLimitArg ? parseInt(evalAnswersLimitArg.split('=')[1]!, 10) : evalAnswersLimitDefault
 const evalModelArg = process.argv.find(a => a.startsWith('--eval-model='))
 const EVAL_LLM_MODEL = evalModelArg ? evalModelArg.split('=')[1]! : LLM_MODEL
 
@@ -243,9 +244,97 @@ async function main() {
   }
   console.log()
 
-  // ── Phase 4: Run Queries (Neural Mode) ──
-  const querySet = evalAnswersOnly ? answerQuerySet : testQueries
-  console.log(`Phase 4: Running ${querySet.length} queries (mode: neural)${evalAnswersOnly ? ' [answer-eval-only]' : ''}...`)
+  // ── Answer-only mode: single loop (retrieve → generate → score) ──
+  if (evalAnswersOnly) {
+    const answers = goldAnswers ?? await loadAnswers(DATASET, BLOB_PREFIX)
+    const querySet = answerQuerySet
+    console.log(`Phase 4: Answer-only evaluation (${querySet.length} queries, model: ${EVAL_LLM_MODEL})...`)
+    console.log('  Single loop: retrieve → generate → score per query')
+    const queryStart = performance.now()
+
+    let sumACC = 0, sumEM = 0, sumF1 = 0, answered = 0, errors = 0
+
+    for (const query of querySet) {
+      const queryId = String(query['_id'])
+      const queryText = String(query['text'])
+      const gold = answers.get(queryId)
+      if (!gold) continue
+
+      const response = await d.query(queryText, {
+        mode: 'neural',
+        count: QUERY_FETCH,
+        buckets: [bucket!.id],
+      })
+
+      try {
+        const chunks = response.results.slice(0, 6).map(r => r.content)
+        const context = chunks.join('\n\n---\n\n')
+        const { text: predicted } = await generateText({
+          model: gateway(EVAL_LLM_MODEL),
+          prompt: `Answer the question based only on the provided context. Be concise.\n\nContext:\n${context}\n\nQuestion: ${queryText}\n\nAnswer:`,
+        })
+
+        sumACC += substringAccuracy(predicted, gold)
+        sumEM += exactMatch(predicted, gold)
+        sumF1 += tokenF1(predicted, gold)
+        answered++
+      } catch (err) {
+        errors++
+        console.error(`\n  Answer gen error (query ${queryId}): ${err instanceof Error ? err.message : err}`)
+      }
+
+      if ((answered + errors) % 10 === 0 || (answered + errors) === querySet.length) {
+        const elapsed = ((performance.now() - queryStart) / 1000).toFixed(0)
+        process.stdout.write(`\r  Progress: ${answered + errors}/${querySet.length} (${elapsed}s)`)
+      }
+    }
+
+    const queryDuration = (performance.now() - queryStart) / 1000
+    const avgQueryMs = answered > 0 ? (queryDuration * 1000) / (answered + errors) : 0
+    console.log(`\n  Complete: ${answered} answered${errors > 0 ? `, ${errors} errors` : ''} in ${queryDuration.toFixed(1)}s (avg ${avgQueryMs.toFixed(0)}ms/query)`)
+    console.log(`  ACC=${(sumACC / answered).toFixed(4)}, EM=${(sumEM / answered).toFixed(4)}, F1=${(sumF1 / answered).toFixed(4)}`)
+
+    const metrics: Record<string, number | undefined> = {
+      ACC: sumACC / answered,
+      EM: sumEM / answered,
+      F1: sumF1 / answered,
+    }
+    const totalDuration = (performance.now() - totalStart) / 1000
+
+    const result: BenchmarkResult = {
+      benchmark: 'MultiHop-RAG (yixuantt)',
+      dataset: DATASET,
+      mode: 'neural',
+      variant: 'graph',
+      corpus: corpus.length,
+      queries: answered,
+      k: K,
+      metrics,
+      timing: {
+        avgQueryMs: Number(avgQueryMs.toFixed(1)),
+        totalSeconds: Number(totalDuration.toFixed(1)),
+      },
+      config: {
+        embedding: EMBEDDING_MODEL,
+        embeddingDims: EMBEDDING_DIMS,
+        llm: LLM_MODEL,
+        chunkSize: CHUNK_SIZE,
+        chunkOverlap: CHUNK_OVERLAP,
+        evalModel: EVAL_LLM_MODEL,
+      },
+    }
+
+    printResults(result)
+    console.log('---BENCH_RESULT_JSON---')
+    console.log(JSON.stringify(result, null, 2))
+    console.log('---END_BENCH_RESULT_JSON---')
+    console.log('══════════════════════════════════════════════════════')
+    return
+  }
+
+  // ── Phase 4: Run Queries (Neural Mode) — full retrieval ──
+  const querySet = testQueries
+  console.log(`Phase 4: Running ${querySet.length} queries (mode: neural)...`)
   console.log('  Neural = hybrid + memory recall + PPR graph traversal, merged via RRF')
   const queryStart = performance.now()
 
@@ -280,19 +369,10 @@ async function main() {
   console.log()
 
   // ── Phase 5: Score ──
-  let metrics: Record<string, number | undefined>
-  let scored: number
-
-  if (evalAnswersOnly) {
-    console.log('Phase 5: Skipping full IR metrics (answer-only mode)')
-    metrics = {}
-    scored = querySet.length
-  } else {
-    console.log('Phase 5: Computing IR metrics...')
-    const irResult = scoreAllQueriesExtended(allResults, qrelsMap, K)
-    metrics = irResult.metrics
-    scored = irResult.scored
-  }
+  console.log('Phase 5: Computing IR metrics...')
+  const irResult = scoreAllQueriesExtended(allResults, qrelsMap, K)
+  let metrics = irResult.metrics as Record<string, number | undefined>
+  const scored = irResult.scored
 
   // ── Phase 5b: Answer-generation evaluation (optional, non-fatal) ──
   if (evalAnswers) {

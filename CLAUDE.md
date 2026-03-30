@@ -67,10 +67,10 @@ After pushing, the workflow runs and posts results as PR comments. Use the GitHu
 
 | Variant | Without seed | With seed | Answers only |
 |---------|-------------|-----------|-------------|
-| core    | 15 min      | 60 min    | 30 min      |
-| neural  | 30 min      | 360 min   | 30 min      |
-| core (multihop-rag) | 90 min | 120 min | 30 min |
-| neural (multihop-rag) | 180 min | 360 min | 30 min |
+| core    | 15 min      | 60 min    | 15 min      |
+| neural  | 30 min      | 360 min   | 15 min      |
+| core (multihop-rag) | 90 min | 120 min | 15 min |
+| neural (multihop-rag) | 180 min | 360 min | 15 min |
 
 ### Workflow File
 
@@ -140,8 +140,8 @@ When `--eval-answers` or `--eval-answers-only` is passed, multihop-rag runners a
 ### Runner Flags (multihop-rag)
 
 - `--eval-answers`: Run answer eval after full retrieval benchmark (all 2255 queries + answer gen)
-- `--eval-answers-only`: Run ONLY the answer eval subset — queries just the gold-answer subset, skips IR metrics. Much faster.
-- `--eval-answers-limit=N`: Limit answer evaluation to N queries
+- `--eval-answers-only`: Single-loop answer eval — for each query: retrieve → generate → score. Default limit: 100 queries. Skips IR metrics. Finishes in ~5-15 min.
+- `--eval-answers-limit=N`: Override the default limit of 100 queries (e.g., `--eval-answers-limit=2255` for full eval, `--eval-answers-limit=20` for quick smoke test)
 - `--eval-model=MODEL`: Override the LLM for answer generation (default: `google/gemini-3.1-flash-lite-preview`)
 
 ## Development
@@ -161,6 +161,17 @@ cd benchmarks && npm install  # Install benchmark deps (separate npm)
 ## Operational Knowledge
 
 Hard-won learnings from debugging the benchmark pipeline. Read this before running benchmarks or DB queries.
+
+### Answer-Only Mode Architecture
+
+`--eval-answers-only` uses a **single-loop** architecture: for each query up to the limit (default 100), it retrieves chunks, generates an answer via LLM, and scores it (ACC/EM/F1) immediately — all in one pass. This replaces the old two-phase approach (retrieve all queries first, then generate answers in a separate loop).
+
+**Key design decisions:**
+- **Default limit = 100**: Not `Infinity`. All 2255 multihop-rag queries have gold answers, so filtering by "has gold answer" is a no-op. The limit is what makes this fast.
+- **Single loop with early return**: The `evalAnswersOnly` code path returns before the normal retrieval/scoring phases. No intermediate `allResults`/`allChunkResults` maps.
+- **Per-query error handling**: `generateText` failures are caught per-query and logged, not fatal. The loop continues.
+- **15-minute timeout**: With 100 queries at ~3s each (retrieval + LLM), completes in ~5 min. Override with `--eval-answers-limit=N` for larger runs (increase workflow timeout manually if N >> 100).
+- **Core runner runs hybrid only** in answer-only mode (no fast mode), since the goal is answer quality iteration, not retrieval comparison.
 
 ### Database Table Naming
 
@@ -561,5 +572,5 @@ Predicate merging reduced graph noise (fewer redundant edge types), which improv
 - **Retrieval metrics alone are insufficient for multi-hop RAG.** The MultiHop-RAG paper (COLM 2024) and HippoRAG (NeurIPS 2024) both evaluate with answer-generation metrics (EM, F1, ACC). High Hit@10 (0.98) doesn't mean the system can answer multi-hop questions.
 - **Methodology matters enormously for answer-gen comparison.** The paper uses substring match (ACC), not exact match (EM). It passes top-6 chunks (~2048 tokens), not full articles. Using the wrong metric or context size makes results incomparable. Our EM=0.19 vs paper's GPT-4 ACC=0.56 is apples-to-oranges.
 - **Predicate synonym merging is a cheap win.** Static synonym groups + tense guard gave -18% ingest time, -46% query latency, and +0.0004 nDCG with zero risk. The tense guard is important for temporal reasoning datasets.
-- **Answer-only mode is essential for iteration.** Running all 2255 retrieval queries (90-180min) just to test a different answer-gen model is wasteful. `--eval-answers-only` queries just the answer subset in ~30min.
+- **Answer-only mode is essential for iteration.** Running all 2255 retrieval queries (90-180min) just to test a different answer-gen model is wasteful. `--eval-answers-only` uses a single-loop architecture (retrieve → generate → score per query) with a default limit of 100 queries, completing in ~5-15 min.
 - **Gold answers require a separate seeding pipeline.** MultiHopRAG HuggingFace data has answers in the queries parquet, but they need separate extraction and upload to Vercel Blob as `answers.json`.
