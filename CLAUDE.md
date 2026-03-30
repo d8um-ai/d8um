@@ -36,6 +36,18 @@ Format: `[bench:DATASET/VARIANT]`, `[bench:DATASET/VARIANT:seed]`, or `[bench:DA
 - **:answers** (optional, multihop-rag only): Runs answer-generation eval only — queries just the gold-answer subset, skips full IR metrics, reports ACC/EM/F1. Much faster (~30min timeout vs 90-180min).
 - **:answers:MODEL** (optional): Same as `:answers` but overrides the LLM used for answer generation (e.g., `:answers:openai/gpt-5.4`).
 
+**IMPORTANT: Tag parsing gotchas:**
+- `:seed` and `:answers` are **mutually exclusive** in the tag syntax. The regex is `(:seed|:answers[:MODEL])?` — you cannot combine them.
+- `[bench:dataset/variant:answers:seed]` does NOT mean "seed + answers". It parses as answers-only with `eval_model="seed"` (invalid model). This produces 0 queries answered.
+- To seed AND get answer metrics, use `[bench:dataset/variant:seed]` which runs `--seed --eval-answers` (full benchmark with seeding + answer gen on all queries). This takes much longer (~3-4 hours for neural multihop-rag) but is the only way.
+- To run a quick answer-only eval (no seed), use `[bench:dataset/variant:answers]`.
+
+**IMPORTANT: Reseed requires DB clearing first:**
+- `--seed` does NOT drop tables — it re-ingests via upsert with hash store deduplication.
+- If you change the **triple extraction pipeline** (e.g., adding new fields to edge properties), re-seeding alone won't help — the hash store matches on content+embedding model (unchanged) and skips the doc before `extractFromChunk` fires.
+- You MUST clear the hash store entries AND the graph tables first (see "Clearing Benchmark Data for Reseed" section), then reseed.
+- The `concurrency: cancel-in-progress: true` setting means pushing a new commit with the same dataset/variant tag will **cancel the in-progress benchmark job**. Never push while a benchmark is running unless you intend to cancel it.
+
 ### Examples
 
 ```
@@ -240,7 +252,7 @@ For estimating seed times (~3 docs/s embedding throughput):
 
 ### Clearing Benchmark Data for Reseed
 
-**When to clear:** Before reseeding a benchmark with changed chunk size, embedding model, or ingestion config. The hash store will skip unchanged content, so just running `--seed` again won't re-chunk with new settings.
+**When to clear:** Before reseeding a benchmark with changed chunk size, embedding model, ingestion config, **or triple extraction pipeline changes** (e.g., adding new fields to edge properties). The hash store matches on content+embedding model — if those haven't changed, the doc is skipped before `extractFromChunk` fires, so new edge property fields won't be populated.
 
 **Important:** `--seed` does NOT drop tables. You must manually clear data via a db-query, then reseed.
 
