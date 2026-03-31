@@ -28,6 +28,11 @@ export interface BenchmarkResult {
     ingestionSeconds?: number
     avgQueryMs: number
     totalSeconds: number
+    latency?: {
+      dbRoundTripMs: number
+      embeddingRoundTripMs: number
+      environment: 'ci' | 'local'
+    }
   }
   config: Record<string, unknown>
 }
@@ -77,6 +82,16 @@ export function printResults(result: BenchmarkResult): void {
     console.log(`  Ingestion:     ${result.timing.ingestionSeconds.toFixed(1)}s`)
   }
   console.log(`  Avg Query:     ${result.timing.avgQueryMs.toFixed(1)}ms`)
+  if (result.timing.latency) {
+    const l = result.timing.latency
+    const networkMs = l.dbRoundTripMs + l.embeddingRoundTripMs
+    const overheadMs = result.timing.avgQueryMs - networkMs
+    console.log(`  ── Latency Breakdown ──`)
+    console.log(`  DB round-trip: ${l.dbRoundTripMs.toFixed(0)}ms`)
+    console.log(`  Embed API:     ${l.embeddingRoundTripMs.toFixed(0)}ms`)
+    console.log(`  SDK + other:   ${Math.max(0, overheadMs).toFixed(0)}ms`)
+    console.log(`  Environment:   ${l.environment}`)
+  }
   console.log(`  Total:         ${Math.floor(result.timing.totalSeconds / 60)}m ${(result.timing.totalSeconds % 60).toFixed(0)}s`)
   console.log()
 }

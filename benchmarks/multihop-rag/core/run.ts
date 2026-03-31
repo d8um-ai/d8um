@@ -19,7 +19,7 @@ import { getConfig } from '../../lib/config.js'
 import {
   parseCliArgs, initCore, resolveBucket, loadDataset,
   runIngestion, runQueries, computeMetrics, buildResult,
-  emitResults, printBanner,
+  emitResults, printBanner, measureLatencyProfile,
 } from '../../lib/runner.js'
 import { substringAccuracy, exactMatch, tokenF1 } from '../../lib/metrics.js'
 import { recordResults } from '../../lib/history.js'
@@ -34,8 +34,9 @@ async function main() {
 
   // Phase 1: Initialize
   console.log('Phase 1: Initializing d8um with Neon pgvector...')
-  const { d } = await initCore(config)
+  const { d, adapter } = await initCore(config)
   const { bucket } = await resolveBucket(d, config.bucketName, cli.shouldSeed)
+  const latency = await measureLatencyProfile(adapter)
   console.log()
 
   // Phase 2: Load dataset (with gold answers if answer eval requested)
@@ -114,7 +115,7 @@ async function main() {
 
     const benchResult = buildResult(config, 'hybrid', corpus.length, answered, {
       ACC: sumACC / answered, EM: sumEM / answered, F1: sumF1 / answered,
-    } as BenchmarkMetrics, { avgQueryMs, totalStart }, { evalModel: cli.evalLlmModel })
+    } as BenchmarkMetrics, { avgQueryMs, totalStart, latency }, { evalModel: cli.evalLlmModel })
 
     emitResults(benchResult)
     if (cli.record) recordResults([benchResult])
@@ -179,6 +180,7 @@ async function main() {
       ingestDuration: mode === config.modes[0] ? ingestDuration : undefined,
       avgQueryMs,
       totalStart,
+      latency,
     }, cli.evalAnswers ? { evalModel: cli.evalLlmModel } : undefined))
     console.log()
   }

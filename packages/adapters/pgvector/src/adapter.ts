@@ -260,13 +260,15 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     const filterClause = where ? `WHERE ${where}` : ''
     const count = opts.count
 
-    const runQuery = async (sql: SqlExecutor): Promise<ScoredChunk[]> => {
-      if (opts.iterativeScan !== false) {
+    const runQuery = async (sql: SqlExecutor, inTransaction: boolean): Promise<ScoredChunk[]> => {
+      if (inTransaction && opts.iterativeScan !== false) {
         await sql(`SET LOCAL hnsw.iterative_scan = relaxed_order;`)
       }
       const paramOffset = params.length
       const rows = await sql(
-        `SELECT *, 1 - (embedding <=> $${paramOffset + 1}::vector) AS similarity
+        `SELECT id, bucket_id, tenant_id, document_id, idempotency_key, content,
+                embedding_model, chunk_index, total_chunks, metadata, indexed_at,
+                1 - (embedding <=> $${paramOffset + 1}::vector) AS similarity
          FROM ${table}
          ${filterClause}
          ORDER BY embedding <=> $${paramOffset + 1}::vector
@@ -277,9 +279,9 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     }
 
     if (this.transaction) {
-      return this.transaction(runQuery) as Promise<ScoredChunk[]>
+      return this.transaction((sql) => runQuery(sql, true)) as Promise<ScoredChunk[]>
     }
-    return runQuery(this.sql)
+    return runQuery(this.sql, false)
   }
 
   async hybridSearch(
@@ -301,8 +303,8 @@ export class PgVectorAdapter implements VectorStoreAdapter {
       (_, n) => `$${parseInt(n) + baseOffset}`
     )
 
-    const runQuery = async (sql: SqlExecutor): Promise<ScoredChunk[]> => {
-      if (opts.iterativeScan !== false) {
+    const runQuery = async (sql: SqlExecutor, inTransaction: boolean): Promise<ScoredChunk[]> => {
+      if (inTransaction && opts.iterativeScan !== false) {
         await sql(`SET LOCAL hnsw.iterative_scan = relaxed_order;`)
       }
 
@@ -371,9 +373,9 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     }
 
     if (this.transaction) {
-      return this.transaction(runQuery) as Promise<ScoredChunk[]>
+      return this.transaction((sql) => runQuery(sql, true)) as Promise<ScoredChunk[]>
     }
-    return runQuery(this.sql)
+    return runQuery(this.sql, false)
   }
 
   async countChunks(model: string, filter: ChunkFilter): Promise<number> {
@@ -438,8 +440,8 @@ export class PgVectorAdapter implements VectorStoreAdapter {
 
     const allParams = [vectorStr, query, count, ...chunkFilterParams, ...docFilterParams]
 
-    const runQuery = async (sql: SqlExecutor): Promise<ScoredChunkWithDocument[]> => {
-      if (opts.iterativeScan !== false) {
+    const runQuery = async (sql: SqlExecutor, inTransaction: boolean): Promise<ScoredChunkWithDocument[]> => {
+      if (inTransaction && opts.iterativeScan !== false) {
         await sql(`SET LOCAL hnsw.iterative_scan = relaxed_order;`)
       }
 
@@ -527,9 +529,9 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     }
 
     if (this.transaction) {
-      return this.transaction(runQuery) as Promise<ScoredChunkWithDocument[]>
+      return this.transaction((sql) => runQuery(sql, true)) as Promise<ScoredChunkWithDocument[]>
     }
-    return runQuery(this.sql)
+    return runQuery(this.sql, false)
   }
 
   // --- Chunk range fetch (for neighbor expansion) ---

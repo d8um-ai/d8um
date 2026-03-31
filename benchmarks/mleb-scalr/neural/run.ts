@@ -16,7 +16,7 @@ import { getConfig, LLM_MODEL } from '../../lib/config.js'
 import {
   parseCliArgs, initNeural, resolveBucket, loadDataset,
   runIngestion, runQueries, computeMetrics, buildResult,
-  emitResults, printBanner,
+  emitResults, printBanner, measureLatencyProfile,
 } from '../../lib/runner.js'
 import { runValidation } from '../../lib/validate.js'
 import { recordResult } from '../../lib/history.js'
@@ -30,9 +30,10 @@ async function main() {
 
   // Phase 1: Initialize with graph bridge
   console.log('Phase 1: Initializing d8um with graph bridge...')
-  const { d } = await initNeural(config)
+  const { d, adapter } = await initNeural(config)
   console.log(`  LLM: ${LLM_MODEL} (triple extraction during ingest)`)
   const { bucket } = await resolveBucket(d, config.bucketName, cli.shouldSeed)
+  const latency = await measureLatencyProfile(adapter)
   console.log()
 
   // Phase 2: Load dataset
@@ -74,6 +75,7 @@ async function main() {
     ingestDuration,
     avgQueryMs,
     totalStart,
+    latency,
   }, { tripleExtractionErrors: tripleErrors })
 
   emitResults(result)

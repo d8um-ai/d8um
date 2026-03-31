@@ -18,7 +18,7 @@ import { getConfig, LLM_MODEL } from '../../lib/config.js'
 import {
   parseCliArgs, initNeural, resolveBucket, loadDataset,
   runIngestion, runQueries, computeMetrics, buildResult,
-  emitResults, printBanner,
+  emitResults, printBanner, measureLatencyProfile,
 } from '../../lib/runner.js'
 import { substringAccuracy, exactMatch, tokenF1 } from '../../lib/metrics.js'
 import { recordResult } from '../../lib/history.js'
@@ -43,9 +43,10 @@ async function main() {
 
   // Phase 1: Initialize with graph bridge
   console.log('Phase 1: Initializing d8um with graph bridge...')
-  const { d } = await initNeural(config)
+  const { d, adapter } = await initNeural(config)
   console.log(`  LLM: ${LLM_MODEL} (triple extraction during ingest)`)
   const { bucket } = await resolveBucket(d, config.bucketName, cli.shouldSeed)
+  const latency = await measureLatencyProfile(adapter)
   console.log()
 
   // Phase 2: Load dataset (with gold answers if answer eval requested)
@@ -133,7 +134,7 @@ async function main() {
 
     const benchResult = buildResult(config, 'neural', corpus.length, answered, {
       ACC: sumACC / answered, EM: sumEM / answered, F1: sumF1 / answered,
-    } as BenchmarkMetrics, { avgQueryMs, totalStart }, { evalModel: cli.evalLlmModel })
+    } as BenchmarkMetrics, { avgQueryMs, totalStart, latency }, { evalModel: cli.evalLlmModel })
 
     emitResults(benchResult)
     if (cli.record) recordResult(benchResult)
@@ -198,6 +199,7 @@ async function main() {
     ingestDuration,
     avgQueryMs,
     totalStart,
+    latency,
   }, { tripleExtractionErrors: tripleErrors, ...(cli.evalAnswers ? { evalModel: cli.evalLlmModel } : {}) })
 
   emitResults(result)

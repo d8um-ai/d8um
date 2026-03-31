@@ -316,6 +316,57 @@ export async function runIngestion(
   return { ingestDuration, totalChunks, tripleErrors }
 }
 
+// ── Latency Profiling ──
+
+export interface LatencyProfile {
+  dbRoundTripMs: number
+  embeddingRoundTripMs: number
+  environment: 'ci' | 'local'
+}
+
+/**
+ * Measures baseline network latency to Neon DB and embedding API.
+ * Runs a few probe calls (adds ~2-3s) to establish a latency baseline
+ * that separates network overhead from actual query processing time.
+ */
+export async function measureLatencyProfile(
+  adapter: CoreInit['adapter'],
+): Promise<LatencyProfile> {
+  const probeSql = (adapter as any).sql as (q: string, p?: unknown[]) => Promise<unknown[]>
+
+  // Warm up
+  await probeSql('SELECT 1')
+
+  // DB round-trip: median of 5 calls
+  const dbTimes: number[] = []
+  for (let i = 0; i < 5; i++) {
+    const s = performance.now()
+    await probeSql('SELECT 1')
+    dbTimes.push(performance.now() - s)
+  }
+  dbTimes.sort((a, b) => a - b)
+  const dbRoundTripMs = dbTimes[Math.floor(dbTimes.length / 2)]!
+
+  // Embedding API round-trip: median of 3 calls
+  const embModel = resolveEmbeddingModel({ embeddingModel: undefined } as any)
+  const embTimes: number[] = []
+  for (let i = 0; i < 3; i++) {
+    const s = performance.now()
+    const model = gateway.embeddingModel(embModel)
+    await model.doEmbed({ values: [`latency probe ${i}`] })
+    embTimes.push(performance.now() - s)
+  }
+  embTimes.sort((a, b) => a - b)
+  const embeddingRoundTripMs = embTimes[Math.floor(embTimes.length / 2)]!
+
+  // Heuristic: CI typically has <40ms DB round-trip
+  const environment = dbRoundTripMs < 40 ? 'ci' : 'local' as const
+
+  console.log(`  Latency baseline: db=${dbRoundTripMs.toFixed(0)}ms, embedding=${embeddingRoundTripMs.toFixed(0)}ms (${environment})`)
+
+  return { dbRoundTripMs, embeddingRoundTripMs, environment }
+}
+
 // ── Query Execution ──
 
 export interface QueryResult {
@@ -399,7 +450,7 @@ export function buildResult(
   corpusSize: number,
   scored: number,
   metrics: BenchmarkMetrics,
-  timing: { ingestDuration?: number; avgQueryMs: number; totalStart: number },
+  timing: { ingestDuration?: number; avgQueryMs: number; totalStart: number; latency?: LatencyProfile },
   extraConfig?: Record<string, unknown>,
 ): BenchmarkResult {
   const embModel = resolveEmbeddingModel(config)
@@ -432,6 +483,13 @@ export function buildResult(
       ingestionSeconds: timing.ingestDuration ? Number(timing.ingestDuration.toFixed(1)) : undefined,
       avgQueryMs: Number(timing.avgQueryMs.toFixed(1)),
       totalSeconds: Number(((performance.now() - timing.totalStart) / 1000).toFixed(1)),
+      ...(timing.latency ? {
+        latency: {
+          dbRoundTripMs: Number(timing.latency.dbRoundTripMs.toFixed(0)),
+          embeddingRoundTripMs: Number(timing.latency.embeddingRoundTripMs.toFixed(0)),
+          environment: timing.latency.environment,
+        },
+      } : {}),
     },
     config: { ...baseConfig, ...extraConfig },
   }

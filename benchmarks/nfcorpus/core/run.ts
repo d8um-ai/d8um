@@ -16,7 +16,7 @@ import { getConfig } from '../../lib/config.js'
 import {
   parseCliArgs, initCore, resolveBucket, loadDataset,
   runIngestion, runQueries, computeMetrics, buildResult,
-  emitResults, printBanner,
+  emitResults, printBanner, measureLatencyProfile,
 } from '../../lib/runner.js'
 import { runValidation } from '../../lib/validate.js'
 import { recordResults } from '../../lib/history.js'
@@ -31,8 +31,9 @@ async function main() {
 
   // Phase 1: Initialize
   console.log('Phase 1: Initializing d8um with Neon pgvector...')
-  const { d } = await initCore(config)
+  const { d, adapter } = await initCore(config)
   const { bucket } = await resolveBucket(d, config.bucketName, cli.shouldSeed)
+  const latency = await measureLatencyProfile(adapter)
   console.log()
 
   // Phase 2: Load dataset
@@ -73,6 +74,7 @@ async function main() {
       ingestDuration: mode === config.modes[0] ? ingestDuration : undefined,
       avgQueryMs,
       totalStart,
+      latency,
     }))
     console.log()
   }

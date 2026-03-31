@@ -110,5 +110,29 @@
       "ingestionSeconds": null,
       "totalSeconds": null
     }
+  },
+  {
+    "commit": "52644e0",
+    "date": "2026-03-31",
+    "metrics": {
+      "nDCG@10": 0.6482717985135573,
+      "MAP@10": 0.5900183150183153,
+      "Recall@10": 0.8307692307692308,
+      "Precision@10": 0.08307692307692303
+    },
+    "avgQueryMs": 1548.9,
+    "timing": {
+      "ingestionSeconds": null,
+      "avgQueryMs": 1548.9,
+      "totalSeconds": 211.4
+    },
+    "mode": "fast",
+    "config": {
+      "embedding": "openai/text-embedding-3-small",
+      "embeddingDims": 1536,
+      "chunkSize": 2048,
+      "chunkOverlap": 256,
+      "queryFetch": 50
+    }
   }
 ]
