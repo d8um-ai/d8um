@@ -32,26 +32,49 @@ Benchmarks can be run **locally** (preferred) or via **GitHub Actions CI** (for 
 # From repo root — always build first
 pnpm run build
 
-# Run a benchmark (query-only if already seeded)
-cd benchmarks
-npx tsx --env-file=.env {dataset}/{variant}/run.ts
-
-# Run with seeding (re-indexes corpus)
-npx tsx --env-file=.env {dataset}/{variant}/run.ts --seed
+# From benchmarks/ directory:
+npx tsx --env-file=.env {dataset}/{variant}/run.ts               # query-only
+npx tsx --env-file=.env {dataset}/{variant}/run.ts --seed         # re-index corpus
+npx tsx --env-file=.env {dataset}/{variant}/run.ts --validate     # smoke test (5 docs, 5 queries)
+npx tsx --env-file=.env {dataset}/{variant}/run.ts --record       # save results to history file
 ```
 
 Examples:
 ```bash
 npx tsx --env-file=.env license-tldr-retrieval/core/run.ts
 npx tsx --env-file=.env multihop-rag/neural/run.ts --eval-answers-only
-npx tsx --env-file=.env multihop-rag/neural/run.ts --seed
+npx tsx --env-file=.env multihop-rag/neural/run.ts --seed --record
 ```
+
+**CLI flags:**
+- `--validate` — **MANDATORY before any --seed on new/cleared data.** Runs 5 docs + 5 queries to verify pipeline works. Takes <30s.
+- `--seed` — Re-indexes the corpus. Requires DB clearing first if changing chunk size/embedding model (see Clearing section). **Requires explicit user approval.**
+- `--record` — Appends results to `history-{mode}.json` locally (same format CI uses).
+- `--eval-answers` / `--eval-answers-only` / `--eval-answers-limit=N` / `--eval-model=MODEL` — Answer-gen eval (multihop-rag only).
 
 **Notes:**
 - Run from the `benchmarks/` directory so relative imports resolve correctly
 - `--env-file=.env` (relative path) requires being in `benchmarks/` when running
-- Results are printed to stdout as JSON after `---BENCH_RESULT_JSON---`. CI parses this to update history files; when running locally you must update history files manually if you want to record the result.
-- Seeding large datasets locally (nfcorpus, legal-rag-bench) will be slow but works
+- Results are printed to stdout as JSON after `---BENCH_RESULT_JSON---`
+
+### Benchmark Architecture
+
+All 14 runners use a shared library (`benchmarks/lib/`):
+- **`config.ts`** — Registry of all benchmark configs (dataset, bucket, table prefix, modes, scorer)
+- **`runner.ts`** — Composable helpers: `initCore`, `initNeural`, `loadDataset`, `runIngestion`, `runQueries`, `computeMetrics`, `buildResult`, `emitResults`
+- **`history.ts`** — Local history recording (`--record` flag)
+- **`validate.ts`** — Smoke test (`--validate` flag)
+- **`adapter.ts`** / **`datasets.ts`** / **`metrics.ts`** / **`report.ts`** — Shared utilities
+
+### Adding a New Benchmark
+
+1. Upload dataset to Vercel Blob via a seed script in `benchmarks/scripts/`
+2. Add config entries in `benchmarks/lib/config.ts` (one per variant)
+3. Create `benchmarks/{dataset}/baselines.json` with external comparison scores
+4. Create runner files using shared helpers: `benchmarks/{dataset}/core/run.ts` and `/neural/run.ts`
+5. Run `--validate` to verify the pipeline end-to-end
+6. Get user approval, then run `--seed --record`
+7. Add to CI DATASETS list in `benchmarks.yml`
 
 ### Running via CI
 
@@ -281,11 +304,17 @@ For estimating seed times (~3 docs/s embedding throughput):
 
 ### Baselines & History Files
 
-- External baselines: `benchmarks/{dataset}/baselines.json` — compared in PR comments
-- Run history: `benchmarks/{dataset}/{variant}/history.json` — auto-committed by CI
-- PR comments show comparison table (d8um vs top-3 baselines) + delta from previous run
-- Only nDCG@10 has cross-system baselines; MAP/Recall/Precision are d8um-internal tracking only
-- History entries include a `timing` object with `ingestionSeconds` (if seeded), `avgQueryMs`, and `totalSeconds` — added 2026-03-29; older entries only have root-level `avgQueryMs`
+**Baselines** (`benchmarks/{dataset}/baselines.json`):
+- Each entry has: `system`, `metrics`, `source`, `year`, `metric_note`
+- Sources: MLEB Leaderboard (isaacus) for legal/tax datasets, MTEB/BEIR for nfcorpus, paper tables for multihop-rag
+- Compared in PR comments; `metric_note` clarifies what's being compared (e.g., "Hit@10 not nDCG@10")
+
+**History files** (`benchmarks/{dataset}/{variant}/history-{mode}.json`):
+- Mode-specific: `history-hybrid.json`, `history-fast.json`, `history-neural.json`
+- Legacy `history.json` files still exist for backwards compatibility (CI fallback reads them)
+- All entries now have `timing` objects (older entries backfilled with `ingestionSeconds: null`)
+- `--record` flag appends locally; CI auto-commits on PR benchmark runs
+- Entry format: `{ commit, date, metrics, avgQueryMs, timing, mode, config }`
 
 ### Clearing Benchmark Data for Reseed
 
@@ -352,18 +381,16 @@ Note: neural graph tables use `{prefix}memories` (no extra underscore), e.g. `be
 
 **legal-rag-bench anomaly:** `d8um_documents` and `d8um_hashes` have 4859 entries, but `bench_legalrag_core__gateway_openai_text_embedding_3_small` is empty. The chunk table was truncated without clearing hashes/documents. Before reseeding: clear hashes and documents for `legal-rag-bench` bucket, then the seed will re-ingest.
 
-#### Procedure
+#### Reseed Procedure (MUST follow in order)
 
-**CRITICAL: Follow these steps IN ORDER. Do NOT skip steps. Do NOT push a seed benchmark until you have VERIFIED the DB is clear. Skipping verification wastes hours of LLM/DB compute.**
+**CRITICAL: DB wipes and reseeds require explicit user approval. NEVER auto-clear. ALWAYS validate on small data before full runs.**
 
-1. Run the clear SQL directly against Neon (see "Database Queries" section) — no need to commit a query file
-2. Use `SELECT id FROM d8um_buckets WHERE name = '{bucket_name}'` in the WHERE clause (avoids hardcoding UUIDs)
-3. **VERIFY the result immediately.** Check:
-   - All `TRUNCATE TABLE` statements succeeded (no errors)
-   - `DELETE` row counts > 0 for hashes/documents. **If 0, the hash store was NOT cleared** — investigate (wrong bucket name? bucket doesn't exist?)
-   - If DELETE shows 0 rows, **DO NOT proceed to seeding.** The seed will skip all docs because hash entries still exist. Run a diagnostic query against `d8um_hashes` to check.
-4. **Only after verification passes**, push a commit with `[bench:{dataset}/{variant}:seed]` to reseed
-5. **Do NOT push any other commits while the seed is running.** The `concurrency: cancel-in-progress: true` setting means any push that triggers a benchmark workflow run will cancel the in-progress seed job.
+1. **Get explicit user approval** for which dataset/variant to clear and reseed
+2. **Run clear SQL** directly against Neon (see "Database Queries" section)
+3. **VERIFY immediately**: `DELETE` row counts must be >0 for hashes/documents. If 0 → hash store NOT cleared → seed will skip everything → **DO NOT PROCEED**
+4. **Run `--validate` first** to confirm the pipeline works on 5 docs/queries
+5. **Only then run `--seed`** for the full dataset (or push `[bench:dataset/variant:seed]` for CI)
+6. **Do NOT push other commits while a seed is running** — cancels the job
 
 **Common mistakes that waste compute:**
 - Pushing `[bench:dataset/variant:answers:seed]` — this does NOT seed. It runs answer-only with `eval_model="seed"` (invalid).
