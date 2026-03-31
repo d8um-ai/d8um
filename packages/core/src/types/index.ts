@@ -75,7 +75,7 @@ export type {
 
 export type { d8umHooks } from './hooks.js'
 
-export type { LLMProvider } from './llm-provider.js'
+export type { LLMProvider, LLMGenerateOptions } from './llm-provider.js'
 
 export type { d8umIdentity } from './identity.js'
 

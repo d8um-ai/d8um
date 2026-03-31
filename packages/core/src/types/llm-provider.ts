@@ -5,15 +5,23 @@
  *
  * The provider must support structured JSON output for memory extraction.
  */
+export interface LLMGenerateOptions {
+  /**
+   * Provider-specific options passed through to the underlying model.
+   * Example: `{ openai: { reasoningEffort: 'high' } }`
+   */
+  providerOptions?: Record<string, Record<string, unknown>>
+}
+
 export interface LLMProvider {
   /**
    * Generate text from a prompt. Returns the raw text response.
    */
-  generateText(prompt: string, systemPrompt?: string): Promise<string>
+  generateText(prompt: string, systemPrompt?: string, options?: LLMGenerateOptions): Promise<string>
 
   /**
    * Generate structured JSON output from a prompt.
    * The provider should parse and return the JSON object.
    */
-  generateJSON<T = unknown>(prompt: string, systemPrompt?: string): Promise<T>
+  generateJSON<T = unknown>(prompt: string, systemPrompt?: string, options?: LLMGenerateOptions): Promise<T>
 }

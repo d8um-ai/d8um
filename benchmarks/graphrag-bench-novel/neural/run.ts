@@ -32,7 +32,7 @@ async function main() {
 
   // Phase 1: Initialize
   console.log('Phase 1: Initializing d8um with graph bridge...')
-  console.log(`  LLM: google/gemini-3.1-flash-lite-preview (triple extraction during ingest)`)
+  console.log(`  LLM: openai/gpt-5.4-mini (triple extraction during ingest)`)
   const { d, adapter } = await initNeural(config)
   const { bucket } = await resolveBucket(d, config.bucketName, cli.shouldSeed)
   const latency = await measureLatencyProfile(adapter)
