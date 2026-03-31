@@ -9,199 +9,102 @@
  * - Corpus: Victorian Criminal Charge Book passages with footnotes
  * - QA: Complex legal questions with relevant_passage_id references
  *
- * Required env vars:
- *   NEON_DATABASE_URL, AI_GATEWAY_API_KEY, BLOB_READ_WRITE_TOKEN
- *
  * Usage:
- *   npx tsx legal-rag-bench/core/run.ts           # query-only
- *   npx tsx legal-rag-bench/core/run.ts --seed    # re-index
+ *   npx tsx --env-file=.env legal-rag-bench/core/run.ts              # query-only
+ *   npx tsx --env-file=.env legal-rag-bench/core/run.ts --seed        # re-index
+ *   npx tsx --env-file=.env legal-rag-bench/core/run.ts --validate    # smoke test
+ *   npx tsx --env-file=.env legal-rag-bench/core/run.ts --record      # save to history
  */
 
-import { d8umCreate } from '@d8um/core'
-import { gateway } from '@ai-sdk/gateway'
-import { createBenchmarkAdapter } from '../../lib/adapter.js'
-import { loadLegalRagCorpus, loadLegalRagQa, buildLegalRagQrelsMap } from '../../lib/datasets.js'
-import { scoreAllQueries, deduplicateToDocuments } from '../../lib/metrics.js'
-import { printResults, type BenchmarkResult } from '../../lib/report.js'
+import { getConfig } from '../../lib/config.js'
+import {
+  parseCliArgs, initCore, resolveBucket, loadDataset,
+  runIngestion, runQueries, computeMetrics, buildResult,
+  emitResults, printBanner,
+} from '../../lib/runner.js'
+import { runValidation } from '../../lib/validate.js'
+import { recordResults } from '../../lib/history.js'
+import type { BenchmarkResult } from '../../lib/report.js'
 
-// ── Configuration ──
+const config = getConfig('legal-rag-bench/core')
+const cli = parseCliArgs()
 
-const BUCKET_NAME = 'legal-rag-bench'
-const TABLE_PREFIX = 'bench_legalrag_core_'
-const EMBEDDING_MODEL = 'openai/text-embedding-3-small'
-const EMBEDDING_DIMS = 1536
-const CHUNK_SIZE = 2048
-const CHUNK_OVERLAP = 256
-const K = 10
-const QUERY_FETCH = K * 5
-
-const shouldSeed = process.argv.includes('--seed')
-
-// ── Main ──
+/** Map legal-rag corpus docs (id, title, text, footnotes) to ingest format */
+function legalRagDocMapper(doc: Record<string, unknown>) {
+  const docId = String(doc['id'])
+  const title = String(doc['title'] ?? '')
+  const text = String(doc['text'] ?? '')
+  const footnotes = String(doc['footnotes'] ?? '')
+  const content = [
+    title ? `${title}\n\n${text}` : text,
+    footnotes ? `\n\nFootnotes:\n${footnotes}` : '',
+  ].join('')
+  return {
+    id: docId, title, content,
+    updatedAt: new Date(),
+    metadata: { corpusId: docId },
+  }
+}
 
 async function main() {
   const totalStart = performance.now()
+  printBanner(config, cli)
 
-  console.log('╔══════════════════════════════════════════════════════════════╗')
-  console.log('║  Legal RAG Bench — d8um Core (Hybrid + Fast)                ║')
-  console.log('╚══════════════════════════════════════════════════════════════╝')
-  console.log()
-  console.log(`  Mode: ${shouldSeed ? 'seed + query' : 'query-only (use --seed to re-index)'}`)
-  console.log()
-
+  // Phase 1: Initialize
   console.log('Phase 1: Initializing d8um with Neon pgvector...')
-  const adapter = createBenchmarkAdapter(TABLE_PREFIX)
-  const d = await d8umCreate({
-    vectorStore: adapter,
-    embedding: {
-      model: gateway.embeddingModel(EMBEDDING_MODEL),
-      dimensions: EMBEDDING_DIMS,
-    },
-  })
-
-  const existingBuckets = await d.buckets.list()
-  let bucket = existingBuckets.find(b => b.name === BUCKET_NAME)
-  if (bucket && !shouldSeed) {
-    console.log(`  Using existing bucket: ${bucket.name} (${bucket.id})`)
-  } else if (!bucket) {
-    console.log(`  No existing bucket found, will create and seed`)
-  }
+  const { d } = await initCore(config)
+  const { bucket } = await resolveBucket(d, config.bucketName, cli.shouldSeed)
   console.log()
 
+  // Phase 2: Load dataset
   console.log('Phase 2: Loading Legal RAG Bench from Vercel Blob...')
-  const [corpus, qa] = await Promise.all([
-    loadLegalRagCorpus(),
-    loadLegalRagQa(),
-  ])
-
-  const qrelsMap = buildLegalRagQrelsMap(qa)
-  console.log(`  QA pairs (with passage references): ${qa.length}`)
+  const { corpus, testQueries, qrelsMap } = await loadDataset(config)
+  console.log(`  Test queries with relevance judgments: ${testQueries.length}`)
   console.log()
 
+  // Validate mode: smoke test and exit
+  if (cli.validate) {
+    const ok = await runValidation(d, config.bucketName, corpus, testQueries, config)
+    process.exit(ok ? 0 : 1)
+  }
+
+  // Phase 3: Ingest (if needed)
   let ingestDuration: number | undefined
-
-  if (!bucket || shouldSeed) {
-    if (!bucket) {
-      bucket = await d.buckets.create({ name: BUCKET_NAME })
-    }
-
-    console.log(`Phase 3: Ingesting ${corpus.length} passages...`)
-    console.log(`  Config: chunk_size=${CHUNK_SIZE}, chunk_overlap=${CHUNK_OVERLAP}, embedding=${EMBEDDING_MODEL}`)
-    const ingestStart = performance.now()
-
-    const BATCH_SIZE = 30
-    let ingested = 0
-    let totalChunks = 0
-    let batchNum = 0
-    const totalBatches = Math.ceil(corpus.length / BATCH_SIZE)
-
-    for (let i = 0; i < corpus.length; i += BATCH_SIZE) {
-      batchNum++
-      const batch = corpus.slice(i, i + BATCH_SIZE)
-      const batchStart = performance.now()
-
-      const docs = batch.map(doc => {
-        const docId = String(doc.id)
-        const title = String(doc.title ?? '')
-        const text = String(doc.text ?? '')
-        const footnotes = String(doc.footnotes ?? '')
-        const content = [
-          title ? `${title}\n\n${text}` : text,
-          footnotes ? `\n\nFootnotes:\n${footnotes}` : '',
-        ].join('')
-        return {
-          id: docId, title, content,
-          updatedAt: new Date(),
-          metadata: { corpusId: docId },
-        }
-      })
-
-      const result = await d.ingest(
-        bucket.id, docs,
-        { chunkSize: CHUNK_SIZE, chunkOverlap: CHUNK_OVERLAP, deduplicateBy: ['content'], propagateMetadata: ['metadata.corpusId'] },
-      )
-
-      ingested += batch.length
-      totalChunks += result.inserted
-      const batchMs = performance.now() - batchStart
-      const elapsed = (performance.now() - ingestStart) / 1000
-      const docsPerSec = ingested / elapsed
-      const eta = (corpus.length - ingested) / docsPerSec
-
-      console.log(
-        `  Batch ${batchNum}/${totalBatches}: ${batch.length} docs, ` +
-        `${result.inserted} chunks inserted, ${result.skipped} skipped ` +
-        `(${batchMs.toFixed(0)}ms) — ${ingested}/${corpus.length} total, ` +
-        `${docsPerSec.toFixed(0)} docs/s, ETA ${eta.toFixed(0)}s`
-      )
-    }
-
-    ingestDuration = (performance.now() - ingestStart) / 1000
-    console.log(`  Ingestion complete: ${ingestDuration.toFixed(1)}s, ${ingested} docs, ${totalChunks} chunks (${(ingested / ingestDuration).toFixed(0)} docs/sec)`)
+  if (cli.shouldSeed) {
+    console.log(`Phase 3: Ingesting ${corpus.length} documents...`)
+    const result = await runIngestion(d, bucket.id, corpus, config, {
+      docMapper: legalRagDocMapper,
+    })
+    ingestDuration = result.ingestDuration
   } else {
-    console.log('Phase 3: Skipping ingestion (bucket exists, no --seed flag)')
+    console.log('Phase 3: Skipping ingestion (no --seed flag)')
   }
   console.log()
 
-  // ── Query in both modes ──
-  const modes = ['hybrid', 'fast'] as const
+  // Phase 4+: Query in both modes
   const benchResults: BenchmarkResult[] = []
-  let phaseNum = 4
 
-  for (const mode of modes) {
-    console.log(`Phase ${phaseNum}: Running ${qa.length} queries (mode: ${mode})...`)
-    const queryStart = performance.now()
-    const allResults = new Map<string, string[]>()
-    let queriesDone = 0
+  for (const mode of config.modes) {
+    console.log(`Running ${testQueries.length} queries (mode: ${mode})...`)
+    const { allResults, avgQueryMs } = await runQueries(d, bucket.id, testQueries, mode)
+    console.log()
 
-    for (const q of qa) {
-      const queryId = String(q.id)
-      const response = await d.query(q.question, {
-        mode, count: QUERY_FETCH, buckets: [bucket!.id],
-      })
+    console.log(`Computing IR metrics (${mode})...`)
+    const { metrics, scored } = computeMetrics(config, allResults, qrelsMap)
 
-      allResults.set(queryId, deduplicateToDocuments(response.results, K))
-
-      queriesDone++
-      if (queriesDone % 20 === 0 || queriesDone === qa.length) {
-        process.stdout.write(`\r  Queries: ${queriesDone}/${qa.length}`)
-      }
-    }
-
-    const queryDuration = (performance.now() - queryStart) / 1000
-    const avgQueryMs = (queryDuration * 1000) / qa.length
-    console.log(`\n  Queries complete: ${queryDuration.toFixed(1)}s (avg ${avgQueryMs.toFixed(1)}ms/query)`)
-
-    phaseNum++
-    console.log(`Phase ${phaseNum}: Computing IR metrics (${mode})...`)
-    const { metrics, scored } = scoreAllQueries(allResults, qrelsMap, K)
-
-    benchResults.push({
-      benchmark: 'Legal RAG Bench (isaacus)',
-      dataset: 'legal-rag-bench',
-      mode, variant: 'core',
-      corpus: corpus.length, queries: scored, k: K, metrics,
-      timing: {
-        ingestionSeconds: mode === 'hybrid' && ingestDuration ? Number(ingestDuration.toFixed(1)) : undefined,
-        avgQueryMs: Number(avgQueryMs.toFixed(1)),
-        totalSeconds: Number(((performance.now() - totalStart) / 1000).toFixed(1)),
-      },
-      config: {
-        embedding: EMBEDDING_MODEL, embeddingDims: EMBEDDING_DIMS,
-        chunkSize: CHUNK_SIZE, chunkOverlap: CHUNK_OVERLAP,
-        includesFootnotes: true, queryFetch: QUERY_FETCH,
-      },
-    })
-
-    printResults(benchResults[benchResults.length - 1]!)
-    phaseNum++
+    benchResults.push(buildResult(config, mode, corpus.length, scored, metrics, {
+      ingestDuration: mode === config.modes[0] ? ingestDuration : undefined,
+      avgQueryMs,
+      totalStart,
+    }, { includesFootnotes: true }))
     console.log()
   }
 
-  console.log('---BENCH_RESULT_JSON---')
-  console.log(JSON.stringify(benchResults, null, 2))
-  console.log('---END_BENCH_RESULT_JSON---')
-  console.log('══════════════════════════════════════════════════════')
+  emitResults(benchResults)
+
+  if (cli.record) {
+    recordResults(benchResults)
+  }
 }
 
 main().catch(err => { console.error('Benchmark failed:', err); process.exit(1) })
