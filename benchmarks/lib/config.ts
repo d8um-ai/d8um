@@ -9,7 +9,7 @@
 
 export const EMBEDDING_MODEL = 'openai/text-embedding-3-small'
 export const EMBEDDING_DIMS = 1536
-export const LLM_MODEL = 'google/gemini-3.1-flash-lite-preview'
+export const LLM_MODEL = 'openai/gpt-5.4-mini'
 export const CHUNK_SIZE = 2048
 export const CHUNK_OVERLAP = 256
 export const K = 10
@@ -208,6 +208,7 @@ export const BENCHMARK_CONFIGS: Record<string, BenchmarkConfig> = {
   },
 
   // ── MultiHop-RAG (COLM 2024) ──
+  // Paper uses 256-token chunks (Table 5 setup) — NOT the shared 2048 default
   'multihop-rag/core': {
     dataset: 'multihop-rag',
     displayName: 'MultiHop-RAG (COLM 2024)',
@@ -219,6 +220,8 @@ export const BENCHMARK_CONFIGS: Record<string, BenchmarkConfig> = {
     modes: ['hybrid', 'fast'],
     variant: 'core',
     supportsAnswerEval: true,
+    chunkSize: 256,
+    chunkOverlap: 32,
   },
   'multihop-rag/neural': {
     dataset: 'multihop-rag',
@@ -231,6 +234,67 @@ export const BENCHMARK_CONFIGS: Record<string, BenchmarkConfig> = {
     modes: ['neural'],
     variant: 'neural',
     supportsAnswerEval: true,
+    chunkSize: 256,
+    chunkOverlap: 32,
+  },
+  // ── GraphRAG-Bench Novel (arXiv:2506.05690) ──
+  'graphrag-bench-novel/core': {
+    dataset: 'graphrag-bench-novel',
+    displayName: 'GraphRAG-Bench Novel (ICLR 2026)',
+    bucketName: 'graphrag-bench-novel',
+    tablePrefix: 'bench_grbnovel_core_',
+    blobPrefix: 'datasets/graphrag-bench/novel',
+    loader: 'graphrag-bench',
+    scorer: 'standard',  // retrieval metrics have no qrels; answer-gen eval is primary
+    modes: ['hybrid', 'fast'],
+    variant: 'core',
+    supportsAnswerEval: true,
+    chunkSize: 1200,
+    chunkOverlap: 128,
+  },
+  'graphrag-bench-novel/neural': {
+    dataset: 'graphrag-bench-novel',
+    displayName: 'GraphRAG-Bench Novel (ICLR 2026)',
+    bucketName: 'graphrag-bench-novel-neural',
+    tablePrefix: 'bench_grbnovel_neural_',
+    blobPrefix: 'datasets/graphrag-bench/novel',
+    loader: 'graphrag-bench',
+    scorer: 'standard',
+    modes: ['neural'],
+    variant: 'neural',
+    supportsAnswerEval: true,
+    chunkSize: 1200,
+    chunkOverlap: 128,
+  },
+
+  // ── GraphRAG-Bench Medical (arXiv:2506.05690) ──
+  'graphrag-bench-medical/core': {
+    dataset: 'graphrag-bench-medical',
+    displayName: 'GraphRAG-Bench Medical (ICLR 2026)',
+    bucketName: 'graphrag-bench-medical',
+    tablePrefix: 'bench_grbmed_core_',
+    blobPrefix: 'datasets/graphrag-bench/medical',
+    loader: 'graphrag-bench',
+    scorer: 'standard',
+    modes: ['hybrid', 'fast'],
+    variant: 'core',
+    supportsAnswerEval: true,
+    chunkSize: 1200,
+    chunkOverlap: 128,
+  },
+  'graphrag-bench-medical/neural': {
+    dataset: 'graphrag-bench-medical',
+    displayName: 'GraphRAG-Bench Medical (ICLR 2026)',
+    bucketName: 'graphrag-bench-medical-neural',
+    tablePrefix: 'bench_grbmed_neural_',
+    blobPrefix: 'datasets/graphrag-bench/medical',
+    loader: 'graphrag-bench',
+    scorer: 'standard',
+    modes: ['neural'],
+    variant: 'neural',
+    supportsAnswerEval: true,
+    chunkSize: 1200,
+    chunkOverlap: 128,
   },
 }
 
