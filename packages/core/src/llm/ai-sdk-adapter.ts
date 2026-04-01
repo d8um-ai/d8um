@@ -1,4 +1,4 @@
-import type { LLMProvider } from '../types/llm-provider.js'
+import type { LLMProvider, LLMGenerateOptions } from '../types/llm-provider.js'
 
 /**
  * Structural type matching the Vercel AI SDK's LanguageModelV3 interface.
@@ -15,6 +15,7 @@ export interface AISDKLanguageModel {
     >
     maxOutputTokens?: number
     temperature?: number
+    providerOptions?: Record<string, Record<string, unknown>>
   }): PromiseLike<{
     content: Array<{ type: string; text?: string }>
     finishReason: string | { unified: string; raw?: string }
@@ -45,7 +46,7 @@ export function aiSdkLlmProvider(config: AISDKLLMInput): LLMProvider {
   const { model } = config
 
   const provider: LLMProvider = {
-    async generateText(prompt: string, systemPrompt?: string): Promise<string> {
+    async generateText(prompt: string, systemPrompt?: string, options?: LLMGenerateOptions): Promise<string> {
       const messages: Array<
         | { role: 'system'; content: string }
         | { role: 'user'; content: Array<{ type: 'text'; text: string }> }
@@ -56,17 +57,21 @@ export function aiSdkLlmProvider(config: AISDKLLMInput): LLMProvider {
       }
       messages.push({ role: 'user', content: [{ type: 'text', text: prompt }] })
 
-      const result = await model.doGenerate({ prompt: messages })
+      const result = await model.doGenerate({
+        prompt: messages,
+        ...(options?.providerOptions ? { providerOptions: options.providerOptions } : {}),
+      })
       return result.content
         .filter((c): c is { type: 'text'; text: string } => c.type === 'text' && typeof c.text === 'string')
         .map(c => c.text)
         .join('')
     },
 
-    async generateJSON<T = unknown>(prompt: string, systemPrompt?: string): Promise<T> {
+    async generateJSON<T = unknown>(prompt: string, systemPrompt?: string, options?: LLMGenerateOptions): Promise<T> {
       const text = await provider.generateText(
         prompt + '\n\nRespond with valid JSON only, no markdown fences.',
         systemPrompt,
+        options,
       )
       const cleaned = text.replace(/^```(?:json)?\s*/m, '').replace(/\s*```\s*$/m, '').trim()
       return JSON.parse(cleaned) as T
