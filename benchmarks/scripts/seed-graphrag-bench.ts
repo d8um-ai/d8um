@@ -206,7 +206,7 @@ async function main() {
     // ── Build queries, qrels, answers ──
 
     process.stdout.write('  Building qrels via evidence matching...')
-    const beirQueries: { _id: string; text: string }[] = []
+    const beirQueries: { _id: string; text: string; question_type?: string }[] = []
     const beirQrels: { 'query-id': string; 'corpus-id': string; score: number }[] = []
     const beirAnswers: { _id: string; answer: string }[] = []
     let unmatchedEvidence = 0
@@ -214,7 +214,8 @@ async function main() {
     for (let qi = 0; qi < allQuestions.length; qi++) {
       const q = allQuestions[qi]!
       const queryId = String(qi)
-      beirQueries.push({ _id: queryId, text: String(q['question'] ?? '') })
+      const questionType = q['question_type'] ? String(q['question_type']) : undefined
+      beirQueries.push({ _id: queryId, text: String(q['question'] ?? ''), ...(questionType ? { question_type: questionType } : {}) })
 
       const answer = String(q['answer'] ?? '')
       if (answer) {

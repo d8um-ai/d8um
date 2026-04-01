@@ -8,3 +8,4 @@ dist/
 *-results-*.json
 *-results-*.md
 pnpm-lock.yaml
+**/runs/
