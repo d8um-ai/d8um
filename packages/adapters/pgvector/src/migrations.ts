@@ -21,6 +21,10 @@ export const MODEL_TABLE_SQL = (chunksTable: string, dimensions: number) => `
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     bucket_id       TEXT NOT NULL,
     tenant_id       TEXT,
+    group_id        TEXT,
+    user_id         TEXT,
+    agent_id        TEXT,
+    session_id      TEXT,
     document_id     UUID NOT NULL,
     idempotency_key TEXT NOT NULL,
     content         TEXT NOT NULL,
@@ -38,9 +42,6 @@ export const MODEL_TABLE_SQL = (chunksTable: string, dimensions: number) => `
   CREATE INDEX IF NOT EXISTS ${chunksTable}_embedding_idx
     ON ${chunksTable} USING hnsw (embedding vector_cosine_ops);
 
-  CREATE INDEX IF NOT EXISTS ${chunksTable}_tenant_idx
-    ON ${chunksTable} (tenant_id);
-
   CREATE INDEX IF NOT EXISTS ${chunksTable}_source_tenant_idx
     ON ${chunksTable} (bucket_id, tenant_id);
 
@@ -52,6 +53,30 @@ export const MODEL_TABLE_SQL = (chunksTable: string, dimensions: number) => `
 
   CREATE UNIQUE INDEX IF NOT EXISTS ${chunksTable}_ikey_chunk_idx
     ON ${chunksTable} (idempotency_key, chunk_index, bucket_id);
+
+  CREATE INDEX IF NOT EXISTS ${chunksTable}_tenant_user_idx
+    ON ${chunksTable} (tenant_id, user_id);
+
+  CREATE INDEX IF NOT EXISTS ${chunksTable}_tenant_group_idx
+    ON ${chunksTable} (tenant_id, group_id);
+
+  CREATE INDEX IF NOT EXISTS ${chunksTable}_tenant_agent_idx
+    ON ${chunksTable} (tenant_id, agent_id);
+
+  CREATE INDEX IF NOT EXISTS ${chunksTable}_tenant_session_idx
+    ON ${chunksTable} (tenant_id, session_id);
+
+  CREATE INDEX IF NOT EXISTS ${chunksTable}_user_idx
+    ON ${chunksTable} (user_id);
+
+  CREATE INDEX IF NOT EXISTS ${chunksTable}_group_idx
+    ON ${chunksTable} (group_id);
+
+  CREATE INDEX IF NOT EXISTS ${chunksTable}_agent_idx
+    ON ${chunksTable} (agent_id);
+
+  CREATE INDEX IF NOT EXISTS ${chunksTable}_session_idx
+    ON ${chunksTable} (session_id);
 `
 
 /**
@@ -64,6 +89,10 @@ export const HASH_TABLE_SQL = (hashesTable: string) => `
     content_hash    TEXT NOT NULL,
     bucket_id       TEXT NOT NULL,
     tenant_id       TEXT,
+    group_id        TEXT,
+    user_id         TEXT,
+    agent_id        TEXT,
+    session_id      TEXT,
     embedding_model TEXT NOT NULL,
     indexed_at      TIMESTAMPTZ NOT NULL,
     chunk_count     INTEGER NOT NULL
@@ -89,15 +118,17 @@ export const DOCUMENTS_TABLE_SQL = (documentsTable: string) => `
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     bucket_id       TEXT NOT NULL,
     tenant_id       TEXT,
+    group_id        TEXT,
+    user_id         TEXT,
+    agent_id        TEXT,
+    session_id      TEXT,
     title           TEXT NOT NULL DEFAULT '',
     url             TEXT,
     content_hash    TEXT NOT NULL,
     chunk_count     INTEGER NOT NULL DEFAULT 0,
     status          TEXT NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending', 'processing', 'complete', 'failed')),
-    scope           TEXT CHECK (scope IS NULL OR scope IN ('tenant', 'group', 'user')),
-    group_id       UUID,
-    user_id         UUID,
+    visibility      TEXT CHECK (visibility IS NULL OR visibility IN ('tenant', 'group', 'user', 'agent', 'session')),
     document_type   TEXT,
     source_type     TEXT,
     indexed_at      TIMESTAMPTZ,
@@ -115,11 +146,35 @@ export const DOCUMENTS_TABLE_SQL = (documentsTable: string) => `
   CREATE INDEX IF NOT EXISTS ${documentsTable}_status_idx
     ON ${documentsTable} (status);
 
-  CREATE INDEX IF NOT EXISTS ${documentsTable}_scope_user_idx
-    ON ${documentsTable} (scope, user_id);
+  CREATE INDEX IF NOT EXISTS ${documentsTable}_visibility_user_idx
+    ON ${documentsTable} (visibility, user_id);
 
   CREATE INDEX IF NOT EXISTS ${documentsTable}_type_idx
     ON ${documentsTable} (document_type);
+
+  CREATE INDEX IF NOT EXISTS ${documentsTable}_tenant_user_idx
+    ON ${documentsTable} (tenant_id, user_id);
+
+  CREATE INDEX IF NOT EXISTS ${documentsTable}_tenant_group_idx
+    ON ${documentsTable} (tenant_id, group_id);
+
+  CREATE INDEX IF NOT EXISTS ${documentsTable}_tenant_agent_idx
+    ON ${documentsTable} (tenant_id, agent_id);
+
+  CREATE INDEX IF NOT EXISTS ${documentsTable}_tenant_session_idx
+    ON ${documentsTable} (tenant_id, session_id);
+
+  CREATE INDEX IF NOT EXISTS ${documentsTable}_user_idx
+    ON ${documentsTable} (user_id);
+
+  CREATE INDEX IF NOT EXISTS ${documentsTable}_group_idx
+    ON ${documentsTable} (group_id);
+
+  CREATE INDEX IF NOT EXISTS ${documentsTable}_agent_idx
+    ON ${documentsTable} (agent_id);
+
+  CREATE INDEX IF NOT EXISTS ${documentsTable}_session_idx
+    ON ${documentsTable} (session_id);
 `
 
 /**
@@ -133,6 +188,10 @@ export const BUCKETS_TABLE_SQL = (table: string) => `
     status      TEXT NOT NULL DEFAULT 'active'
                 CHECK (status IN ('active', 'inactive')),
     tenant_id   TEXT,
+    group_id    TEXT,
+    user_id     TEXT,
+    agent_id    TEXT,
+    session_id  TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
@@ -148,6 +207,10 @@ export const JOBS_TABLE_SQL = (table: string) => `
   CREATE TABLE IF NOT EXISTS ${table} (
     id          TEXT PRIMARY KEY,
     tenant_id   TEXT,
+    group_id    TEXT,
+    user_id     TEXT,
+    agent_id    TEXT,
+    session_id  TEXT,
     bucket_id   TEXT,
     type        TEXT NOT NULL,
     name        TEXT NOT NULL,

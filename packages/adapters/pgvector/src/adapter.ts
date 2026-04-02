@@ -38,6 +38,8 @@ export interface PgVectorAdapterConfig {
   /** Optional transaction wrapper for drivers that need explicit transaction blocks.
    *  Required for iterative HNSW scan (SET LOCAL needs a transaction). */
   transaction?: (fn: (sql: SqlExecutor) => Promise<unknown>) => Promise<unknown>
+  /** Postgres schema name. Defaults to 'public'. */
+  schema?: string | undefined
   tablePrefix?: string | undefined
   hashesTable?: string | undefined
   documentsTable?: string | undefined
@@ -67,16 +69,20 @@ export class PgVectorAdapter implements VectorStoreAdapter {
   /** model key → table name */
   private modelTables = new Map<string, string>()
 
+  private schema: string | undefined
+
   constructor(config: PgVectorAdapterConfig) {
     this.sql = config.sql
     this.transaction = config.transaction
-    this.tablePrefix = config.tablePrefix ?? 'd8um_chunks'
-    this.hashesTable = config.hashesTable ?? 'd8um_hashes'
-    this.documentsTable = config.documentsTable ?? 'd8um_documents'
-    this.bucketsTable = config.bucketsTable ?? 'd8um_buckets'
-    this.jobsTable = config.jobsTable ?? 'd8um_jobs'
-    this.jobRunsTable = config.jobRunsTable ?? 'd8um_job_runs'
-    this.relationsTable = config.relationsTable ?? 'd8um_document_job_relations'
+    this.schema = config.schema
+    const prefix = config.schema ? `${config.schema}.` : ''
+    this.tablePrefix = config.tablePrefix ?? `${prefix}d8um_chunks`
+    this.hashesTable = config.hashesTable ?? `${prefix}d8um_hashes`
+    this.documentsTable = config.documentsTable ?? `${prefix}d8um_documents`
+    this.bucketsTable = config.bucketsTable ?? `${prefix}d8um_buckets`
+    this.jobsTable = config.jobsTable ?? `${prefix}d8um_jobs`
+    this.jobRunsTable = config.jobRunsTable ?? `${prefix}d8um_job_runs`
+    this.relationsTable = config.relationsTable ?? `${prefix}d8um_document_job_relations`
     this.maxRunsPerJob = config.maxRunsPerJob ?? 100
     this.registryTable = `${this.tablePrefix}_registry`
     this.hashStore = new PgHashStore(this.sql, this.hashesTable)
@@ -92,6 +98,9 @@ export class PgVectorAdapter implements VectorStoreAdapter {
 
   async deploy(): Promise<void> {
     await this.sql(`CREATE EXTENSION IF NOT EXISTS vector`)
+    if (this.schema) {
+      await this.sql(`CREATE SCHEMA IF NOT EXISTS ${this.schema}`)
+    }
     await this.execStatements(REGISTRY_SQL(this.registryTable))
     await this.execStatements(HASH_TABLE_SQL(this.hashesTable))
     await this.execStatements(DOCUMENTS_TABLE_SQL(this.documentsTable))
@@ -200,6 +209,10 @@ export class PgVectorAdapter implements VectorStoreAdapter {
 
     const sourceIds: string[] = []
     const tenantIds: (string | null)[] = []
+    const groupIds: (string | null)[] = []
+    const userIds: (string | null)[] = []
+    const agentIds: (string | null)[] = []
+    const sessionIds: (string | null)[] = []
     const documentIds: string[] = []
     const idempotencyKeys: string[] = []
     const contents: string[] = []
@@ -213,6 +226,10 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     for (const chunk of chunks) {
       sourceIds.push(chunk.bucketId)
       tenantIds.push(chunk.tenantId ?? null)
+      groupIds.push(chunk.groupId ?? null)
+      userIds.push(chunk.userId ?? null)
+      agentIds.push(chunk.agentId ?? null)
+      sessionIds.push(chunk.sessionId ?? null)
       documentIds.push(chunk.documentId)
       idempotencyKeys.push(chunk.idempotencyKey)
       contents.push(chunk.content)
@@ -226,11 +243,13 @@ export class PgVectorAdapter implements VectorStoreAdapter {
 
     await this.sql(
       `INSERT INTO ${table}
-        (bucket_id, tenant_id, document_id, idempotency_key, content, embedding,
+        (bucket_id, tenant_id, group_id, user_id, agent_id, session_id,
+         document_id, idempotency_key, content, embedding,
          embedding_model, chunk_index, total_chunks, metadata, indexed_at)
        SELECT * FROM unnest(
-        $1::text[], $2::text[], $3::uuid[], $4::text[], $5::text[], $6::vector[],
-        $7::text[], $8::int[], $9::int[], $10::jsonb[], $11::timestamptz[]
+        $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
+        $7::uuid[], $8::text[], $9::text[], $10::vector[],
+        $11::text[], $12::int[], $13::int[], $14::jsonb[], $15::timestamptz[]
        )
        ON CONFLICT (idempotency_key, chunk_index, bucket_id) DO UPDATE SET
         content         = EXCLUDED.content,
@@ -240,7 +259,8 @@ export class PgVectorAdapter implements VectorStoreAdapter {
         metadata        = EXCLUDED.metadata,
         indexed_at      = EXCLUDED.indexed_at`,
       [
-        sourceIds, tenantIds, documentIds, idempotencyKeys, contents, embeddings,
+        sourceIds, tenantIds, groupIds, userIds, agentIds, sessionIds,
+        documentIds, idempotencyKeys, contents, embeddings,
         embeddingModels, chunkIndices, totalChunks, metadatas, indexedAts,
       ]
     )
@@ -507,8 +527,9 @@ export class PgVectorAdapter implements VectorStoreAdapter {
         SELECT fc.*,
                d.id AS doc_id, d.title AS doc_title, d.url AS doc_url,
                d.content_hash AS doc_content_hash, d.chunk_count AS doc_chunk_count,
-               d.status AS doc_status, d.scope AS doc_scope,
+               d.status AS doc_status, d.visibility AS doc_visibility,
                d.group_id AS doc_group_id, d.user_id AS doc_user_id,
+               d.agent_id AS doc_agent_id, d.session_id AS doc_session_id,
                d.document_type AS doc_document_type, d.source_type AS doc_source_type,
                d.indexed_at AS doc_indexed_at, d.created_at AS doc_created_at,
                d.updated_at AS doc_updated_at, d.metadata AS doc_metadata
@@ -556,13 +577,21 @@ export class PgVectorAdapter implements VectorStoreAdapter {
 
   async upsertBucket(bucket: Bucket): Promise<Bucket> {
     const rows = await this.sql(
-      `INSERT INTO ${this.bucketsTable} (id, name, description, status, tenant_id, updated_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
+      `INSERT INTO ${this.bucketsTable}
+        (id, name, description, status, tenant_id, group_id, user_id, agent_id, session_id, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name, description = EXCLUDED.description,
-         status = EXCLUDED.status, tenant_id = EXCLUDED.tenant_id, updated_at = NOW()
+         status = EXCLUDED.status, tenant_id = EXCLUDED.tenant_id,
+         group_id = EXCLUDED.group_id, user_id = EXCLUDED.user_id,
+         agent_id = EXCLUDED.agent_id, session_id = EXCLUDED.session_id,
+         updated_at = NOW()
        RETURNING *`,
-      [bucket.id, bucket.name, bucket.description ?? null, bucket.status, bucket.tenantId ?? null]
+      [
+        bucket.id, bucket.name, bucket.description ?? null, bucket.status,
+        bucket.tenantId ?? null, bucket.groupId ?? null, bucket.userId ?? null,
+        bucket.agentId ?? null, bucket.sessionId ?? null,
+      ]
     )
     return mapRowToBucket(rows[0]!)
   }
@@ -588,18 +617,23 @@ export class PgVectorAdapter implements VectorStoreAdapter {
   async upsertJob(job: Job): Promise<Job> {
     const rows = await this.sql(
       `INSERT INTO ${this.jobsTable}
-        (id, tenant_id, bucket_id, type, name, description, config, schedule,
+        (id, tenant_id, group_id, user_id, agent_id, session_id,
+         bucket_id, type, name, description, config, schedule,
          status, last_run_at, next_run_at, run_count, last_error, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
        ON CONFLICT (id) DO UPDATE SET
-         tenant_id = EXCLUDED.tenant_id, bucket_id = EXCLUDED.bucket_id,
+         tenant_id = EXCLUDED.tenant_id, group_id = EXCLUDED.group_id,
+         user_id = EXCLUDED.user_id, agent_id = EXCLUDED.agent_id,
+         session_id = EXCLUDED.session_id, bucket_id = EXCLUDED.bucket_id,
          type = EXCLUDED.type, name = EXCLUDED.name, description = EXCLUDED.description,
          config = EXCLUDED.config, schedule = EXCLUDED.schedule, status = EXCLUDED.status,
          last_run_at = EXCLUDED.last_run_at, next_run_at = EXCLUDED.next_run_at,
          run_count = EXCLUDED.run_count, last_error = EXCLUDED.last_error, updated_at = NOW()
        RETURNING *`,
       [
-        job.id, job.tenantId ?? null, job.bucketId ?? null, job.type, job.name,
+        job.id, job.tenantId ?? null, job.groupId ?? null, job.userId ?? null,
+        job.agentId ?? null, job.sessionId ?? null,
+        job.bucketId ?? null, job.type, job.name,
         job.description ?? null, JSON.stringify(job.config), job.schedule ?? null,
         job.status, job.lastRunAt?.toISOString() ?? null, job.nextRunAt?.toISOString() ?? null,
         job.runCount, job.lastError ?? null,
@@ -748,6 +782,22 @@ function buildWhere(filter?: ChunkFilter): { where: string; params: unknown[] } 
     params.push(filter.tenantId)
     conditions.push(`tenant_id = $${params.length}`)
   }
+  if (filter.groupId != null) {
+    params.push(filter.groupId)
+    conditions.push(`group_id = $${params.length}`)
+  }
+  if (filter.userId != null) {
+    params.push(filter.userId)
+    conditions.push(`user_id = $${params.length}`)
+  }
+  if (filter.agentId != null) {
+    params.push(filter.agentId)
+    conditions.push(`agent_id = $${params.length}`)
+  }
+  if (filter.sessionId != null) {
+    params.push(filter.sessionId)
+    conditions.push(`session_id = $${params.length}`)
+  }
   if (filter.documentId != null) {
     params.push(filter.documentId)
     conditions.push(`document_id = $${params.length}`)
@@ -771,6 +821,10 @@ function mapRowToScoredChunk(
     idempotencyKey: row.idempotency_key as string,
     bucketId: row.bucket_id as string,
     tenantId: (row.tenant_id as string) ?? undefined,
+    groupId: (row.group_id as string) ?? undefined,
+    userId: (row.user_id as string) ?? undefined,
+    agentId: (row.agent_id as string) ?? undefined,
+    sessionId: (row.session_id as string) ?? undefined,
     documentId: row.document_id as string,
     content: row.content as string,
     embedding: [], // Don't return the full vector - too large and unnecessary
@@ -794,6 +848,10 @@ function mapRowToBucket(row: Record<string, unknown>): Bucket {
     description: (row.description as string) ?? undefined,
     status: row.status as Bucket['status'],
     tenantId: (row.tenant_id as string) ?? undefined,
+    groupId: (row.group_id as string) ?? undefined,
+    userId: (row.user_id as string) ?? undefined,
+    agentId: (row.agent_id as string) ?? undefined,
+    sessionId: (row.session_id as string) ?? undefined,
   }
 }
 
@@ -801,6 +859,10 @@ function mapRowToJob(row: Record<string, unknown>): Job {
   return {
     id: row.id as string,
     tenantId: (row.tenant_id as string) ?? undefined,
+    groupId: (row.group_id as string) ?? undefined,
+    userId: (row.user_id as string) ?? undefined,
+    agentId: (row.agent_id as string) ?? undefined,
+    sessionId: (row.session_id as string) ?? undefined,
     bucketId: (row.bucket_id as string) ?? undefined,
     type: row.type as string,
     name: row.name as string,
@@ -840,14 +902,16 @@ function mapRowToDocument(row: Record<string, unknown>): d8umDocument {
     id: row.doc_id as string,
     bucketId: row.bucket_id as string,
     tenantId: (row.tenant_id as string) ?? undefined,
+    groupId: (row.doc_group_id as string) ?? undefined,
+    userId: (row.doc_user_id as string) ?? undefined,
+    agentId: (row.doc_agent_id as string) ?? undefined,
+    sessionId: (row.doc_session_id as string) ?? undefined,
     title: row.doc_title as string,
     url: (row.doc_url as string) ?? undefined,
     contentHash: row.doc_content_hash as string,
     chunkCount: row.doc_chunk_count as number,
     status: row.doc_status as d8umDocument['status'],
-    scope: (row.doc_scope as d8umDocument['scope']) ?? undefined,
-    groupId: (row.doc_group_id as string) ?? undefined,
-    userId: (row.doc_user_id as string) ?? undefined,
+    visibility: (row.doc_visibility as d8umDocument['visibility']) ?? undefined,
     documentType: (row.doc_document_type as string) ?? undefined,
     sourceType: (row.doc_source_type as string) ?? undefined,
     indexedAt: new Date(row.doc_indexed_at as string),

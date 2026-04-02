@@ -32,7 +32,7 @@ export type {
   IndexResult,
   d8umDocument,
   DocumentStatus,
-  DocumentScope,
+  Visibility,
   DocumentFilter,
   UpsertDocumentInput,
   JobCategory,

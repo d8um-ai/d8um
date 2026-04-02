@@ -15,11 +15,13 @@ export interface NormalizedResult {
   tenantId?: string | undefined
   // Document-level fields (populated when searchWithDocuments is used)
   documentStatus?: string | undefined
-  documentScope?: string | undefined
+  documentVisibility?: string | undefined
   documentType?: string | undefined
   sourceType?: string | undefined
   userId?: string | undefined
   groupId?: string | undefined
+  agentId?: string | undefined
+  sessionId?: string | undefined
 }
 
 export function dedupKey(r: NormalizedResult): string {

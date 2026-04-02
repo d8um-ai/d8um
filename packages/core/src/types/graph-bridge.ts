@@ -6,6 +6,9 @@ import type { d8umIdentity } from './identity.js'
  * The graph package provides a factory that returns an object matching this shape.
  */
 export interface GraphBridge {
+  /** Deploy memory/graph tables. Called by d8um.deploy() when graph is configured. */
+  deploy?(): Promise<void>
+
   /** Store a memory. LLM extracts triples → entity graph + memory record. */
   remember(content: string, identity: d8umIdentity, category?: string): Promise<unknown>
 

@@ -24,11 +24,14 @@ export interface d8umResult {
     url?: string | undefined
     updatedAt: Date
     status?: string | undefined
-    scope?: string | undefined
+    visibility?: string | undefined
     documentType?: string | undefined
     sourceType?: string | undefined
-    userId?: string | undefined
+    tenantId?: string | undefined
     groupId?: string | undefined
+    userId?: string | undefined
+    agentId?: string | undefined
+    sessionId?: string | undefined
   }
 
   chunk: {

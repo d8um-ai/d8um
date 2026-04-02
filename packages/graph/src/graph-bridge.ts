@@ -376,9 +376,16 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
     return chunks.slice(0, limit)
   }
 
+  // ── Deploy (create tables) ──
+
+  async function deploy(): Promise<void> {
+    await memoryStore.initialize()
+  }
+
   // ── Compose bridge ──
 
   return {
+    deploy,
     remember,
     forget,
     correct,

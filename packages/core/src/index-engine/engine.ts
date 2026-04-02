@@ -41,6 +41,11 @@ export class IndexEngine {
     const {
       mode = 'upsert',
       tenantId,
+      groupId,
+      userId,
+      agentId,
+      sessionId,
+      visibility,
       removeDeleted = false,
       dryRun = false,
       onProgress,
@@ -125,14 +130,18 @@ export class IndexEngine {
         const docRecord = await this.adapter.upsertDocumentRecord({
           bucketId,
           tenantId,
+          groupId,
+          userId,
+          agentId,
+          sessionId,
           title: doc.title,
           url: doc.url,
           contentHash,
           chunkCount: 0,
           status: 'processing',
+          visibility: visibility ?? indexConfig.visibility,
           documentType: indexConfig.documentType,
           sourceType: indexConfig.sourceType,
-          scope: indexConfig.scope,
           metadata: doc.metadata,
         })
         documentId = docRecord.id
@@ -159,6 +168,10 @@ export class IndexEngine {
         idempotencyKey: ikey,
         bucketId,
         tenantId,
+        groupId,
+        userId,
+        agentId,
+        sessionId,
         documentId,
         content: chunk.content,
         embedding: embeddings[i]!,
@@ -293,7 +306,7 @@ export class IndexEngine {
     opts: IndexOpts = {},
     indexConfig?: IndexConfig,
   ): Promise<IndexResult> {
-    const { tenantId, dryRun = false } = opts
+    const { tenantId, groupId, userId, agentId, sessionId, visibility, dryRun = false } = opts
 
     const modelId = this.embedding.model
     const startMs = Date.now()
@@ -311,14 +324,18 @@ export class IndexEngine {
       const docRecord = await this.adapter.upsertDocumentRecord({
         bucketId,
         tenantId,
+        groupId,
+        userId,
+        agentId,
+        sessionId,
         title: doc.title,
         url: doc.url,
         contentHash,
         chunkCount: chunks.length,
         status: 'processing',
+        visibility: visibility ?? indexConfig?.visibility,
         documentType: indexConfig?.documentType,
         sourceType: indexConfig?.sourceType,
-        scope: indexConfig?.scope,
         metadata: doc.metadata,
       })
       documentId = docRecord.id
@@ -336,6 +353,10 @@ export class IndexEngine {
         idempotencyKey: ikey,
         bucketId,
         tenantId,
+        groupId,
+        userId,
+        agentId,
+        sessionId,
         documentId,
         content: chunk.content,
         embedding: embeddings[i]!,
@@ -406,7 +427,7 @@ export class IndexEngine {
     opts: IndexOpts = {},
     indexConfig?: IndexConfig,
   ): Promise<IndexResult> {
-    const { tenantId, dryRun = false } = opts
+    const { tenantId, groupId, userId, agentId, sessionId, visibility, dryRun = false } = opts
     const modelId = this.embedding.model
     const startMs = Date.now()
 
@@ -466,14 +487,18 @@ export class IndexEngine {
         const docRecord = await this.adapter.upsertDocumentRecord({
           bucketId,
           tenantId,
+          groupId,
+          userId,
+          agentId,
+          sessionId,
           title: doc.title,
           url: doc.url,
           contentHash,
           chunkCount: chunks.length,
           status: 'processing',
+          visibility: visibility ?? indexConfig?.visibility,
           documentType: indexConfig?.documentType,
           sourceType: indexConfig?.sourceType,
-          scope: indexConfig?.scope,
           metadata: doc.metadata,
         })
         documentId = docRecord.id
@@ -505,6 +530,10 @@ export class IndexEngine {
         idempotencyKey: ikey,
         bucketId,
         tenantId,
+        groupId,
+        userId,
+        agentId,
+        sessionId,
         documentId,
         content: chunk.content,
         embedding: embeddings[i]!,

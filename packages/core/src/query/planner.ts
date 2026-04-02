@@ -91,7 +91,8 @@ export class QueryPlanner {
       const runnerStart = Date.now()
       const runner = new IndexedRunner(this.adapter)
       const vectorOnly = resolvedMode === 'fast'
-      const results = await runner.run(text, modelGroups, count, tenantId, opts.documentFilter, vectorOnly)
+      const identity = { tenantId: opts.tenantId, groupId: opts.groupId, userId: opts.userId, agentId: opts.agentId, sessionId: opts.sessionId }
+      const results = await runner.run(text, modelGroups, count, identity, opts.documentFilter, vectorOnly)
       const runnerDuration = Date.now() - runnerStart
 
       for (const bucketId of activeBucketIds) {
@@ -180,11 +181,14 @@ export class QueryPlanner {
         url: r.url,
         updatedAt: r.updatedAt ?? new Date(),
         status: r.documentStatus,
-        scope: r.documentScope,
+        visibility: r.documentVisibility,
         documentType: r.documentType,
         sourceType: r.sourceType,
+        tenantId: r.tenantId,
         userId: r.userId,
         groupId: r.groupId,
+        agentId: r.agentId,
+        sessionId: r.sessionId,
       },
       chunk: r.chunk ?? { index: 0, total: 1, isNeighbor: false },
       metadata: r.metadata,

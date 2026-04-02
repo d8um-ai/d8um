@@ -14,12 +14,20 @@ export interface Bucket {
   description?: string | undefined
   status: 'active' | 'inactive'
   tenantId?: string | undefined
+  groupId?: string | undefined
+  userId?: string | undefined
+  agentId?: string | undefined
+  sessionId?: string | undefined
 }
 
 export interface CreateBucketInput {
   name: string
   description?: string | undefined
   tenantId?: string | undefined
+  groupId?: string | undefined
+  userId?: string | undefined
+  agentId?: string | undefined
+  sessionId?: string | undefined
 }
 
 export type EmbeddingInput = EmbeddingProvider | AISDKEmbeddingInput
@@ -39,6 +47,6 @@ export interface IndexConfig extends ChunkOpts {
   documentType?: string | undefined
   /** App-specific source type applied to all documents from this bucket (e.g. 'upload', 'web_scrape'). */
   sourceType?: string | undefined
-  /** Access scope for all documents from this bucket. */
-  scope?: import('./d8um-document.js').DocumentScope | undefined
+  /** Access visibility for all documents from this bucket. */
+  visibility?: import('./d8um-document.js').Visibility | undefined
 }

@@ -1,5 +1,7 @@
 export type DocumentStatus = 'pending' | 'processing' | 'complete' | 'failed'
-export type DocumentScope = 'tenant' | 'group' | 'user'
+
+/** Who can access this record. Defines the narrowest identity level that grants access. */
+export type Visibility = 'tenant' | 'group' | 'user' | 'agent' | 'session'
 
 export interface d8umDocument {
   /** UUID primary key. */
@@ -8,18 +10,22 @@ export interface d8umDocument {
   bucketId: string
   /** Multi-tenant isolation. Maps to organization_id in many apps. */
   tenantId?: string | undefined
+  /** Team, channel, or project. */
+  groupId?: string | undefined
+  /** Owner/creator of the document. */
+  userId?: string | undefined
+  /** Specific agent instance. */
+  agentId?: string | undefined
+  /** Conversation session. */
+  sessionId?: string | undefined
   title: string
   url?: string | undefined
   /** SHA256 of raw content at index time. Used for change detection. */
   contentHash: string
   chunkCount: number
   status: DocumentStatus
-  /** Access scope. Optional - not all apps need scoped access. */
-  scope?: DocumentScope | undefined
-  /** UUID. For group-scoped documents. */
-  groupId?: string | undefined
-  /** UUID. Owner/creator of the document. */
-  userId?: string | undefined
+  /** Access visibility. Defines who can see this document. Default: 'tenant'. */
+  visibility?: Visibility | undefined
   /** App-specific document type (e.g. 'pdf', 'csv', 'webpage'). */
   documentType?: string | undefined
   /** App-specific source type (e.g. 'upload', 'web_scrape', 'api'). */
@@ -33,10 +39,12 @@ export interface d8umDocument {
 export interface DocumentFilter {
   bucketId?: string | undefined
   tenantId?: string | undefined
-  status?: DocumentStatus | DocumentStatus[] | undefined
-  scope?: DocumentScope | DocumentScope[] | undefined
-  userId?: string | undefined
   groupId?: string | undefined
+  userId?: string | undefined
+  agentId?: string | undefined
+  sessionId?: string | undefined
+  status?: DocumentStatus | DocumentStatus[] | undefined
+  visibility?: Visibility | Visibility[] | undefined
   documentType?: string | string[] | undefined
   sourceType?: string | string[] | undefined
   documentIds?: string[] | undefined
@@ -45,14 +53,16 @@ export interface DocumentFilter {
 export interface UpsertDocumentInput {
   bucketId: string
   tenantId?: string | undefined
+  groupId?: string | undefined
+  userId?: string | undefined
+  agentId?: string | undefined
+  sessionId?: string | undefined
   title: string
   url?: string | undefined
   contentHash: string
   chunkCount: number
   status: DocumentStatus
-  scope?: DocumentScope | undefined
-  groupId?: string | undefined
-  userId?: string | undefined
+  visibility?: Visibility | undefined
   documentType?: string | undefined
   sourceType?: string | undefined
   metadata?: Record<string, unknown> | undefined

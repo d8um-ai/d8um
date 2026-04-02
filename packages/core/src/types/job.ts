@@ -83,6 +83,10 @@ export interface ConfigField {
 export interface Job {
   id: string
   tenantId?: string | undefined
+  groupId?: string | undefined
+  userId?: string | undefined
+  agentId?: string | undefined
+  sessionId?: string | undefined
   /** Nullable FK to Bucket. Ingestion jobs target a bucket; other types may not. */
   bucketId?: string | undefined
   /** References a JobTypeDefinition.type */
@@ -108,6 +112,10 @@ export interface CreateJobInput {
   type: string
   bucketId?: string | undefined
   tenantId?: string | undefined
+  groupId?: string | undefined
+  userId?: string | undefined
+  agentId?: string | undefined
+  sessionId?: string | undefined
   config?: Record<string, unknown> | undefined
   schedule?: string | undefined
   description?: string | undefined

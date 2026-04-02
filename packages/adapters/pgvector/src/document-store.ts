@@ -6,14 +6,16 @@ function mapDocRow(row: Record<string, unknown>): d8umDocument {
     id: row.id as string,
     bucketId: row.bucket_id as string,
     tenantId: (row.tenant_id as string) ?? undefined,
+    groupId: (row.group_id as string) ?? undefined,
+    userId: (row.user_id as string) ?? undefined,
+    agentId: (row.agent_id as string) ?? undefined,
+    sessionId: (row.session_id as string) ?? undefined,
     title: row.title as string,
     url: (row.url as string) ?? undefined,
     contentHash: row.content_hash as string,
     chunkCount: row.chunk_count as number,
     status: row.status as d8umDocument['status'],
-    scope: (row.scope as d8umDocument['scope']) ?? undefined,
-    groupId: (row.group_id as string) ?? undefined,
-    userId: (row.user_id as string) ?? undefined,
+    visibility: (row.visibility as d8umDocument['visibility']) ?? undefined,
     documentType: (row.document_type as string) ?? undefined,
     sourceType: (row.source_type as string) ?? undefined,
     indexedAt: new Date(row.indexed_at as string),
@@ -32,18 +34,21 @@ export class PgDocumentStore {
   async upsert(input: UpsertDocumentInput): Promise<d8umDocument> {
     const rows = await this.sql(
       `INSERT INTO ${this.tableName}
-        (bucket_id, tenant_id, title, url, content_hash, chunk_count, status,
-         scope, group_id, user_id, document_type, source_type, metadata, indexed_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
+        (bucket_id, tenant_id, group_id, user_id, agent_id, session_id,
+         title, url, content_hash, chunk_count, status,
+         visibility, document_type, source_type, metadata, indexed_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
        ON CONFLICT (bucket_id, COALESCE(tenant_id, ''), content_hash)
          DO UPDATE SET
            title = EXCLUDED.title,
            url = EXCLUDED.url,
            chunk_count = EXCLUDED.chunk_count,
            status = EXCLUDED.status,
-           scope = EXCLUDED.scope,
+           visibility = EXCLUDED.visibility,
            group_id = EXCLUDED.group_id,
            user_id = EXCLUDED.user_id,
+           agent_id = EXCLUDED.agent_id,
+           session_id = EXCLUDED.session_id,
            document_type = EXCLUDED.document_type,
            source_type = EXCLUDED.source_type,
            metadata = EXCLUDED.metadata,
@@ -53,14 +58,16 @@ export class PgDocumentStore {
       [
         input.bucketId,
         input.tenantId ?? null,
+        input.groupId ?? null,
+        input.userId ?? null,
+        input.agentId ?? null,
+        input.sessionId ?? null,
         input.title,
         input.url ?? null,
         input.contentHash,
         input.chunkCount,
         input.status,
-        input.scope ?? null,
-        input.groupId ?? null,
-        input.userId ?? null,
+        input.visibility ?? null,
         input.documentType ?? null,
         input.sourceType ?? null,
         JSON.stringify(input.metadata ?? {}),
@@ -129,6 +136,22 @@ function buildDocWhere(filter: DocumentFilter): { where: string; params: unknown
     params.push(filter.tenantId)
     conditions.push(`tenant_id = $${params.length}`)
   }
+  if (filter.groupId != null) {
+    params.push(filter.groupId)
+    conditions.push(`group_id = $${params.length}`)
+  }
+  if (filter.userId != null) {
+    params.push(filter.userId)
+    conditions.push(`user_id = $${params.length}`)
+  }
+  if (filter.agentId != null) {
+    params.push(filter.agentId)
+    conditions.push(`agent_id = $${params.length}`)
+  }
+  if (filter.sessionId != null) {
+    params.push(filter.sessionId)
+    conditions.push(`session_id = $${params.length}`)
+  }
   if (filter.status != null) {
     if (Array.isArray(filter.status)) {
       params.push(filter.status)
@@ -138,22 +161,14 @@ function buildDocWhere(filter: DocumentFilter): { where: string; params: unknown
       conditions.push(`status = $${params.length}`)
     }
   }
-  if (filter.scope != null) {
-    if (Array.isArray(filter.scope)) {
-      params.push(filter.scope)
-      conditions.push(`scope = ANY($${params.length}::text[])`)
+  if (filter.visibility != null) {
+    if (Array.isArray(filter.visibility)) {
+      params.push(filter.visibility)
+      conditions.push(`visibility = ANY($${params.length}::text[])`)
     } else {
-      params.push(filter.scope)
-      conditions.push(`scope = $${params.length}`)
+      params.push(filter.visibility)
+      conditions.push(`visibility = $${params.length}`)
     }
-  }
-  if (filter.userId != null) {
-    params.push(filter.userId)
-    conditions.push(`user_id = $${params.length}`)
-  }
-  if (filter.groupId != null) {
-    params.push(filter.groupId)
-    conditions.push(`group_id = $${params.length}`)
   }
   if (filter.documentType != null) {
     if (Array.isArray(filter.documentType)) {

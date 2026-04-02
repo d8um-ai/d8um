@@ -551,6 +551,10 @@ class d8umImpl implements d8umInstance {
   async deploy(config: d8umConfig): Promise<this> {
     this.applyConfig(config)
     await this.adapter.deploy()
+    // Deploy memory/graph tables when graph bridge is configured
+    if (config.graph?.deploy) {
+      await config.graph.deploy()
+    }
     this.configured = true
     return this
   }

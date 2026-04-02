@@ -1,4 +1,4 @@
-import type { d8umIdentity } from '@d8um/core'
+import type { d8umIdentity, Visibility } from '@d8um/core'
 
 // ── Memory Categories ──
 
@@ -53,6 +53,8 @@ export interface MemoryRecord extends TemporalRecord {
   metadata: Record<string, unknown>
   /** Who this memory belongs to */
   scope: d8umIdentity
+  /** Access visibility. Default: 'user' (most restrictive). */
+  visibility?: Visibility | undefined
 }
 
 // ── Episodic Memory ──
@@ -88,6 +90,8 @@ export interface SemanticEntity {
   /** Embedding of the entity name for similarity matching */
   embedding?: number[] | undefined
   scope: d8umIdentity
+  /** Access visibility. Default: 'tenant' (entities are typically shared within org). */
+  visibility?: Visibility | undefined
   temporal: TemporalRecord
 }
 
@@ -105,6 +109,8 @@ export interface SemanticEdge {
   /** Arbitrary typed properties */
   properties: Record<string, unknown>
   scope: d8umIdentity
+  /** Access visibility. Default: 'tenant' (edges are typically shared within org). */
+  visibility?: Visibility | undefined
   temporal: TemporalRecord
   /** Memory IDs that provide evidence for this edge */
   evidence: string[]

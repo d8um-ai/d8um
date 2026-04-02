@@ -67,7 +67,7 @@ export async function searchWithContext(
   }
 
   const runner = new IndexedRunner(adapter)
-  const indexedResults = await runner.run(text, modelGroups, count, tenantId, opts.documentFilter)
+  const indexedResults = await runner.run(text, modelGroups, count, tenantId ? { tenantId } : undefined, opts.documentFilter)
 
   // Convert NormalizedResult[] to d8umResult[]
   const rawResults = indexedResults.map(r => ({
@@ -85,11 +85,14 @@ export async function searchWithContext(
       url: r.url,
       updatedAt: r.updatedAt ?? new Date(),
       status: r.documentStatus,
-      scope: r.documentScope,
+      visibility: r.documentVisibility,
       documentType: r.documentType,
       sourceType: r.sourceType,
+      tenantId: r.tenantId,
       userId: r.userId,
       groupId: r.groupId,
+      agentId: r.agentId,
+      sessionId: r.sessionId,
     },
     chunk: r.chunk ?? { index: 0, total: 1, isNeighbor: false },
     metadata: r.metadata,

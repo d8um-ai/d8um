@@ -1,4 +1,4 @@
-import type { d8umIdentity } from '@d8um/core'
+import type { d8umIdentity, Visibility } from '@d8um/core'
 import type {
   MemoryRecord,
   MemoryCategory,
@@ -10,7 +10,15 @@ import type {
 // ── Memory Filtering ──
 
 export interface MemoryFilter {
+  /** Legacy JSONB scope filter (deprecated — use explicit identity fields) */
   scope?: d8umIdentity | undefined
+  /** Explicit identity fields for filtering */
+  tenantId?: string | undefined
+  groupId?: string | undefined
+  userId?: string | undefined
+  agentId?: string | undefined
+  sessionId?: string | undefined
+  visibility?: Visibility | Visibility[] | undefined
   category?: MemoryCategory | MemoryCategory[] | undefined
   /** Filter by lifecycle status */
   status?: MemoryStatus | MemoryStatus[] | undefined

@@ -1,6 +1,11 @@
 export interface IndexOpts {
   mode?: 'upsert' | 'replace' | undefined
   tenantId?: string | undefined
+  groupId?: string | undefined
+  userId?: string | undefined
+  agentId?: string | undefined
+  sessionId?: string | undefined
+  visibility?: import('./d8um-document.js').Visibility | undefined
   removeDeleted?: boolean | undefined
   dryRun?: boolean | undefined
   onProgress?: ((event: IndexProgressEvent) => void) | undefined

@@ -47,7 +47,7 @@ export { IndexError } from './index-types.js'
 export type {
   d8umDocument,
   DocumentStatus,
-  DocumentScope,
+  Visibility,
   DocumentFilter,
   UpsertDocumentInput,
 } from './d8um-document.js'

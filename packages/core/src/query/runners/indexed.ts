@@ -1,6 +1,7 @@
 import type { VectorStoreAdapter } from '../../types/adapter.js'
 import type { EmbeddingProvider } from '../../embedding/provider.js'
 import type { DocumentFilter } from '../../types/d8um-document.js'
+import type { d8umIdentity } from '../../types/identity.js'
 import type { NormalizedResult } from '../merger.js'
 
 export class IndexedRunner {
@@ -16,7 +17,7 @@ export class IndexedRunner {
     text: string,
     sourcesByModel: Map<string, { embedding: EmbeddingProvider; bucketIds: string[] }>,
     count: number,
-    tenantId?: string,
+    identity?: d8umIdentity,
     documentFilter?: DocumentFilter,
     vectorOnly?: boolean
   ): Promise<NormalizedResult[]> {
@@ -27,7 +28,11 @@ export class IndexedRunner {
       const queryEmbedding = await group.embedding.embed(text)
 
       const filter = {
-        tenantId,
+        tenantId: identity?.tenantId,
+        groupId: identity?.groupId,
+        userId: identity?.userId,
+        agentId: identity?.agentId,
+        sessionId: identity?.sessionId,
         bucketId: group.bucketIds.length === 1 ? group.bucketIds[0] : undefined,
       }
 
@@ -66,11 +71,13 @@ export class IndexedRunner {
             tenantId: chunk.tenantId,
             // Carry document-level fields if available
             documentStatus: chunk.document?.status,
-            documentScope: chunk.document?.scope,
+            documentVisibility: chunk.document?.visibility,
             documentType: chunk.document?.documentType,
             sourceType: chunk.document?.sourceType,
             userId: chunk.document?.userId,
             groupId: chunk.document?.groupId,
+            agentId: chunk.document?.agentId,
+            sessionId: chunk.document?.sessionId,
           })
         }
       } else {

@@ -12,6 +12,35 @@ d8um is a TypeScript SDK for retrieval + memory for AI agents, built on Postgres
 - **Extraction LLM**: Configurable per `EXTRACTION_MODEL` in `benchmarks/lib/config.ts` (default: same as LLM_MODEL). Supports reasoning models like `xai/grok-4.20-reasoning` for higher-quality triple extraction.
 - **Blob storage**: Vercel Blob (for benchmark datasets)
 
+## Identity Model & Visibility
+
+All user-facing tables use a standardized 5-field identity model with explicit B-tree indexed columns:
+
+| Field | Column | Description |
+|-------|--------|-------------|
+| `tenantId` | `tenant_id TEXT` | Organization-level isolation |
+| `groupId` | `group_id TEXT` | Team, channel, or project |
+| `userId` | `user_id TEXT` | Individual user |
+| `agentId` | `agent_id TEXT` | Specific agent instance |
+| `sessionId` | `session_id TEXT` | Conversation session |
+
+**Visibility** controls access level: `'tenant' | 'group' | 'user' | 'agent' | 'session'`. Stored as a `TEXT` column with CHECK constraint. Replaces the old `DocumentScope` type (which only had `'tenant' | 'group' | 'user'`).
+
+**Indexes per identity-bearing table (9 B-tree indexes):**
+- 4 composite: `(tenant_id, user_id)`, `(tenant_id, group_id)`, `(tenant_id, agent_id)`, `(tenant_id, session_id)`
+- 4 individual: `(user_id)`, `(group_id)`, `(agent_id)`, `(session_id)`
+- 1 visibility: `(visibility)`
+
+**Tables with full identity columns:**
+- Core: `d8um_chunks`, `d8um_documents`, `d8um_hashes`, `d8um_buckets`, `d8um_jobs`
+- Graph/Memory: `d8um_memories`, `d8um_semantic_entities`, `d8um_semantic_edges`
+
+**Postgres schema isolation:** Both `PgVectorAdapter` and `PgMemoryStoreAdapter` accept an optional `schema` config. When set, `CREATE SCHEMA IF NOT EXISTS` runs at deploy/initialize, and all table names are schema-qualified (e.g., `cust_abc.d8um_memories`). Index names use underscores instead of dots (e.g., `cust_abc_d8um_memories_tenant_user_idx`) because Postgres does not allow schema-qualified names in `CREATE INDEX` index name positions.
+
+**`d8um.deploy()` wiring:** When `config.graph` is configured, `deploy()` also calls `config.graph.deploy()` to create memory/entity/edge tables.
+
+**Memory tables keep a `scope JSONB` column alongside explicit identity columns** for backward compatibility during the transition period. New code reads/writes explicit columns; the JSONB scope is maintained in parallel.
+
 ## Sandbox Access
 
 Claude Code's sandbox has outbound access to **all required services**:
@@ -313,7 +342,10 @@ Note: neural graph tables use `{prefix}memories` (no extra underscore), e.g. `be
 | graphrag-bench-medical | core | `bench_grbmed_core_` | `graphrag-bench-medical` |
 | graphrag-bench-medical | neural | `bench_grbmed_neural_` | `graphrag-bench-medical-neural` |
 
-#### Current DB State (as of 2026-04-01)
+#### Current DB State (as of 2026-04-02)
+
+**NOTE:** All existing tables in the live database pre-date the identity model standardization (2026-04-02). They are missing the `group_id`, `user_id`, `agent_id`, `session_id` columns on chunks/hashes/buckets/jobs, and the `visibility` column on documents (still has `scope`). Memory tables are missing explicit identity columns. Any reseed will need fresh table creation (DROP + deploy) or ALTER TABLE migrations. The `schema` isolation feature only applies to new deployments.
+
 
 | Dataset | Variant | Chunks | Docs | Hashes | Graph (entities/edges) | Status |
 |---------|---------|--------|------|--------|------------------------|--------|
@@ -892,3 +924,72 @@ Earlier 100-query sample showed 56.6% — the full eval converged to 58.4%, demo
 - Using substring match for GraphRAG-Bench (paper uses LLM-as-judge) — produces ACC=0.07 vs real ACC=0.57
 - Using LLM-as-judge for MultiHop-RAG (paper uses word-intersection) — different scale entirely
 - Running 2,000 retrieval-only queries on GraphRAG-Bench (no qrels) — produces NaN metrics, wastes 45 min
+
+### 2026-04-02 — Identity model standardization + Postgres schema isolation
+
+**Goal:** Standardize the 5-field identity model (`tenantId`, `groupId`, `userId`, `agentId`, `sessionId`) across every table, type, and query path in the SDK. Add `Visibility` type. Add Postgres schema isolation support.
+
+#### Changes made (23 files modified, 1 created)
+
+**Type layer (`packages/core/src/types/`):**
+- Renamed `DocumentScope` → `Visibility`, expanded from `'tenant' | 'group' | 'user'` to include `'agent' | 'session'`
+- Added `groupId`, `userId`, `agentId`, `sessionId` to: `IndexOpts`, `ChunkFilter`, `EmbeddedChunk`, `Bucket`, `CreateBucketInput`, `Job`, `CreateJobInput`
+- Added `agentId`, `sessionId`, `visibility` to: `d8umDocument`, `DocumentFilter`, `UpsertDocumentInput`
+- Added `deploy?(): Promise<void>` to `GraphBridge` interface
+- Updated `d8umResult.bucket` to carry all 5 identity fields + `visibility` (was `scope`)
+
+**DDL / Schema (`packages/adapters/pgvector/src/migrations.ts`):**
+- Added `group_id`, `user_id`, `agent_id`, `session_id` columns to chunks, documents, hashes, buckets, jobs tables
+- Replaced `scope TEXT` with `visibility TEXT` (with expanded CHECK constraint) on documents
+- Changed documents `group_id`/`user_id` from UUID to TEXT (consistent with all other identity columns)
+- Added 8 B-tree indexes per table (4 composite tenant+sub, 4 individual) + visibility index on documents
+- Removed standalone `tenant_idx` on chunks (redundant — covered by composite `tenant_user_idx`)
+
+**Memory DDL (`packages/graph/src/adapters/pgvector.ts`):**
+- Added 5 explicit identity columns + `visibility` column (with CHECK constraint) to memories, entities, edges tables
+- Added 9 B-tree indexes per table (same pattern as core tables)
+- Renamed episodic `session_id` → `episodic_session_id` to avoid collision with identity `session_id`
+- Added `schema` config + `CREATE SCHEMA IF NOT EXISTS` in `initialize()`
+- Index naming: `idxPrefix(t)` replaces dots with underscores for schema-qualified table names (Postgres cannot schema-qualify index names in `CREATE INDEX`)
+- HNSW index creation (`ensureHnswIndex`) uses same `idxPrefix` pattern
+- All CRUD methods (`upsert`, `upsertEntity`, `upsertEdge`, `list`, `findEntities`, `searchEntities`) write/read explicit identity columns
+- New helpers: `buildIdentityWhere()` (builds WHERE from d8umIdentity), `rowToIdentity()` (extracts identity from DB row)
+
+**Core adapter (`packages/adapters/pgvector/src/adapter.ts`):**
+- Added `schema` config + `CREATE SCHEMA IF NOT EXISTS` in `deploy()`
+- `upsertChunks`: writes all 5 identity columns (was only `tenant_id`), now 15 params via unnest
+- `upsertBucket`: 9 params with all identity fields
+- `upsertJob`: 17 params with all identity fields
+- `buildWhere()`: filters on all 5 identity fields
+- All `mapRow*` functions: read all identity columns
+
+**Document store (`packages/adapters/pgvector/src/document-store.ts`):**
+- `upsert`: 15 params with all identity fields, `scope` → `visibility`
+- `buildDocWhere()`: filters on `agentId`, `sessionId`, `visibility` (was `scope`)
+
+**Query pipeline:**
+- `IndexedRunner.run()`: accepts full `d8umIdentity` (was `tenantId?: string`), passes all 5 fields to chunk filter
+- `QueryPlanner`: passes full identity to IndexedRunner (was only `tenantId`)
+- `merger.ts`: `NormalizedResult` carries `documentVisibility`, `agentId`, `sessionId` (was `documentScope`)
+- `context-search.ts`: passes identity object, maps `visibility` (was `scope`)
+- `planner.ts`: maps `visibility`, `agentId`, `sessionId` to result bucket
+
+**Ingest pipeline (`packages/core/src/index-engine/engine.ts`):**
+- All 3 ingest methods (`indexWithConnector`, `ingestWithChunks`, `ingestBatch`): destructure full identity from `IndexOpts`, propagate to documents and embedded chunks
+- `scope: indexConfig.scope` → `visibility: visibility ?? indexConfig.visibility`
+
+**Deploy wiring:**
+- `d8um.deploy()`: calls `config.graph.deploy()` when graph is configured
+- `graph-bridge.ts`: implements `deploy()` → `memoryStore.initialize()`
+
+**Integration test (`benchmarks/scripts/test-memory.ts`):**
+- 34 assertions across 11 test sections: deploy, store, user isolation, tenant isolation, cross-tenant isolation, group scoping, visibility filtering, forget/invalidate, entity+edge creation, entity scope filtering, cleanup
+- Uses isolated Postgres schema (`test_mem_{timestamp}`) with `DROP SCHEMA CASCADE` cleanup
+- 4 test identities across 2 tenants
+
+#### Migration notes
+
+- No backward-compat shims — `DocumentScope` export replaced with `Visibility`
+- Memory tables keep `scope JSONB` alongside explicit columns (parallel writes)
+- Existing deployed tables will need `ALTER TABLE ADD COLUMN` for new identity columns — not handled by this commit (deploy creates fresh tables)
+- Documents table `group_id`/`user_id` changed from UUID to TEXT — existing data will need migration
