@@ -3,14 +3,16 @@
 </p>
 
 <div align="center">
-  <h1>d8um</h1>
   <b>A context and memory SDK for agents.</b>
 </div>
 
+---
+
 <p align="center">
-  <img src="https://img.shields.io/badge/TypeScript-first-blue?logo=typescript&logoColor=white" alt="TypeScript first" />
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" />
-  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Alpha" />
+  <img src="https://img.shields.io/badge/MIT%20License-3DA639?logo=opensourceinitiative&logoColor=white" alt="MIT License" />
+  <img src="https://img.shields.io/badge/TypeScript%20Native-3178C6?logo=typescript&logoColor=white" alt="TypeScript native" />
+  <img src="https://img.shields.io/badge/Vercel%20Native-000000?logo=vercel&logoColor=white" alt="Vercel native" />
+  <img src="https://img.shields.io/badge/PostgreSQL%20Native-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL native" />
 </p>
 
 [Quick Start](#quick-start)  •  [Cognitive Memory](#cognitive-memory)  •  [How It Works](#how-it-works)  •  [Benchmarks](#benchmarks)  •  [Packages](#packages)  •  [Guides](#guides)  •  [Contributing](#contributing)
@@ -19,17 +21,17 @@
 
 ## Why d8um?
 
-Building a memory-capable agent in TypeScript today means cobbling together a vector DB, a graph DB, an embedding API, a caching layer, consolidation logic, and a conversation manager. The leading frameworks (Graphiti, Mem0, MemOS) are Python-first. **TypeScript has nothing equivalent.**
+Building a memory-capable agent in TypeScript today means cobbling together a vector DB, a graph DB, an embedding API, a caching layer, consolidation logic, and a conversation manager. The leading frameworks ([Graphiti](https://github.com/getzep/graphiti), [Mem0](https://github.com/mem0ai/mem0), [MemOS](https://github.com/MemTensor/MemOS)) are Python-first. **TypeScript has nothing equivalent.**
 
 d8um closes that gap:
 
-- **Retrieval + memory in one SDK** — not two separate tools bolted together
-- **TypeScript-native** — no Python runtime, no managed service, no vendor lock-in
-- **Vercel AI Gateway + Neon Postgres** — production-ready with pgvector, access 40+ model providers through one dependency
-- **Vercel AI SDK integration** — memory tools and middleware for `generateText()` / `streamText()`
-- **Composable** — works alongside your stack, not inside a framework
-- **Per-bucket embedding models** — different models for different content, merged at query time via RRF
-- **Job system** — schedule memory consolidation, decay, and extraction as recurring tasks
+- **Retrieval + memory in one SDK** - not two separate tools bolted together
+- **TypeScript-native** - no Python runtime, no managed service, no vendor lock-in
+- **Vercel AI Gateway + Neon Postgres** - production-ready with pgvector, access 40+ model providers through one dependency
+- **Vercel AI SDK integration** - memory tools and middleware for `generateText()` / `streamText()`
+- **Composable** - works alongside your stack, not inside a framework
+- **Per-bucket embedding models** - different models for different content, merged at query time via RRF
+- **Job system** - schedule memory consolidation, decay, and extraction as recurring tasks
 
 ## Quick Start
 
@@ -51,10 +53,10 @@ const config = {
   vectorStore: new PgVectorAdapter({ sql: neon(process.env.DATABASE_URL!) }),
 }
 
-// One-time setup — creates tables (run once, e.g. in a setup script or CI)
+// One-time setup - creates tables (run once, e.g. in a setup script or CI)
 await d8um.deploy(config)
 
-// Runtime init — lightweight, no DDL (safe for serverless cold starts)
+// Runtime init - lightweight, no DDL (safe for serverless cold starts)
 await d8um.initialize(config)
 
 // Create a bucket
@@ -68,14 +70,14 @@ await d8um.ingest(faq.id, [{
   metadata: {},
 }], { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] })
 
-// Query — hybrid search (vector + BM25), score merging, ranked results
+// Query - hybrid search (vector + BM25), score merging, ranked results
 const { results } = await d8um.query('how do I configure SSO?')
 
 // Assemble into LLM-ready context
 const context = d8um.assemble(results, { format: 'xml' })
 ```
 
-Swap models by changing a string — `'openai/text-embedding-3-small'` → `'cohere/embed-english-v3.0'` — no dependency changes needed.
+Swap models by changing a string - `'openai/text-embedding-3-small'` → `'cohere/embed-english-v3.0'` - no dependency changes needed.
 
 ### Lifecycle
 
@@ -194,7 +196,7 @@ Standard information retrieval benchmarks using hybrid search (vector + BM25 wit
 | Australian Tax Guidance | **0.7519** | 0.7431   | **+0.0088** | MLEB Leaderboard |
 | MLEB-ScaLR              | **0.6607** | 0.6528   | **+0.0079** | MLEB Leaderboard |
 | License TLDR            | **0.6485** | 0.5985   | **+0.0500** | MLEB Leaderboard |
-| MultiHop-RAG            | **0.6429** | —        | —           | COLM 2024        |
+| MultiHop-RAG            | **0.6429** | -        | -           | COLM 2024        |
 | Legal RAG Bench         | 0.3348     | 0.3704   | -0.0356     | MLEB Leaderboard |
 
 
@@ -225,7 +227,7 @@ d8um overall ACC (58.4%) is statistically significant over HippoRAG2 (56.5%) at 
 | **Core**                                                                    |                                                                       |        |
 | `[@d8um/core](packages/core)`                                               | Query engine, index engine, job registry, built-in jobs               | Alpha  |
 | `[@d8um/adapter-pgvector](packages/adapters/pgvector)`                      | PostgreSQL + pgvector storage                                         | Alpha  |
-| `[@d8um/adapter-sqlite-vec](packages/adapters/sqlite-vec)`                  | SQLite + sqlite-vec — local dev / edge                                | Alpha  |
+| `[@d8um/adapter-sqlite-vec](packages/adapters/sqlite-vec)`                  | SQLite + sqlite-vec - local dev / edge                                | Alpha  |
 | `[@d8um/hosted](packages/hosted)`                                           | Hosted client SDK                                                     | Alpha  |
 | **Graph + Memory**                                                          |                                                                       |        |
 | `[@d8um/graph](packages/graph)`                                             | Knowledge graph, cognitive memory, PPR, entity linking, consolidation | Alpha  |
@@ -251,8 +253,8 @@ d8um overall ACC (58.4%) is statistically significant over HippoRAG2 (56.5%) at 
 | Guide                                                                | What you'll learn                                                  |
 | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | [Self-Hosted Setup](guides/Self%20Hosted/setup.md)                   | Neon Postgres + pgvector, AI Gateway, hybrid search internals      |
-| [Getting Started (Local Dev)](guides/Local%20Dev/getting-started.md) | SQLite + AI Gateway — minimal infrastructure setup                 |
-| [d8um Cloud](guides/d8um%20Cloud/quickstart.md)                      | Hosted API — just an API key                                       |
+| [Getting Started (Local Dev)](guides/Local%20Dev/getting-started.md) | SQLite + AI Gateway - minimal infrastructure setup                 |
+| [d8um Cloud](guides/d8um%20Cloud/quickstart.md)                      | Hosted API - just an API key                                       |
 | [Agentic RAG](guides/Agentic%20RAG/overview.md)                      | Retrieval architecture, embedding providers, landscape analysis    |
 | [Agentic Memory](guides/Agentic%20Memory/overview.md)                | Cognitive memory system, lifecycle, extraction, landscape analysis |
 
