@@ -47,13 +47,15 @@ const sql: SqlExecutor = (q, p) => pool.query(q, p).then(r => r.rows)
 | `MODEL_TABLE_SQL` | Migration SQL for per-model chunk tables |
 | `HASH_TABLE_SQL` | Migration SQL for hash deduplication table |
 | `DOCUMENTS_TABLE_SQL` | Migration SQL for documents table |
+| `BUCKETS_TABLE_SQL` | Migration SQL for buckets table |
+| `JOBS_TABLE_SQL` | Migration SQL for jobs table |
 | `sanitizeModelKey` | Normalizes model names into safe table suffixes |
 
 ## Types
 
 | Type | Description |
 |------|-------------|
-| `PgVectorAdapterConfig` | Constructor options (`sql`, `transaction`, `tablePrefix`, `hashesTable`, `documentsTable`) |
+| `PgVectorAdapterConfig` | Constructor options (`sql`, `transaction`, `schema`, `tablePrefix`, `hashesTable`, `documentsTable`) |
 | `SqlExecutor` | `(query: string, params?: unknown[]) => Promise<Record<string, unknown>[]>` |
 
 ## Related

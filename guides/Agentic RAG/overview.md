@@ -35,19 +35,9 @@ d8um.initialize({
   vectorStore: adapter,
 })
 
-// Uses the global default (OpenAI)
-d8um.addSource({ id: 'docs', mode: 'indexed', ... })
-
-// Overrides with Cohere -- gets its own vector table automatically
-d8um.addSource({
-  id: 'tickets',
-  mode: 'indexed',
-  embedding: {
-    model: cohere.embedding('embed-english-v3.0'),
-    dimensions: 1024,
-  },
-  ...
-})
+// Create buckets - each can use the global default or a per-bucket override
+const docs = await d8um.buckets.create({ name: 'docs' })
+const tickets = await d8um.buckets.create({ name: 'tickets' })
 ```
 
 ### Hybrid Search: Vector + BM25
@@ -213,7 +203,7 @@ const response = await d8um.query('search text', {
   onSourceError: 'warn',                  // 'omit', 'warn', or 'throw'
   documentFilter: {                       // filter by document-level fields
     status: 'published',
-    scope: 'public',
+    visibility: 'tenant',
   },
   temporalAt: new Date('2025-01-01'),     // point-in-time query
 })

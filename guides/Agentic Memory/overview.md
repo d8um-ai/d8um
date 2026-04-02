@@ -142,10 +142,11 @@ This model prevents memory bloat (duplicate facts) while preserving contradictio
 
 ## Entity Resolution and Edge Invalidation
 
-The `EntityResolver` deduplicates entities using a two-tier approach:
+The `EntityResolver` deduplicates entities using a multi-tier approach:
 
 1. **Alias matching** (cheap) -- checks if the candidate name or any alias matches an existing entity's canonical name or aliases
-2. **Vector similarity** (more expensive) -- embeds the entity name and compares against existing entity embeddings using a configurable cosine similarity threshold (default: 0.85)
+2. **Trigram Jaccard fuzzy matching** -- catches variations like "NY Times" / "New York Times" (threshold: 0.7)
+3. **Vector similarity** (more expensive) -- embeds the entity name and compares against existing entity embeddings using a configurable cosine similarity threshold (default: 0.68), with entity type guards to prevent cross-type merging
 
 When entities are merged, aliases are unioned and the more specific entity type is preserved.
 

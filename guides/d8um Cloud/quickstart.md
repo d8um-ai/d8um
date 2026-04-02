@@ -24,24 +24,20 @@ const d8um = d8umHosted({ apiKey: process.env.D8UM_API_KEY! })
 
 That's it. d8um Cloud handles embedding, storage, and retrieval for you.
 
-## 3) Create a Source
+## 3) Create a Bucket
 
 ```ts
-// Create a source - in this case, a basic source you send documents to - FAQ questions and answers
-d8um.addSource({
-  id: 'faq',
-  mode: 'indexed',
-  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] },
-})
+// Create a bucket - a logical container for related documents
+const faq = await d8um.buckets.create({ name: 'faq' })
 ```
 
 ## 4) Ingest Documents
 
 ```ts
-// Send documents to your FAQ source - d8um handles chunking and embedding
+// Send documents to your FAQ bucket - d8um handles chunking and embedding
 //    document id is optional - d8um generates an UUID id if none is sent, and automatically deduplicates by content hash
 
-await d8um.ingest('faq', [
+await d8um.ingest(faq.id, [
   {
     title: 'How do I set up SSO?',
     content: 'To enable SSO, navigate to Settings > Authentication and select your identity provider. We support SAML 2.0 and OpenID Connect.',

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="d8um-badge.png" alt="d8um" width="200" />
+  <img src="d8um-badge.png" alt="d8um" width="250" />
 </p>
 
 <div align="center">
@@ -73,6 +73,7 @@ await d8um.ingest(faq.id, [{
 }], { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] })
 
 // Query - hybrid search (vector + BM25), score merging, ranked results
+// Identity fields (tenantId, groupId, userId, agentId, sessionId) filter results
 const { results } = await d8um.query('how do I configure SSO?')
 
 // Assemble into LLM-ready context

@@ -13,17 +13,22 @@ npm install @d8um/core
 ```ts
 import { d8um, registerJobType, assemble } from '@d8um/core'
 
-const ctx = d8um.initialize({
+await d8um.deploy({
   vectorStore: myAdapter,
   embedding: embeddingModel,
 })
 
-const source = ctx.sources.create({ name: 'Docs' })
+await d8um.initialize({
+  vectorStore: myAdapter,
+  embedding: embeddingModel,
+})
 
-await ctx.ingest(source.id, [{ id: 'doc-1', content: 'Your content here', title: 'Doc 1', updatedAt: new Date(), metadata: {} }], { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] })
+const bucket = await d8um.buckets.create({ name: 'docs' })
 
-const { results } = await ctx.query('How does authentication work?')
-const context = ctx.assemble(results)
+await d8um.ingest(bucket.id, [{ id: 'doc-1', content: 'Your content here', title: 'Doc 1', updatedAt: new Date(), metadata: {} }], { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] })
+
+const { results } = await d8um.query('How does authentication work?')
+const context = d8um.assemble(results)
 ```
 
 ## API
@@ -60,7 +65,7 @@ const context = ctx.assemble(results)
 
 ### Types
 
-`Source`, `Job`, `JobTypeDefinition`, `JobRunContext`, `JobRunResult`, `ApiClient`, `VectorStoreAdapter`, `EmbeddingProvider`, `RawDocument`, `Chunk`, `d8umDocument`, `QueryOpts`, `QueryResponse`, `AssembleOpts`, `IndexOpts`, `IndexResult`
+`Bucket`, `Job`, `JobTypeDefinition`, `JobRunContext`, `JobRunResult`, `ApiClient`, `VectorStoreAdapter`, `EmbeddingProvider`, `RawDocument`, `Chunk`, `d8umDocument`, `Visibility`, `d8umIdentity`, `QueryOpts`, `QueryResponse`, `AssembleOpts`, `IndexOpts`, `IndexResult`
 
 ## Related
 

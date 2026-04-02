@@ -46,35 +46,40 @@ import { openai } from '@ai-sdk/openai'
 // i.e. your vector database provider
 import { neon } from '@neondatabase/serverless'
 
-// 1) Initialize d8um - point it at your embedding model and your database
-d8um.initialize({
+const config = {
   embedding: {
     model: openai.embedding('text-embedding-3-small'),
     dimensions: 1536,
   },
   vectorStore: new PgVectorAdapter({ sql: neon(process.env.DATABASE_URL!) }),
-})
+}
+
+// 1a) Deploy — creates tables and extensions (run once, e.g. in a setup script)
+await d8um.deploy(config)
+
+// 1b) Initialize — lightweight runtime init (safe for every app boot / cold start)
+await d8um.initialize(config)
 ```
 
 ### Under the Hood: Database Tables
 
-When you initialize, d8um creates these tables in your database:
+When you call `d8um.deploy()`, d8um creates these tables in your database:
 
 | Table | Purpose |
 |-------|---------|
-| `d8um_documents` | Stores document records (id, bucket_id, title, url, content_hash, status, ...) |
-| `d8um_hashes` | Tracks content hashes for deduplication and incremental sync |
+| `d8um_documents` | Document records with identity columns (tenant_id, group_id, user_id, agent_id, session_id) and visibility |
+| `d8um_hashes` | Content hashes for deduplication and incremental sync |
+| `d8um_buckets` | Bucket registry with identity columns |
+| `d8um_jobs` | Scheduled job definitions with identity columns |
 | `d8um_chunks_registry` | Registry of which embedding models have been used |
 
-## 3) Create a Source
+All identity-bearing tables include 9 B-tree indexes for efficient multi-tenant filtering (4 composite tenant+sub, 4 individual, 1 visibility).
+
+## 3) Create a Bucket
 
 ```ts
-// Create a source - in this case, a basic source you send documents to - FAQ questions and answers
-d8um.addSource({
-  id: 'faq',
-  mode: 'indexed',
-  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['content'] },
-})
+// Create a bucket - a logical container for related documents
+const faq = await d8um.buckets.create({ name: 'faq' })
 ```
 
 ### Under the Hood: Per-Model Chunks Table
@@ -85,6 +90,11 @@ d8um creates a per-model chunks table for the embedding model:
 d8um_chunks_openai_text_embedding_3_small (
   id              UUID PRIMARY KEY,
   bucket_id       TEXT,
+  tenant_id       TEXT,
+  group_id        TEXT,
+  user_id         TEXT,
+  agent_id        TEXT,
+  session_id      TEXT,
   document_id     UUID REFERENCES d8um_documents,
   content         TEXT,
   embedding       VECTOR(1536),          -- pgvector column
@@ -101,10 +111,10 @@ Each embedding model gets its own table. If you later switch models or use diffe
 ## 4) Ingest Documents
 
 ```ts
-// Send documents to your FAQ source - d8um handles chunking and embedding under the hood
+// Send documents to your FAQ bucket - d8um handles chunking and embedding under the hood
 //    document id is optional - d8um generates an UUID id if none is sent, and automatically deduplicates by content hash
 
-await d8um.ingest('faq', [
+await d8um.ingest(faq.id, [
   {
     title: 'How do I set up SSO?',
     content: 'To enable SSO, navigate to Settings > Authentication and select your identity provider. We support SAML 2.0 and OpenID Connect.',
@@ -226,46 +236,33 @@ import { PgVectorAdapter } from '@d8um/adapter-pgvector'
 
 const adapter = new PgVectorAdapter({ sql: neon(process.env.DATABASE_URL!) })
 
-d8um.initialize({
-  // Global default - used for all sources unless overridden
+const config = {
+  // Global default - used for all buckets unless overridden
   embedding: {
     model: openai.embedding('text-embedding-3-small'),
     dimensions: 1536,
   },
   vectorStore: adapter,
-})
+}
 
-// Uses the global default (OpenAI, 1536 dims)
-d8um.addSource({
-  id: 'docs',
-  connector: docsConnector,
-  mode: 'indexed',
-  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['url'] },
-})
+await d8um.deploy(config)
+await d8um.initialize(config)
 
-// Overrides with Cohere (1024 dims) - gets its own vector table automatically
-d8um.addSource({
-  id: 'wiki',
-  connector: wikiConnector,
-  mode: 'indexed',
-  index: { chunkSize: 512, chunkOverlap: 64, deduplicateBy: ['metadata.pageId'] },
-  embedding: {
-    model: cohere.embedding('embed-english-v3.0'),
-    dimensions: 1024,
-  },
-})
+// Create buckets - each can use the global default or a per-bucket override
+const docs = await d8um.buckets.create({ name: 'docs' })
+const wiki = await d8um.buckets.create({ name: 'wiki' })
 ```
 
 ### What Happens at Query Time
 
 When you call `d8um.query()`, d8um:
 
-1. Groups sources by their embedding model
-2. Embeds the query text **once per distinct model** (not once per source)
+1. Groups buckets by their embedding model
+2. Embeds the query text **once per distinct model** (not once per bucket)
 3. Searches each model's dedicated vector table
 4. Merges all results via RRF across models and modes
 
-You don't think about which model applies to which source -- d8um handles the fan-out and merge.
+You don't think about which model applies to which bucket -- d8um handles the fan-out and merge.
 
 ### Per-Model Table Isolation
 
@@ -273,8 +270,44 @@ Each embedding model gets its own vector table (e.g., `d8um_chunks_openai_text_e
 
 - **No dimension conflicts** -- each table has the correct `VECTOR(n)` column
 - **Clean HNSW indexes per model** -- no mixed vector spaces
-- **Safe model migration** -- switching a source's model triggers automatic re-embedding, with old chunks cleaned up
+- **Safe model migration** -- switching a bucket's model triggers automatic re-embedding, with old chunks cleaned up
 - **Works identically across all adapters** (pgvector, sqlite-vec, etc.)
+
+## Multi-Tenant Identity Model
+
+All user-facing tables carry a standardized 5-field identity model for multi-tenant isolation:
+
+```ts
+// Identity is per-call, Segment-style
+await d8um.ingest(bucket.id, documents, {
+  tenantId: 'acme-corp',       // organization-level isolation
+  groupId: 'team-alpha',       // team, channel, or project
+  userId: 'alice',             // individual user
+  agentId: 'support-bot',      // specific agent instance
+  sessionId: 'conv-123',       // conversation session
+})
+
+// Queries filter by identity automatically
+const { results } = await d8um.query('SSO setup', {
+  tenantId: 'acme-corp',
+  userId: 'alice',
+})
+```
+
+Each identity-bearing table includes 9 B-tree indexes for efficient filtering. Documents also carry a `visibility` field (`'tenant' | 'group' | 'user' | 'agent' | 'session'`) that controls access level.
+
+### Postgres Schema Isolation
+
+For strong logical isolation between tenants, use Postgres schemas:
+
+```ts
+const adapter = new PgVectorAdapter({
+  sql: neon(process.env.DATABASE_URL!),
+  schema: 'cust_abc',  // tables created as cust_abc.d8um_documents, etc.
+})
+```
+
+When `schema` is set, `CREATE SCHEMA IF NOT EXISTS` runs at deploy time and all table names are schema-qualified.
 
 ## When to Use Self-Hosted
 
