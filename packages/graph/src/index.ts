@@ -1,5 +1,3 @@
-import { registerJobType } from '@d8um-ai/core'
-
 // ── Types ──
 
 export type {
@@ -85,25 +83,6 @@ export type { ForgettingPolicy, ForgettingResult } from './consolidation/forgett
 
 export { MemoryCorrector } from './consolidation/correction.js'
 export type { CorrectionResult } from './consolidation/correction.js'
-
-// ── Jobs ──
-
-import { memoryConsolidationJob } from './jobs/consolidation-job.js'
-import { memoryDecayJob } from './jobs/decay-job.js'
-import { memoryCommunityDetectionJob } from './jobs/community-detection-job.js'
-import { memoryCorrectionJob } from './jobs/correction-job.js'
-import { memoryProceduralPromotionJob } from './jobs/procedural-promotion-job.js'
-export { conversationIngestJob } from './jobs/conversation-ingest.js'
-import { entityLinkingJob } from './jobs/entity-linking-job.js'
-export { memoryConsolidationJob, memoryDecayJob, memoryCommunityDetectionJob, memoryCorrectionJob, memoryProceduralPromotionJob, entityLinkingJob }
-
-export function registerConsolidationJobs(): void {
-  registerJobType(memoryConsolidationJob)
-  registerJobType(memoryDecayJob)
-  registerJobType(memoryCommunityDetectionJob)
-  registerJobType(memoryCorrectionJob)
-  registerJobType(memoryProceduralPromotionJob)
-}
 
 // ── Adapters ──
 

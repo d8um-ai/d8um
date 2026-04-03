@@ -1,8 +1,6 @@
 import type { EmbeddedChunk, ChunkFilter, ScoredChunk } from './document.js'
 import type { d8umDocument, DocumentFilter, DocumentStatus, UpsertDocumentInput } from './d8um-document.js'
-import type { DocumentJobRelation, DocumentJobRelationFilter } from './document-job-relation.js'
 import type { Bucket } from './bucket.js'
-import type { Job, JobRun } from './job.js'
 
 export interface SearchOpts {
   count: number
@@ -95,17 +93,6 @@ export interface VectorStoreAdapter {
     toIndex: number
   ): Promise<ScoredChunk[]>
 
-  // --- Document-Job relation storage (optional) ---
-
-  /** Create or update a document-job relation. */
-  upsertDocumentJobRelation?(relation: DocumentJobRelation): Promise<void>
-  /** Get document-job relations matching a filter. */
-  getDocumentJobRelations?(filter: DocumentJobRelationFilter): Promise<DocumentJobRelation[]>
-  /** Delete all relations for a given job. */
-  deleteDocumentJobRelations?(filter: { jobId: string }): Promise<void>
-  /** Get document IDs where the given job is the ONLY related job (orphaned on job delete). */
-  getOrphanedDocumentIds?(jobId: string): Promise<string[]>
-
   // --- Bucket persistence (optional - adapters that support persistence implement these) ---
 
   /** Create or update a bucket. */
@@ -117,23 +104,4 @@ export interface VectorStoreAdapter {
   /** Delete a bucket by ID. */
   deleteBucket?(id: string): Promise<void>
 
-  // --- Job persistence (optional) ---
-
-  /** Create or update a job instance. */
-  upsertJob?(job: Job): Promise<Job>
-  /** Get a job by ID. */
-  getJob?(id: string): Promise<Job | null>
-  /** List jobs matching an optional filter. */
-  listJobs?(filter?: { bucketId?: string; type?: string; tenantId?: string; status?: string }): Promise<Job[]>
-  /** Delete a job by ID. */
-  deleteJob?(id: string): Promise<void>
-
-  // --- Job run history (optional) ---
-
-  /** Record a job execution. */
-  createJobRun?(run: JobRun): Promise<JobRun>
-  /** Update a running job's status/result. */
-  updateJobRun?(id: string, update: Partial<JobRun>): Promise<void>
-  /** List run history for a job, most recent first. */
-  listJobRuns?(jobId: string, limit?: number): Promise<JobRun[]>
 }

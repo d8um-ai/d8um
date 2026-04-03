@@ -1,7 +1,5 @@
-import type { d8umInstance, d8umConfig, BucketsApi, JobsApi, DocumentJobsApi } from '../d8um.js'
+import type { d8umInstance, d8umConfig, BucketsApi } from '../d8um.js'
 import type { Bucket, CreateBucketInput, IndexConfig } from '../types/bucket.js'
-import type { Job, CreateJobInput, JobRunResult } from '../types/job.js'
-import type { DocumentJobRelation, DocumentJobRelationType } from '../types/document-job-relation.js'
 import type { QueryOpts, QueryResponse, d8umResult, AssembleOpts } from '../types/query.js'
 import type { IndexOpts, IndexResult } from '../types/index-types.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
@@ -52,50 +50,6 @@ export function createCloudInstance(config: CloudConfig): d8umCloudInstance {
     },
   }
 
-  const jobs: JobsApi = {
-    async create(input: CreateJobInput): Promise<Job> {
-      return client.post<Job>('/v1/jobs', input)
-    },
-    async get(jobId: string): Promise<Job | undefined> {
-      return client.get<Job>(`/v1/jobs/${e(jobId)}`)
-    },
-    async list(filter?): Promise<Job[]> {
-      const params = new URLSearchParams()
-      if (filter?.bucketId) params.set('bucketId', filter.bucketId)
-      if (filter?.type) params.set('type', filter.type)
-      if (filter?.tenantId) params.set('tenantId', filter.tenantId)
-      const qs = params.toString()
-      return client.get<Job[]>(`/v1/jobs${qs ? `?${qs}` : ''}`)
-    },
-    async update(jobId: string, input): Promise<Job> {
-      return client.patch<Job>(`/v1/jobs/${e(jobId)}`, input)
-    },
-    async delete(jobId: string, opts?): Promise<void> {
-      await client.delete(`/v1/jobs/${e(jobId)}`, opts)
-    },
-    async run(jobId: string): Promise<JobRunResult> {
-      return client.post<JobRunResult>(`/v1/jobs/${e(jobId)}/run`)
-    },
-    async pause(jobId: string): Promise<void> {
-      await client.post(`/v1/jobs/${e(jobId)}/pause`)
-    },
-    async resume(jobId: string): Promise<void> {
-      await client.post(`/v1/jobs/${e(jobId)}/resume`)
-    },
-  }
-
-  const documentJobs: DocumentJobsApi = {
-    async getJobsForDocument(documentId: string): Promise<DocumentJobRelation[]> {
-      return client.get<DocumentJobRelation[]>(`/v1/document-jobs?documentId=${e(documentId)}`)
-    },
-    async getDocumentsForJob(jobId: string): Promise<DocumentJobRelation[]> {
-      return client.get<DocumentJobRelation[]>(`/v1/document-jobs?jobId=${e(jobId)}`)
-    },
-    async addRelation(documentId: string, jobId: string, relation: DocumentJobRelationType): Promise<void> {
-      await client.post('/v1/document-jobs', { documentId, jobId, relation })
-    },
-  }
-
   const instance: d8umCloudInstance = {
     async deploy(_config: d8umConfig): Promise<d8umCloudInstance> {
       return instance
@@ -110,8 +64,6 @@ export function createCloudInstance(config: CloudConfig): d8umCloudInstance {
     },
 
     buckets,
-    jobs,
-    documentJobs,
 
     getEmbeddingForBucket(_bucketId: string): EmbeddingProvider {
       throw new Error('getEmbeddingForBucket() is not available in cloud mode — embedding is managed server-side.')

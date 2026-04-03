@@ -2,11 +2,9 @@ import type { VectorStoreAdapter, SearchOpts, ScoredChunkWithDocument, UndeployR
 import type { EmbeddedChunk, ChunkFilter, ScoredChunk } from '@d8um-ai/core'
 import type { d8umDocument, DocumentFilter, DocumentStatus, UpsertDocumentInput } from '@d8um-ai/core'
 import type { Bucket } from '@d8um-ai/core'
-import type { Job, JobRun } from '@d8um-ai/core'
-import type { DocumentJobRelation, DocumentJobRelationFilter } from '@d8um-ai/core'
 import {
   REGISTRY_SQL, MODEL_TABLE_SQL, HASH_TABLE_SQL, DOCUMENTS_TABLE_SQL,
-  BUCKETS_TABLE_SQL, JOBS_TABLE_SQL, JOB_RUNS_TABLE_SQL, DOCUMENT_JOB_RELATIONS_TABLE_SQL,
+  BUCKETS_TABLE_SQL,
   sanitizeModelKey,
 } from './migrations.js'
 import { PgHashStore } from './hash-store.js'
@@ -44,11 +42,6 @@ export interface PgVectorAdapterConfig {
   hashesTable?: string | undefined
   documentsTable?: string | undefined
   bucketsTable?: string | undefined
-  jobsTable?: string | undefined
-  jobRunsTable?: string | undefined
-  relationsTable?: string | undefined
-  /** Max job runs to keep per job. Oldest pruned on createJobRun(). Default: 100. */
-  maxRunsPerJob?: number | undefined
 }
 
 export class PgVectorAdapter implements VectorStoreAdapter {
@@ -61,10 +54,6 @@ export class PgVectorAdapter implements VectorStoreAdapter {
   private documentsTable: string
   private registryTable: string
   private bucketsTable: string
-  private jobsTable: string
-  private jobRunsTable: string
-  private relationsTable: string
-  private maxRunsPerJob: number
 
   /** model key → table name */
   private modelTables = new Map<string, string>()
@@ -80,10 +69,6 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     this.hashesTable = config.hashesTable ?? `${prefix}d8um_hashes`
     this.documentsTable = config.documentsTable ?? `${prefix}d8um_documents`
     this.bucketsTable = config.bucketsTable ?? `${prefix}d8um_buckets`
-    this.jobsTable = config.jobsTable ?? `${prefix}d8um_jobs`
-    this.jobRunsTable = config.jobRunsTable ?? `${prefix}d8um_job_runs`
-    this.relationsTable = config.relationsTable ?? `${prefix}d8um_document_job_relations`
-    this.maxRunsPerJob = config.maxRunsPerJob ?? 100
     this.registryTable = `${this.tablePrefix}_registry`
     this.hashStore = new PgHashStore(this.sql, this.hashesTable)
     this.documentStore = new PgDocumentStore(this.sql, this.documentsTable)
@@ -105,9 +90,6 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     await this.execStatements(HASH_TABLE_SQL(this.hashesTable))
     await this.execStatements(DOCUMENTS_TABLE_SQL(this.documentsTable))
     await this.execStatements(BUCKETS_TABLE_SQL(this.bucketsTable))
-    await this.execStatements(JOBS_TABLE_SQL(this.jobsTable))
-    await this.execStatements(JOB_RUNS_TABLE_SQL(this.jobRunsTable))
-    await this.execStatements(DOCUMENT_JOB_RELATIONS_TABLE_SQL(this.relationsTable))
     await this.hashStore.initialize()
   }
 
@@ -137,9 +119,6 @@ export class PgVectorAdapter implements VectorStoreAdapter {
       `${this.hashesTable}_run_times`,
       this.documentsTable,
       this.bucketsTable,
-      this.jobsTable,
-      this.jobRunsTable,
-      this.relationsTable,
     ]
 
     const tablesWithData: string[] = []
@@ -167,9 +146,6 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     for (const table of dynamicTables) {
       await this.sql(`DROP TABLE IF EXISTS ${table}`)
     }
-    await this.sql(`DROP TABLE IF EXISTS ${this.relationsTable}`)
-    await this.sql(`DROP TABLE IF EXISTS ${this.jobRunsTable}`)
-    await this.sql(`DROP TABLE IF EXISTS ${this.jobsTable}`)
     await this.sql(`DROP TABLE IF EXISTS ${this.bucketsTable}`)
     await this.sql(`DROP TABLE IF EXISTS ${this.documentsTable}`)
     await this.sql(`DROP TABLE IF EXISTS ${this.hashesTable}_run_times`)
@@ -614,158 +590,6 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     await this.sql(`DELETE FROM ${this.bucketsTable} WHERE id = $1`, [id])
   }
 
-  // --- Job persistence ---
-
-  async upsertJob(job: Job): Promise<Job> {
-    const rows = await this.sql(
-      `INSERT INTO ${this.jobsTable}
-        (id, tenant_id, group_id, user_id, agent_id, session_id,
-         bucket_id, type, name, description, config, schedule,
-         status, last_run_at, next_run_at, run_count, last_error, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
-       ON CONFLICT (id) DO UPDATE SET
-         tenant_id = EXCLUDED.tenant_id, group_id = EXCLUDED.group_id,
-         user_id = EXCLUDED.user_id, agent_id = EXCLUDED.agent_id,
-         session_id = EXCLUDED.session_id, bucket_id = EXCLUDED.bucket_id,
-         type = EXCLUDED.type, name = EXCLUDED.name, description = EXCLUDED.description,
-         config = EXCLUDED.config, schedule = EXCLUDED.schedule, status = EXCLUDED.status,
-         last_run_at = EXCLUDED.last_run_at, next_run_at = EXCLUDED.next_run_at,
-         run_count = EXCLUDED.run_count, last_error = EXCLUDED.last_error, updated_at = NOW()
-       RETURNING *`,
-      [
-        job.id, job.tenantId ?? null, job.groupId ?? null, job.userId ?? null,
-        job.agentId ?? null, job.sessionId ?? null,
-        job.bucketId ?? null, job.type, job.name,
-        job.description ?? null, JSON.stringify(job.config), job.schedule ?? null,
-        job.status, job.lastRunAt?.toISOString() ?? null, job.nextRunAt?.toISOString() ?? null,
-        job.runCount, job.lastError ?? null,
-      ]
-    )
-    return mapRowToJob(rows[0]!)
-  }
-
-  async getJob(id: string): Promise<Job | null> {
-    const rows = await this.sql(`SELECT * FROM ${this.jobsTable} WHERE id = $1`, [id])
-    return rows.length > 0 ? mapRowToJob(rows[0]!) : null
-  }
-
-  async listJobs(filter?: { bucketId?: string; type?: string; tenantId?: string; status?: string }): Promise<Job[]> {
-    const conditions: string[] = []
-    const params: unknown[] = []
-    if (filter?.bucketId) { params.push(filter.bucketId); conditions.push(`bucket_id = $${params.length}`) }
-    if (filter?.type) { params.push(filter.type); conditions.push(`type = $${params.length}`) }
-    if (filter?.tenantId) { params.push(filter.tenantId); conditions.push(`tenant_id = $${params.length}`) }
-    if (filter?.status) { params.push(filter.status); conditions.push(`status = $${params.length}`) }
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-    const rows = await this.sql(`SELECT * FROM ${this.jobsTable} ${where} ORDER BY created_at`, params)
-    return rows.map(mapRowToJob)
-  }
-
-  async deleteJob(id: string): Promise<void> {
-    await this.sql(`DELETE FROM ${this.jobsTable} WHERE id = $1`, [id])
-  }
-
-  // --- Job run history ---
-
-  async createJobRun(run: JobRun): Promise<JobRun> {
-    const rows = await this.sql(
-      `INSERT INTO ${this.jobRunsTable}
-        (id, job_id, bucket_id, status, summary, documents_created, documents_updated,
-         documents_deleted, metrics, error, duration_ms, started_at, completed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       RETURNING *`,
-      [
-        run.id, run.jobId, run.bucketId ?? null, run.status, run.summary ?? null,
-        run.documentsCreated, run.documentsUpdated, run.documentsDeleted,
-        JSON.stringify(run.metrics ?? {}), run.error ?? null, run.durationMs ?? null,
-        run.startedAt.toISOString(), run.completedAt?.toISOString() ?? null,
-      ]
-    )
-
-    // Prune old runs beyond maxRunsPerJob
-    await this.sql(
-      `DELETE FROM ${this.jobRunsTable}
-       WHERE job_id = $1 AND id NOT IN (
-         SELECT id FROM ${this.jobRunsTable}
-         WHERE job_id = $1
-         ORDER BY started_at DESC
-         LIMIT $2
-       )`,
-      [run.jobId, this.maxRunsPerJob]
-    )
-
-    return mapRowToJobRun(rows[0]!)
-  }
-
-  async updateJobRun(id: string, update: Partial<JobRun>): Promise<void> {
-    const sets: string[] = []
-    const params: unknown[] = []
-    if (update.status !== undefined) { params.push(update.status); sets.push(`status = $${params.length}`) }
-    if (update.summary !== undefined) { params.push(update.summary); sets.push(`summary = $${params.length}`) }
-    if (update.documentsCreated !== undefined) { params.push(update.documentsCreated); sets.push(`documents_created = $${params.length}`) }
-    if (update.documentsUpdated !== undefined) { params.push(update.documentsUpdated); sets.push(`documents_updated = $${params.length}`) }
-    if (update.documentsDeleted !== undefined) { params.push(update.documentsDeleted); sets.push(`documents_deleted = $${params.length}`) }
-    if (update.metrics !== undefined) { params.push(JSON.stringify(update.metrics)); sets.push(`metrics = $${params.length}`) }
-    if (update.error !== undefined) { params.push(update.error); sets.push(`error = $${params.length}`) }
-    if (update.durationMs !== undefined) { params.push(update.durationMs); sets.push(`duration_ms = $${params.length}`) }
-    if (update.completedAt !== undefined) { params.push(update.completedAt.toISOString()); sets.push(`completed_at = $${params.length}`) }
-    if (sets.length === 0) return
-    params.push(id)
-    await this.sql(`UPDATE ${this.jobRunsTable} SET ${sets.join(', ')} WHERE id = $${params.length}`, params)
-  }
-
-  async listJobRuns(jobId: string, limit?: number): Promise<JobRun[]> {
-    const rows = await this.sql(
-      `SELECT * FROM ${this.jobRunsTable} WHERE job_id = $1 ORDER BY started_at DESC LIMIT $2`,
-      [jobId, limit ?? 50]
-    )
-    return rows.map(mapRowToJobRun)
-  }
-
-  // --- Document-Job relations ---
-
-  async upsertDocumentJobRelation(relation: DocumentJobRelation): Promise<void> {
-    await this.sql(
-      `INSERT INTO ${this.relationsTable} (document_id, job_id, relation, timestamp)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (document_id, job_id) DO UPDATE SET relation = EXCLUDED.relation, timestamp = EXCLUDED.timestamp`,
-      [relation.documentId, relation.jobId, relation.relation, relation.timestamp.toISOString()]
-    )
-  }
-
-  async getDocumentJobRelations(filter: DocumentJobRelationFilter): Promise<DocumentJobRelation[]> {
-    const conditions: string[] = []
-    const params: unknown[] = []
-    if (filter.documentId) { params.push(filter.documentId); conditions.push(`document_id = $${params.length}`) }
-    if (filter.jobId) { params.push(filter.jobId); conditions.push(`job_id = $${params.length}`) }
-    if (filter.relation) { params.push(filter.relation); conditions.push(`relation = $${params.length}`) }
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-    const rows = await this.sql(`SELECT * FROM ${this.relationsTable} ${where}`, params)
-    return rows.map(r => ({
-      documentId: r.document_id as string,
-      jobId: r.job_id as string,
-      relation: r.relation as DocumentJobRelation['relation'],
-      timestamp: new Date(r.timestamp as string),
-    }))
-  }
-
-  async deleteDocumentJobRelations(filter: { jobId: string }): Promise<void> {
-    await this.sql(`DELETE FROM ${this.relationsTable} WHERE job_id = $1`, [filter.jobId])
-  }
-
-  async getOrphanedDocumentIds(jobId: string): Promise<string[]> {
-    const rows = await this.sql(
-      `SELECT r1.document_id FROM ${this.relationsTable} r1
-       WHERE r1.job_id = $1
-         AND NOT EXISTS (
-           SELECT 1 FROM ${this.relationsTable} r2
-           WHERE r2.document_id = r1.document_id AND r2.job_id != $1
-         )`,
-      [jobId]
-    )
-    return rows.map(r => r.document_id as string)
-  }
-
   async destroy(): Promise<void> {
     // No-op - the developer owns the connection lifecycle
   }
@@ -860,48 +684,6 @@ function mapRowToBucket(row: Record<string, unknown>): Bucket {
     userId: (row.user_id as string) ?? undefined,
     agentId: (row.agent_id as string) ?? undefined,
     sessionId: (row.session_id as string) ?? undefined,
-  }
-}
-
-function mapRowToJob(row: Record<string, unknown>): Job {
-  return {
-    id: row.id as string,
-    tenantId: (row.tenant_id as string) ?? undefined,
-    groupId: (row.group_id as string) ?? undefined,
-    userId: (row.user_id as string) ?? undefined,
-    agentId: (row.agent_id as string) ?? undefined,
-    sessionId: (row.session_id as string) ?? undefined,
-    bucketId: (row.bucket_id as string) ?? undefined,
-    type: row.type as string,
-    name: row.name as string,
-    description: (row.description as string) ?? undefined,
-    config: (typeof row.config === 'string' ? JSON.parse(row.config) : row.config ?? {}) as Record<string, unknown>,
-    schedule: (row.schedule as string) ?? undefined,
-    status: row.status as Job['status'],
-    lastRunAt: row.last_run_at ? new Date(row.last_run_at as string) : undefined,
-    nextRunAt: row.next_run_at ? new Date(row.next_run_at as string) : undefined,
-    runCount: row.run_count as number,
-    lastError: (row.last_error as string) ?? undefined,
-    createdAt: new Date(row.created_at as string),
-    updatedAt: new Date(row.updated_at as string),
-  }
-}
-
-function mapRowToJobRun(row: Record<string, unknown>): JobRun {
-  return {
-    id: row.id as string,
-    jobId: row.job_id as string,
-    bucketId: (row.bucket_id as string) ?? undefined,
-    status: row.status as JobRun['status'],
-    summary: (row.summary as string) ?? undefined,
-    documentsCreated: row.documents_created as number,
-    documentsUpdated: row.documents_updated as number,
-    documentsDeleted: row.documents_deleted as number,
-    metrics: (typeof row.metrics === 'string' ? JSON.parse(row.metrics) : row.metrics ?? {}) as Record<string, unknown>,
-    error: (row.error as string) ?? undefined,
-    durationMs: (row.duration_ms as number) ?? undefined,
-    startedAt: new Date(row.started_at as string),
-    completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
   }
 }
 

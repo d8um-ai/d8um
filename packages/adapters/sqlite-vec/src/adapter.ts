@@ -1,8 +1,6 @@
 import type { VectorStoreAdapter, SearchOpts, UndeployResult } from '@d8um-ai/core'
 import type { EmbeddedChunk, ChunkFilter, ScoredChunk } from '@d8um-ai/core'
 import type { Bucket } from '@d8um-ai/core'
-import type { Job, JobRun } from '@d8um-ai/core'
-import type { DocumentJobRelation, DocumentJobRelationFilter } from '@d8um-ai/core'
 import Database from 'better-sqlite3'
 import * as sqliteVec from 'sqlite-vec'
 import { SqliteHashStore } from './hash-store.js'
@@ -12,9 +10,6 @@ import {
   MODEL_VEC_SQL,
   HASH_TABLE_SQL,
   BUCKETS_TABLE_SQL,
-  JOBS_TABLE_SQL,
-  JOB_RUNS_TABLE_SQL,
-  DOCUMENT_JOB_RELATIONS_TABLE_SQL,
   sanitizeModelKey,
 } from './migrations.js'
 
@@ -26,9 +21,6 @@ export interface SqliteVecAdapterConfig {
   /** Table name for the hash store. Defaults to 'd8um_hashes'. */
   hashesTable?: string | undefined
   bucketsTable?: string | undefined
-  jobsTable?: string | undefined
-  jobRunsTable?: string | undefined
-  relationsTable?: string | undefined
 }
 
 export class SqliteVecAdapter implements VectorStoreAdapter {
@@ -39,9 +31,6 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
   private hashesTable: string
   private registryTable: string
   private bucketsTable: string
-  private jobsTable: string
-  private jobRunsTable: string
-  private relationsTable: string
 
   /** model key → { chunksTable, vecTable } */
   private modelTables = new Map<string, { chunksTable: string; vecTable: string }>()
@@ -54,9 +43,6 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
     this.tablePrefix = config.tablePrefix ?? 'd8um_chunks'
     this.hashesTable = config.hashesTable ?? 'd8um_hashes'
     this.bucketsTable = config.bucketsTable ?? 'd8um_buckets'
-    this.jobsTable = config.jobsTable ?? 'd8um_jobs'
-    this.jobRunsTable = config.jobRunsTable ?? 'd8um_job_runs'
-    this.relationsTable = config.relationsTable ?? 'd8um_document_job_relations'
     this.registryTable = `${this.tablePrefix}_registry`
     this.hashStore = new SqliteHashStore(this.db, this.hashesTable)
   }
@@ -65,9 +51,6 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
     this.db.exec(REGISTRY_SQL(this.registryTable))
     this.db.exec(HASH_TABLE_SQL(this.hashesTable))
     this.db.exec(BUCKETS_TABLE_SQL(this.bucketsTable))
-    this.db.exec(JOBS_TABLE_SQL(this.jobsTable))
-    this.db.exec(JOB_RUNS_TABLE_SQL(this.jobRunsTable))
-    this.db.exec(DOCUMENT_JOB_RELATIONS_TABLE_SQL(this.relationsTable))
     await this.hashStore.initialize()
   }
 
@@ -106,9 +89,6 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
       this.hashesTable,
       `${this.hashesTable}_run_times`,
       this.bucketsTable,
-      this.jobsTable,
-      this.jobRunsTable,
-      this.relationsTable,
     ]
     const allCheckTables = [
       ...dynamicTables.map(t => t.chunksTable),
@@ -142,9 +122,6 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
       this.db.exec(`DROP TABLE IF EXISTS ${chunksTable}`)
     }
     // Drop static tables
-    this.db.exec(`DROP TABLE IF EXISTS ${this.relationsTable}`)
-    this.db.exec(`DROP TABLE IF EXISTS ${this.jobRunsTable}`)
-    this.db.exec(`DROP TABLE IF EXISTS ${this.jobsTable}`)
     this.db.exec(`DROP TABLE IF EXISTS ${this.bucketsTable}`)
     this.db.exec(`DROP TABLE IF EXISTS ${this.hashesTable}_run_times`)
     this.db.exec(`DROP TABLE IF EXISTS ${this.hashesTable}`)
@@ -347,166 +324,8 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
     this.db.prepare(`DELETE FROM ${this.bucketsTable} WHERE id = ?`).run(id)
   }
 
-  // --- Job persistence ---
-
-  async upsertJob(job: Job): Promise<Job> {
-    this.db.prepare(
-      `INSERT INTO ${this.jobsTable}
-        (id, tenant_id, bucket_id, type, name, description, config, schedule,
-         status, last_run_at, next_run_at, run_count, last_error, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
-       ON CONFLICT (id) DO UPDATE SET
-         tenant_id=excluded.tenant_id, bucket_id=excluded.bucket_id, type=excluded.type,
-         name=excluded.name, description=excluded.description, config=excluded.config,
-         schedule=excluded.schedule, status=excluded.status, last_run_at=excluded.last_run_at,
-         next_run_at=excluded.next_run_at, run_count=excluded.run_count,
-         last_error=excluded.last_error, updated_at=datetime('now')`
-    ).run(
-      job.id, job.tenantId ?? null, job.bucketId ?? null, job.type, job.name,
-      job.description ?? null, JSON.stringify(job.config), job.schedule ?? null,
-      job.status, job.lastRunAt?.toISOString() ?? null, job.nextRunAt?.toISOString() ?? null,
-      job.runCount, job.lastError ?? null
-    )
-    return job
-  }
-
-  async getJob(id: string): Promise<Job | null> {
-    const row = this.db.prepare(`SELECT * FROM ${this.jobsTable} WHERE id = ?`).get(id) as Record<string, unknown> | undefined
-    if (!row) return null
-    return mapSqliteRowToJob(row)
-  }
-
-  async listJobs(filter?: { bucketId?: string; type?: string; tenantId?: string }): Promise<Job[]> {
-    let query = `SELECT * FROM ${this.jobsTable}`
-    const conditions: string[] = []
-    const params: unknown[] = []
-    if (filter?.bucketId) { conditions.push('bucket_id = ?'); params.push(filter.bucketId) }
-    if (filter?.type) { conditions.push('type = ?'); params.push(filter.type) }
-    if (filter?.tenantId) { conditions.push('tenant_id = ?'); params.push(filter.tenantId) }
-    if (conditions.length) query += ` WHERE ${conditions.join(' AND ')}`
-    query += ' ORDER BY created_at'
-    const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[]
-    return rows.map(mapSqliteRowToJob)
-  }
-
-  async deleteJob(id: string): Promise<void> {
-    this.db.prepare(`DELETE FROM ${this.jobsTable} WHERE id = ?`).run(id)
-  }
-
-  // --- Job run history ---
-
-  async createJobRun(run: JobRun): Promise<JobRun> {
-    this.db.prepare(
-      `INSERT INTO ${this.jobRunsTable}
-        (id, job_id, bucket_id, status, summary, documents_created, documents_updated,
-         documents_deleted, metrics, error, duration_ms, started_at, completed_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).run(
-      run.id, run.jobId, run.bucketId ?? null, run.status, run.summary ?? null,
-      run.documentsCreated, run.documentsUpdated, run.documentsDeleted,
-      JSON.stringify(run.metrics ?? {}), run.error ?? null, run.durationMs ?? null,
-      run.startedAt.toISOString(), run.completedAt?.toISOString() ?? null
-    )
-    return run
-  }
-
-  async updateJobRun(id: string, update: Partial<JobRun>): Promise<void> {
-    const sets: string[] = []
-    const params: unknown[] = []
-    if (update.status !== undefined) { sets.push('status = ?'); params.push(update.status) }
-    if (update.summary !== undefined) { sets.push('summary = ?'); params.push(update.summary) }
-    if (update.documentsCreated !== undefined) { sets.push('documents_created = ?'); params.push(update.documentsCreated) }
-    if (update.documentsUpdated !== undefined) { sets.push('documents_updated = ?'); params.push(update.documentsUpdated) }
-    if (update.documentsDeleted !== undefined) { sets.push('documents_deleted = ?'); params.push(update.documentsDeleted) }
-    if (update.metrics !== undefined) { sets.push('metrics = ?'); params.push(JSON.stringify(update.metrics)) }
-    if (update.error !== undefined) { sets.push('error = ?'); params.push(update.error) }
-    if (update.durationMs !== undefined) { sets.push('duration_ms = ?'); params.push(update.durationMs) }
-    if (update.completedAt !== undefined) { sets.push('completed_at = ?'); params.push(update.completedAt.toISOString()) }
-    if (sets.length === 0) return
-    params.push(id)
-    this.db.prepare(`UPDATE ${this.jobRunsTable} SET ${sets.join(', ')} WHERE id = ?`).run(...params)
-  }
-
-  async listJobRuns(jobId: string, limit?: number): Promise<JobRun[]> {
-    const rows = this.db.prepare(
-      `SELECT * FROM ${this.jobRunsTable} WHERE job_id = ? ORDER BY started_at DESC LIMIT ?`
-    ).all(jobId, limit ?? 50) as Record<string, unknown>[]
-    return rows.map(r => ({
-      id: r.id as string, jobId: r.job_id as string,
-      bucketId: (r.bucket_id as string) ?? undefined, status: r.status as JobRun['status'],
-      summary: (r.summary as string) ?? undefined,
-      documentsCreated: r.documents_created as number, documentsUpdated: r.documents_updated as number,
-      documentsDeleted: r.documents_deleted as number,
-      metrics: JSON.parse((r.metrics as string) || '{}'), error: (r.error as string) ?? undefined,
-      durationMs: (r.duration_ms as number) ?? undefined, startedAt: new Date(r.started_at as string),
-      completedAt: r.completed_at ? new Date(r.completed_at as string) : undefined,
-    }))
-  }
-
-  // --- Document-Job relations ---
-
-  async upsertDocumentJobRelation(relation: DocumentJobRelation): Promise<void> {
-    this.db.prepare(
-      `INSERT INTO ${this.relationsTable} (document_id, job_id, relation, timestamp)
-       VALUES (?,?,?,?)
-       ON CONFLICT (document_id, job_id) DO UPDATE SET relation = excluded.relation, timestamp = excluded.timestamp`
-    ).run(relation.documentId, relation.jobId, relation.relation, relation.timestamp.toISOString())
-  }
-
-  async getDocumentJobRelations(filter: DocumentJobRelationFilter): Promise<DocumentJobRelation[]> {
-    let query = `SELECT * FROM ${this.relationsTable}`
-    const conditions: string[] = []
-    const params: unknown[] = []
-    if (filter.documentId) { conditions.push('document_id = ?'); params.push(filter.documentId) }
-    if (filter.jobId) { conditions.push('job_id = ?'); params.push(filter.jobId) }
-    if (filter.relation) { conditions.push('relation = ?'); params.push(filter.relation) }
-    if (conditions.length) query += ` WHERE ${conditions.join(' AND ')}`
-    const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[]
-    return rows.map(r => ({
-      documentId: r.document_id as string, jobId: r.job_id as string,
-      relation: r.relation as DocumentJobRelation['relation'],
-      timestamp: new Date(r.timestamp as string),
-    }))
-  }
-
-  async deleteDocumentJobRelations(filter: { jobId: string }): Promise<void> {
-    this.db.prepare(`DELETE FROM ${this.relationsTable} WHERE job_id = ?`).run(filter.jobId)
-  }
-
-  async getOrphanedDocumentIds(jobId: string): Promise<string[]> {
-    const rows = this.db.prepare(
-      `SELECT r1.document_id FROM ${this.relationsTable} r1
-       WHERE r1.job_id = ?
-         AND NOT EXISTS (
-           SELECT 1 FROM ${this.relationsTable} r2
-           WHERE r2.document_id = r1.document_id AND r2.job_id != ?
-         )`
-    ).all(jobId, jobId) as Record<string, unknown>[]
-    return rows.map(r => r.document_id as string)
-  }
-
   async destroy(): Promise<void> {
     this.db.close()
-  }
-}
-
-function mapSqliteRowToJob(row: Record<string, unknown>): Job {
-  return {
-    id: row.id as string,
-    tenantId: (row.tenant_id as string) ?? undefined,
-    bucketId: (row.bucket_id as string) ?? undefined,
-    type: row.type as string,
-    name: row.name as string,
-    description: (row.description as string) ?? undefined,
-    config: JSON.parse((row.config as string) || '{}'),
-    schedule: (row.schedule as string) ?? undefined,
-    status: row.status as Job['status'],
-    lastRunAt: row.last_run_at ? new Date(row.last_run_at as string) : undefined,
-    nextRunAt: row.next_run_at ? new Date(row.next_run_at as string) : undefined,
-    runCount: row.run_count as number,
-    lastError: (row.last_error as string) ?? undefined,
-    createdAt: new Date(row.created_at as string),
-    updatedAt: new Date(row.updated_at as string),
   }
 }
 

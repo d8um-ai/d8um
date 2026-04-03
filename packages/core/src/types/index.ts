@@ -52,27 +52,6 @@ export type {
   UpsertDocumentInput,
 } from './d8um-document.js'
 
-export type {
-  JobCategory,
-  JobStatus,
-  JobTypeDefinition,
-  ConfigField,
-  Job,
-  CreateJobInput,
-  JobRunContext,
-  JobRunResult,
-  JobRun,
-  ResultField,
-  ApiClient,
-  ApiResponse,
-} from './job.js'
-
-export type {
-  DocumentJobRelationType,
-  DocumentJobRelation,
-  DocumentJobRelationFilter,
-} from './document-job-relation.js'
-
 export type { d8umHooks } from './hooks.js'
 
 export type { LLMProvider, LLMGenerateOptions } from './llm-provider.js'
