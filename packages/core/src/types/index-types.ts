@@ -4,13 +4,17 @@ export interface IndexOpts {
   groupId?: string | undefined
   userId?: string | undefined
   agentId?: string | undefined
-  sessionId?: string | undefined
+  conversationId?: string | undefined
   visibility?: import('./d8um-document.js').Visibility | undefined
   removeDeleted?: boolean | undefined
   dryRun?: boolean | undefined
   onProgress?: ((event: IndexProgressEvent) => void) | undefined
   /** Max concurrent documents to process. Default: 1 (sequential). Higher values speed up LLM-heavy pipelines like neural. */
   concurrency?: number | undefined
+  /** OpenTelemetry trace ID for distributed tracing correlation. */
+  traceId?: string | undefined
+  /** OpenTelemetry span ID for distributed tracing correlation. */
+  spanId?: string | undefined
 }
 
 export interface IndexProgressEvent {

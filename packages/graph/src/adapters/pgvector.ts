@@ -67,13 +67,13 @@ const MEMORIES_DDL = (t: string) => {
     group_id         TEXT,
     user_id          TEXT,
     agent_id         TEXT,
-    session_id       TEXT,
+    conversation_id       TEXT,
     visibility       TEXT NOT NULL DEFAULT 'user'
-                     CHECK (visibility IN ('tenant', 'group', 'user', 'agent', 'session')),
+                     CHECK (visibility IN ('tenant', 'group', 'user', 'agent', 'conversation')),
     -- Episodic
     event_type       TEXT,
     participants     TEXT[],
-    episodic_session_id TEXT,
+    episodic_conversation_id TEXT,
     sequence         INTEGER,
     consolidated_at  TIMESTAMPTZ,
     -- Semantic (fact triples)
@@ -102,11 +102,11 @@ const MEMORIES_DDL = (t: string) => {
   CREATE INDEX IF NOT EXISTS ${idx('tenant_user_idx')} ON ${t} (tenant_id, user_id);
   CREATE INDEX IF NOT EXISTS ${idx('tenant_group_idx')} ON ${t} (tenant_id, group_id);
   CREATE INDEX IF NOT EXISTS ${idx('tenant_agent_idx')} ON ${t} (tenant_id, agent_id);
-  CREATE INDEX IF NOT EXISTS ${idx('tenant_session_idx')} ON ${t} (tenant_id, session_id);
+  CREATE INDEX IF NOT EXISTS ${idx('tenant_conversation_idx')} ON ${t} (tenant_id, conversation_id);
   CREATE INDEX IF NOT EXISTS ${idx('user_idx')} ON ${t} (user_id);
   CREATE INDEX IF NOT EXISTS ${idx('group_idx')} ON ${t} (group_id);
   CREATE INDEX IF NOT EXISTS ${idx('agent_idx')} ON ${t} (agent_id);
-  CREATE INDEX IF NOT EXISTS ${idx('session_idx')} ON ${t} (session_id);
+  CREATE INDEX IF NOT EXISTS ${idx('conversation_idx')} ON ${t} (conversation_id);
   CREATE INDEX IF NOT EXISTS ${idx('visibility_idx')} ON ${t} (visibility);
 `
 }
@@ -128,9 +128,9 @@ const ENTITIES_DDL = (t: string, dims?: number) => {
     group_id    TEXT,
     user_id     TEXT,
     agent_id    TEXT,
-    session_id  TEXT,
+    conversation_id  TEXT,
     visibility  TEXT NOT NULL DEFAULT 'tenant'
-                CHECK (visibility IN ('tenant', 'group', 'user', 'agent', 'session')),
+                CHECK (visibility IN ('tenant', 'group', 'user', 'agent', 'conversation')),
     valid_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     invalid_at  TIMESTAMPTZ,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -142,11 +142,11 @@ const ENTITIES_DDL = (t: string, dims?: number) => {
   CREATE INDEX IF NOT EXISTS ${idx('tenant_user_idx')} ON ${t} (tenant_id, user_id);
   CREATE INDEX IF NOT EXISTS ${idx('tenant_group_idx')} ON ${t} (tenant_id, group_id);
   CREATE INDEX IF NOT EXISTS ${idx('tenant_agent_idx')} ON ${t} (tenant_id, agent_id);
-  CREATE INDEX IF NOT EXISTS ${idx('tenant_session_idx')} ON ${t} (tenant_id, session_id);
+  CREATE INDEX IF NOT EXISTS ${idx('tenant_conversation_idx')} ON ${t} (tenant_id, conversation_id);
   CREATE INDEX IF NOT EXISTS ${idx('user_idx')} ON ${t} (user_id);
   CREATE INDEX IF NOT EXISTS ${idx('group_idx')} ON ${t} (group_id);
   CREATE INDEX IF NOT EXISTS ${idx('agent_idx')} ON ${t} (agent_id);
-  CREATE INDEX IF NOT EXISTS ${idx('session_idx')} ON ${t} (session_id);
+  CREATE INDEX IF NOT EXISTS ${idx('conversation_idx')} ON ${t} (conversation_id);
   CREATE INDEX IF NOT EXISTS ${idx('visibility_idx')} ON ${t} (visibility);
 `
 }
@@ -168,9 +168,9 @@ const EDGES_DDL = (t: string) => {
     group_id         TEXT,
     user_id          TEXT,
     agent_id         TEXT,
-    session_id       TEXT,
+    conversation_id       TEXT,
     visibility       TEXT NOT NULL DEFAULT 'tenant'
-                     CHECK (visibility IN ('tenant', 'group', 'user', 'agent', 'session')),
+                     CHECK (visibility IN ('tenant', 'group', 'user', 'agent', 'conversation')),
     evidence         TEXT[] DEFAULT '{}',
     valid_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     invalid_at       TIMESTAMPTZ,
@@ -184,11 +184,11 @@ const EDGES_DDL = (t: string) => {
   CREATE INDEX IF NOT EXISTS ${idx('tenant_user_idx')} ON ${t} (tenant_id, user_id);
   CREATE INDEX IF NOT EXISTS ${idx('tenant_group_idx')} ON ${t} (tenant_id, group_id);
   CREATE INDEX IF NOT EXISTS ${idx('tenant_agent_idx')} ON ${t} (tenant_id, agent_id);
-  CREATE INDEX IF NOT EXISTS ${idx('tenant_session_idx')} ON ${t} (tenant_id, session_id);
+  CREATE INDEX IF NOT EXISTS ${idx('tenant_conversation_idx')} ON ${t} (tenant_id, conversation_id);
   CREATE INDEX IF NOT EXISTS ${idx('user_idx')} ON ${t} (user_id);
   CREATE INDEX IF NOT EXISTS ${idx('group_idx')} ON ${t} (group_id);
   CREATE INDEX IF NOT EXISTS ${idx('agent_idx')} ON ${t} (agent_id);
-  CREATE INDEX IF NOT EXISTS ${idx('session_idx')} ON ${t} (session_id);
+  CREATE INDEX IF NOT EXISTS ${idx('conversation_idx')} ON ${t} (conversation_id);
   CREATE INDEX IF NOT EXISTS ${idx('visibility_idx')} ON ${t} (visibility);
 `
 }
@@ -282,8 +282,8 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
       `INSERT INTO ${this.memoriesTable}
         (id, category, status, content, embedding, importance, access_count,
          last_accessed_at, metadata, scope,
-         tenant_id, group_id, user_id, agent_id, session_id, visibility,
-         event_type, participants, episodic_session_id, sequence, consolidated_at,
+         tenant_id, group_id, user_id, agent_id, conversation_id, visibility,
+         event_type, participants, episodic_conversation_id, sequence, consolidated_at,
          subject, predicate, object, confidence, source_memory_ids,
          trigger, steps, success_count, failure_count, last_outcome,
          valid_at, invalid_at, expired_at, updated_at)
@@ -298,9 +298,9 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
          metadata = EXCLUDED.metadata, scope = EXCLUDED.scope,
          tenant_id = EXCLUDED.tenant_id, group_id = EXCLUDED.group_id,
          user_id = EXCLUDED.user_id, agent_id = EXCLUDED.agent_id,
-         session_id = EXCLUDED.session_id, visibility = EXCLUDED.visibility,
+         conversation_id = EXCLUDED.conversation_id, visibility = EXCLUDED.visibility,
          event_type = EXCLUDED.event_type, participants = EXCLUDED.participants,
-         episodic_session_id = EXCLUDED.episodic_session_id, sequence = EXCLUDED.sequence,
+         episodic_conversation_id = EXCLUDED.episodic_conversation_id, sequence = EXCLUDED.sequence,
          consolidated_at = EXCLUDED.consolidated_at,
          subject = EXCLUDED.subject, predicate = EXCLUDED.predicate,
          object = EXCLUDED.object, confidence = EXCLUDED.confidence,
@@ -321,12 +321,12 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
         record.scope.groupId ?? null,
         record.scope.userId ?? null,
         record.scope.agentId ?? null,
-        record.scope.sessionId ?? null,
+        record.scope.conversationId ?? null,
         record.visibility ?? 'user',
         // Episodic
         (record as any).eventType ?? null,
         (record as any).participants ?? null,
-        (record as any).sessionId ?? null,  // episodic sessionId → episodic_session_id column
+        (record as any).conversationId ?? null,  // episodic conversationId → episodic_conversation_id column
         (record as any).sequence ?? null,
         (record as any).consolidatedAt?.toISOString() ?? null,
         // Semantic
@@ -454,7 +454,7 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
     const rows = await this.sql(
       `INSERT INTO ${this.entitiesTable}
         (id, name, entity_type, aliases, properties, embedding, scope,
-         tenant_id, group_id, user_id, agent_id, session_id, visibility,
+         tenant_id, group_id, user_id, agent_id, conversation_id, visibility,
          valid_at, invalid_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6::vector,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
        ON CONFLICT (id) DO UPDATE SET
@@ -463,7 +463,7 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
          embedding = COALESCE(EXCLUDED.embedding, ${unqualified(this.entitiesTable)}.embedding), scope = EXCLUDED.scope,
          tenant_id = EXCLUDED.tenant_id, group_id = EXCLUDED.group_id,
          user_id = EXCLUDED.user_id, agent_id = EXCLUDED.agent_id,
-         session_id = EXCLUDED.session_id, visibility = EXCLUDED.visibility,
+         conversation_id = EXCLUDED.conversation_id, visibility = EXCLUDED.visibility,
          valid_at = EXCLUDED.valid_at, invalid_at = EXCLUDED.invalid_at, updated_at = NOW()
        RETURNING *`,
       [
@@ -474,7 +474,7 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
         entity.scope.groupId ?? null,
         entity.scope.userId ?? null,
         entity.scope.agentId ?? null,
-        entity.scope.sessionId ?? null,
+        entity.scope.conversationId ?? null,
         entity.visibility ?? 'tenant',
         entity.temporal.validAt.toISOString(),
         entity.temporal.invalidAt?.toISOString() ?? null,
@@ -538,7 +538,7 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
     const rows = await this.sql(
       `INSERT INTO ${this.edgesTable}
         (id, source_entity_id, target_entity_id, relation, weight, properties,
-         scope, tenant_id, group_id, user_id, agent_id, session_id, visibility,
+         scope, tenant_id, group_id, user_id, agent_id, conversation_id, visibility,
          evidence, valid_at, invalid_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
        ON CONFLICT (id) DO UPDATE SET
@@ -548,7 +548,7 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
          properties = EXCLUDED.properties, scope = EXCLUDED.scope,
          tenant_id = EXCLUDED.tenant_id, group_id = EXCLUDED.group_id,
          user_id = EXCLUDED.user_id, agent_id = EXCLUDED.agent_id,
-         session_id = EXCLUDED.session_id, visibility = EXCLUDED.visibility,
+         conversation_id = EXCLUDED.conversation_id, visibility = EXCLUDED.visibility,
          evidence = EXCLUDED.evidence, valid_at = EXCLUDED.valid_at,
          invalid_at = EXCLUDED.invalid_at, updated_at = NOW()
        RETURNING *`,
@@ -560,7 +560,7 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
         edge.scope.groupId ?? null,
         edge.scope.userId ?? null,
         edge.scope.agentId ?? null,
-        edge.scope.sessionId ?? null,
+        edge.scope.conversationId ?? null,
         edge.visibility ?? 'tenant',
         edge.evidence,
         edge.temporal.validAt.toISOString(),
@@ -622,6 +622,32 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
       [id, (invalidAt ?? new Date()).toISOString()]
     )
   }
+
+  // ── Counts ──
+
+  async countMemories(filter?: MemoryFilter): Promise<number> {
+    const { where, params } = filter ? buildMemoryWhere(filter) : { where: '', params: [] }
+    const whereClause = where ? `WHERE ${where}` : ''
+    const rows = await this.sql(
+      `SELECT COUNT(*)::integer AS n FROM ${this.memoriesTable} ${whereClause}`,
+      params
+    )
+    return (rows[0]?.['n'] as number) ?? 0
+  }
+
+  async countEntities(): Promise<number> {
+    const rows = await this.sql(
+      `SELECT COUNT(*)::integer AS n FROM ${this.entitiesTable} WHERE invalid_at IS NULL`
+    )
+    return (rows[0]?.['n'] as number) ?? 0
+  }
+
+  async countEdges(): Promise<number> {
+    const rows = await this.sql(
+      `SELECT COUNT(*)::integer AS n FROM ${this.edgesTable} WHERE invalid_at IS NULL`
+    )
+    return (rows[0]?.['n'] as number) ?? 0
+  }
 }
 
 // ── Row Mappers ──
@@ -652,7 +678,7 @@ function mapRowToMemory(row: Record<string, unknown>): MemoryRecord {
     Object.assign(base, {
       eventType: row.event_type as string,
       participants: row.participants as string[] | undefined,
-      sessionId: (row.episodic_session_id as string) ?? undefined,
+      conversationId: (row.episodic_conversation_id as string) ?? undefined,
       sequence: (row.sequence as number) ?? undefined,
       consolidatedAt: row.consolidated_at ? new Date(row.consolidated_at as string) : undefined,
     })
@@ -765,12 +791,12 @@ function buildMemoryWhere(
     params.push(filter.scope.agentId)
     conditions.push(`agent_id = ${p()}`)
   }
-  if (filter.sessionId) {
-    params.push(filter.sessionId)
-    conditions.push(`session_id = ${p()}`)
-  } else if (filter.scope?.sessionId) {
-    params.push(filter.scope.sessionId)
-    conditions.push(`session_id = ${p()}`)
+  if (filter.conversationId) {
+    params.push(filter.conversationId)
+    conditions.push(`conversation_id = ${p()}`)
+  } else if (filter.scope?.conversationId) {
+    params.push(filter.scope.conversationId)
+    conditions.push(`conversation_id = ${p()}`)
   }
   if (filter.visibility) {
     if (Array.isArray(filter.visibility)) {
@@ -831,7 +857,7 @@ function buildIdentityWhere(
   if (identity.groupId) { params.push(identity.groupId); conditions.push(`group_id = ${p()}`) }
   if (identity.userId) { params.push(identity.userId); conditions.push(`user_id = ${p()}`) }
   if (identity.agentId) { params.push(identity.agentId); conditions.push(`agent_id = ${p()}`) }
-  if (identity.sessionId) { params.push(identity.sessionId); conditions.push(`session_id = ${p()}`) }
+  if (identity.conversationId) { params.push(identity.conversationId); conditions.push(`conversation_id = ${p()}`) }
 
   return {
     where: conditions.join(' AND '),
@@ -848,6 +874,6 @@ function rowToIdentity(row: Record<string, unknown>): d8umIdentity {
   if (row.group_id) id.groupId = row.group_id as string
   if (row.user_id) id.userId = row.user_id as string
   if (row.agent_id) id.agentId = row.agent_id as string
-  if (row.session_id) id.sessionId = row.session_id as string
+  if (row.conversation_id) id.conversationId = row.conversation_id as string
   return id
 }

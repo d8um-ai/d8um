@@ -3,9 +3,9 @@ import { buildScope, scopeKey, scopeMatches, scopeToFilter } from '../types/scop
 
 describe('buildScope', () => {
   it('creates a scope from partial parts', () => {
-    const scope = buildScope({ userId: 'alice', sessionId: 's1' })
+    const scope = buildScope({ userId: 'alice', conversationId: 's1' })
     expect(scope.userId).toBe('alice')
-    expect(scope.sessionId).toBe('s1')
+    expect(scope.conversationId).toBe('s1')
     expect(scope.tenantId).toBeUndefined()
   })
 
@@ -19,13 +19,13 @@ describe('buildScope', () => {
       groupId: 'team-alpha',
       userId: 'alice',
       agentId: 'agent-1',
-      sessionId: 's1',
+      conversationId: 's1',
     })
     expect(scope.tenantId).toBe('org1')
     expect(scope.groupId).toBe('team-alpha')
     expect(scope.userId).toBe('alice')
     expect(scope.agentId).toBe('agent-1')
-    expect(scope.sessionId).toBe('s1')
+    expect(scope.conversationId).toBe('s1')
   })
 })
 
@@ -38,7 +38,7 @@ describe('scopeKey', () => {
   })
 
   it('includes all defined fields', () => {
-    const scope = buildScope({ tenantId: 'org1', userId: 'alice', sessionId: 's1' })
+    const scope = buildScope({ tenantId: 'org1', userId: 'alice', conversationId: 's1' })
     const key = scopeKey(scope)
     expect(key).toContain('t:org1')
     expect(key).toContain('u:alice')
@@ -59,7 +59,7 @@ describe('scopeKey', () => {
 
 describe('scopeMatches', () => {
   it('matches when query is a subset of record', () => {
-    const record = buildScope({ tenantId: 'org1', userId: 'alice', sessionId: 's1' })
+    const record = buildScope({ tenantId: 'org1', userId: 'alice', conversationId: 's1' })
     const query = buildScope({ userId: 'alice' })
     expect(scopeMatches(record, query)).toBe(true)
   })
@@ -78,9 +78,9 @@ describe('scopeMatches', () => {
 
   it('does not match when query requires a field not present in record', () => {
     const record = buildScope({ userId: 'alice' })
-    const query = buildScope({ userId: 'alice', sessionId: 's1' })
-    // record has no sessionId, query requires sessionId='s1'
-    // record.sessionId is undefined !== 's1'
+    const query = buildScope({ userId: 'alice', conversationId: 's1' })
+    // record has no conversationId, query requires conversationId='s1'
+    // record.conversationId is undefined !== 's1'
     expect(scopeMatches(record, query)).toBe(false)
   })
 

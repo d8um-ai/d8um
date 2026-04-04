@@ -9,7 +9,7 @@ function mapDocRow(row: Record<string, unknown>): d8umDocument {
     groupId: (row.group_id as string) ?? undefined,
     userId: (row.user_id as string) ?? undefined,
     agentId: (row.agent_id as string) ?? undefined,
-    sessionId: (row.session_id as string) ?? undefined,
+    conversationId: (row.conversation_id as string) ?? undefined,
     title: row.title as string,
     url: (row.url as string) ?? undefined,
     contentHash: row.content_hash as string,
@@ -34,7 +34,7 @@ export class PgDocumentStore {
   async upsert(input: UpsertDocumentInput): Promise<d8umDocument> {
     const rows = await this.sql(
       `INSERT INTO ${this.tableName}
-        (id, bucket_id, tenant_id, group_id, user_id, agent_id, session_id,
+        (id, bucket_id, tenant_id, group_id, user_id, agent_id, conversation_id,
          title, url, content_hash, chunk_count, status,
          visibility, document_type, source_type, metadata, indexed_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
@@ -48,7 +48,7 @@ export class PgDocumentStore {
            group_id = EXCLUDED.group_id,
            user_id = EXCLUDED.user_id,
            agent_id = EXCLUDED.agent_id,
-           session_id = EXCLUDED.session_id,
+           conversation_id = EXCLUDED.conversation_id,
            document_type = EXCLUDED.document_type,
            source_type = EXCLUDED.source_type,
            metadata = EXCLUDED.metadata,
@@ -62,7 +62,7 @@ export class PgDocumentStore {
         input.groupId ?? null,
         input.userId ?? null,
         input.agentId ?? null,
-        input.sessionId ?? null,
+        input.conversationId ?? null,
         input.title,
         input.url ?? null,
         input.contentHash,
@@ -149,9 +149,9 @@ function buildDocWhere(filter: DocumentFilter): { where: string; params: unknown
     params.push(filter.agentId)
     conditions.push(`agent_id = $${params.length}`)
   }
-  if (filter.sessionId != null) {
-    params.push(filter.sessionId)
-    conditions.push(`session_id = $${params.length}`)
+  if (filter.conversationId != null) {
+    params.push(filter.conversationId)
+    conditions.push(`conversation_id = $${params.length}`)
   }
   if (filter.status != null) {
     if (Array.isArray(filter.status)) {

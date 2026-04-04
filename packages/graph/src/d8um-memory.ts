@@ -1,4 +1,4 @@
-import type { EmbeddingProvider } from '@d8um-ai/core'
+import type { EmbeddingProvider, d8umEventSink, d8umEventType } from '@d8um-ai/core'
 import type { MemoryStoreAdapter } from './types/adapter.js'
 import type { d8umIdentity } from '@d8um-ai/core'
 import type {
@@ -16,6 +16,22 @@ import { WorkingMemory, type WorkingMemoryConfig } from './working-memory.js'
 import { createTemporal } from './temporal.js'
 import { generateId } from '@d8um-ai/core'
 
+// ── Memory Health Report ──
+
+export interface MemoryHealthReport {
+  totalMemories: number
+  activeMemories: number
+  invalidatedMemories: number
+  consolidatedMemories: number
+  /** active / (active + invalidated), 0–1. 1 = perfectly precise, 0 = all invalidated */
+  memoryPrecision: number
+  totalEntities: number
+  totalEdges: number
+  edgesPerEntity: number
+  /** Fraction of active memories below the decay threshold (rough staleness estimate) */
+  stalenessIndex: number
+}
+
 // ── d8umMemory Config ──
 
 export interface d8umMemoryConfig {
@@ -24,6 +40,7 @@ export interface d8umMemoryConfig {
   llm: LLMProvider
   scope: d8umIdentity
   workingMemory?: WorkingMemoryConfig | undefined
+  eventSink?: d8umEventSink | undefined
 }
 
 // ── d8umMemory ──
@@ -33,6 +50,7 @@ export interface d8umMemoryConfig {
 
 export class d8umMemory {
   readonly working: WorkingMemory
+  readonly identity: d8umIdentity
 
   private readonly store: MemoryStoreAdapter
   private readonly embedding: EmbeddingProvider
@@ -40,12 +58,15 @@ export class d8umMemory {
   private readonly scope: d8umIdentity
   private readonly extractor: MemoryExtractor
   private readonly invalidation: InvalidationEngine
+  private readonly eventSink: d8umEventSink | undefined
 
   constructor(config: d8umMemoryConfig) {
     this.store = config.memoryStore
     this.embedding = config.embedding
     this.llm = config.llm
     this.scope = config.scope
+    this.identity = config.scope
+    this.eventSink = config.eventSink
     this.working = new WorkingMemory(config.workingMemory)
 
     this.extractor = new MemoryExtractor({
@@ -57,6 +78,21 @@ export class d8umMemory {
     this.invalidation = new InvalidationEngine({
       llm: config.llm,
       store: config.memoryStore,
+    })
+  }
+
+  // ── Internal ──
+
+  private emit(eventType: d8umEventType, targetId: string | undefined, payload: Record<string, unknown>, durationMs?: number): void {
+    if (!this.eventSink) return
+    this.eventSink.emit({
+      id: crypto.randomUUID(),
+      eventType,
+      identity: this.scope,
+      targetId,
+      payload,
+      durationMs,
+      timestamp: new Date(),
     })
   }
 
@@ -84,7 +120,9 @@ export class d8umMemory {
       ...temporal,
     }
 
-    return this.store.upsert(record)
+    const result = await this.store.upsert(record)
+    this.emit('memory.write', result.id, { category, contentLength: content.length })
+    return result
   }
 
   /**
@@ -92,6 +130,7 @@ export class d8umMemory {
    */
   async forget(id: string): Promise<void> {
     await this.store.invalidate(id)
+    this.emit('memory.invalidate', id, {})
   }
 
   /**
@@ -157,11 +196,9 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
 
     await this.store.upsert(newFact)
 
-    return {
-      invalidated,
-      created: 1,
-      summary: `Invalidated ${invalidated} fact(s), created 1 corrected fact`,
-    }
+    const summary = `Invalidated ${invalidated} fact(s), created 1 corrected fact`
+    this.emit('memory.correct', undefined, { correction: naturalLanguageCorrection.slice(0, 100) })
+    return { invalidated, created: 1, summary }
   }
 
   // ── Retrieve ──
@@ -191,6 +228,11 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
       }
     }
 
+    this.emit('memory.read', undefined, {
+      query: query.slice(0, 100),
+      resultCount: results.length,
+      types: opts?.types,
+    })
     return results
   }
 
@@ -199,7 +241,9 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
    */
   async recallFacts(query: string, limit: number = 10): Promise<SemanticFact[]> {
     const results = await this.recall(query, { types: ['semantic'], limit })
-    return results.filter((r): r is SemanticFact => r.category === 'semantic')
+    const facts = results.filter((r): r is SemanticFact => r.category === 'semantic')
+    this.emit('memory.read', undefined, { query: query.slice(0, 100), resultCount: facts.length, source: 'facts' })
+    return facts
   }
 
   /**
@@ -225,7 +269,7 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
    */
   async addConversationTurn(
     messages: ConversationMessage[],
-    sessionId?: string,
+    conversationId?: string,
   ): Promise<ExtractionResult> {
     // Get existing facts for conflict resolution
     const existingFacts = await this.recallFacts(
@@ -236,7 +280,7 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
     const result = await this.extractor.processConversation(
       messages,
       existingFacts,
-      sessionId,
+      conversationId,
     )
 
     // Store episodic memories
@@ -334,5 +378,73 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
       return `<memory>\n${sections.join('\n')}\n</memory>`
     }
     return sections.join('\n\n')
+  }
+
+  // ── Health ──
+
+  /**
+   * Return a snapshot of memory system health and statistics.
+   * Uses count methods on the adapter when available; falls back to list() sampling.
+   */
+  async healthCheck(): Promise<MemoryHealthReport> {
+    let totalMemories: number
+    let activeMemories: number
+    let invalidatedMemories: number
+    let consolidatedMemories: number
+
+    if (this.store.countMemories) {
+      // Fast path: adapter supports native counts
+      ;[totalMemories, activeMemories, invalidatedMemories, consolidatedMemories] =
+        await Promise.all([
+          this.store.countMemories(),
+          this.store.countMemories({ status: 'active' }),
+          this.store.countMemories({ status: 'invalidated' }),
+          this.store.countMemories({ status: 'consolidated' }),
+        ])
+    } else {
+      // Fallback: list up to 1 000 records and tally in memory
+      const records = await this.store.list({}, 1000)
+      totalMemories = records.length
+      activeMemories = records.filter(r => r.status === 'active').length
+      invalidatedMemories = records.filter(r => r.status === 'invalidated').length
+      consolidatedMemories = records.filter(r => r.status === 'consolidated').length
+    }
+
+    const precision = (activeMemories + invalidatedMemories) > 0
+      ? activeMemories / (activeMemories + invalidatedMemories)
+      : 1
+
+    const totalEntities = this.store.countEntities
+      ? await this.store.countEntities()
+      : 0
+
+    const totalEdges = this.store.countEdges
+      ? await this.store.countEdges()
+      : 0
+
+    const edgesPerEntity = totalEntities > 0
+      ? Math.round((totalEdges / totalEntities) * 100) / 100
+      : 0
+
+    // Staleness: sample active memories and count those below decay threshold
+    let stalenessIndex = 0
+    if (activeMemories > 0) {
+      const { decayScore, DEFAULT_DECAY_CONFIG } = await import('./consolidation/decay.js')
+      const sample = await this.store.list({ status: 'active' }, Math.min(activeMemories, 500))
+      const stale = sample.filter(r => decayScore(r, DEFAULT_DECAY_CONFIG) < DEFAULT_DECAY_CONFIG.minScore)
+      stalenessIndex = Math.round((stale.length / sample.length) * 1000) / 1000
+    }
+
+    return {
+      totalMemories,
+      activeMemories,
+      invalidatedMemories,
+      consolidatedMemories,
+      memoryPrecision: Math.round(precision * 1000) / 1000,
+      totalEntities,
+      totalEdges,
+      edgesPerEntity,
+      stalenessIndex,
+    }
   }
 }

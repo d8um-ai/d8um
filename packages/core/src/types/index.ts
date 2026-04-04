@@ -68,4 +68,11 @@ export type { GraphBridge } from './graph-bridge.js'
 
 export type { ExtractionConfig } from './extraction-config.js'
 
+export type {
+  d8umEventType,
+  d8umEvent,
+  TokenUsage,
+  d8umEventSink,
+} from './events.js'
+
 export { D8umError, NotFoundError, NotInitializedError, ConfigError } from './errors.js'

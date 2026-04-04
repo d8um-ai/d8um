@@ -9,6 +9,7 @@ import type { LLMProvider } from './types/llm-provider.js'
 import type { GraphBridge } from './types/graph-bridge.js'
 import type { ExtractionConfig } from './types/extraction-config.js'
 import type { d8umIdentity } from './types/identity.js'
+import type { d8umEventSink } from './types/events.js'
 import type { ContextSearchOpts, ContextSearchResponse } from './query/context-search.js'
 import type { AISDKLLMInput } from './llm/ai-sdk-adapter.js'
 import { aiSdkEmbeddingProvider, isAISDKEmbeddingInput } from './embedding/ai-sdk-adapter.js'
@@ -50,6 +51,8 @@ export interface d8umConfig {
   graph?: GraphBridge | undefined
   /** Configure triple extraction behavior (single-pass vs two-pass, per-pass models). */
   extraction?: ExtractionConfig | undefined
+  /** Optional event sink for observability. Events are emitted fire-and-forget. */
+  eventSink?: d8umEventSink | undefined
 }
 
 function isEmbeddingProvider(
@@ -126,7 +129,7 @@ export interface d8umInstance {
   addConversationTurn(
     messages: Array<{ role: string; content: string; timestamp?: Date }>,
     identity: d8umIdentity,
-    sessionId?: string,
+    conversationId?: string,
   ): Promise<unknown>
 
   destroy(): Promise<void>
@@ -197,7 +200,7 @@ class d8umImpl implements d8umInstance {
         if (filter.groupId) all = all.filter(s => s.groupId === filter.groupId)
         if (filter.userId) all = all.filter(s => s.userId === filter.userId)
         if (filter.agentId) all = all.filter(s => s.agentId === filter.agentId)
-        if (filter.sessionId) all = all.filter(s => s.sessionId === filter.sessionId)
+        if (filter.conversationId) all = all.filter(s => s.conversationId === filter.conversationId)
       }
       return all
     },
@@ -420,6 +423,7 @@ class d8umImpl implements d8umInstance {
       [...this._buckets.keys()],
       this.bucketEmbeddings,
       this.config.graph,
+      this.config.eventSink,
     )
     const response = await planner.execute(text, {
       ...opts,
@@ -470,9 +474,9 @@ class d8umImpl implements d8umInstance {
   async addConversationTurn(
     messages: Array<{ role: string; content: string; timestamp?: Date }>,
     identity: d8umIdentity,
-    sessionId?: string,
+    conversationId?: string,
   ): Promise<unknown> {
-    return this.requireGraph().addConversationTurn(messages, identity, sessionId)
+    return this.requireGraph().addConversationTurn(messages, identity, conversationId)
   }
 
   async destroy(): Promise<void> {
@@ -480,7 +484,7 @@ class d8umImpl implements d8umInstance {
   }
 
   private createIndexEngine(embedding: EmbeddingProvider): IndexEngine {
-    const engine = new IndexEngine(this.adapter, embedding)
+    const engine = new IndexEngine(this.adapter, embedding, this.config.eventSink)
     if (this.config.llm && this.config.graph) {
       const mainLlm = resolveLLMProvider(this.config.llm)
       const ext = this.config.extraction

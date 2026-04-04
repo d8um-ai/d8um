@@ -196,7 +196,7 @@ await memory.delete('memory-id')
 
 | Dimension | d8um | Mem0 TS SDK |
 |---|---|---|
-| **Scope levels** | 5: tenantId, groupId, userId, agentId, sessionId | 3: userId, agentId, runId (+ metadata filters) |
+| **Scope levels** | 5: tenantId, groupId, userId, agentId, conversationId | 3: userId, agentId, runId (+ metadata filters) |
 | **Scope model** | Per-call identity (Segment-style), subset filtering | Per-call identity |
 | **Organization isolation** | tenantId + groupId for team-level sharing | organizationId + projectId (platform mode) |
 

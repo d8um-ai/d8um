@@ -1,7 +1,7 @@
 export type DocumentStatus = 'pending' | 'processing' | 'complete' | 'failed'
 
 /** Who can access this record. Defines the narrowest identity level that grants access. */
-export type Visibility = 'tenant' | 'group' | 'user' | 'agent' | 'session'
+export type Visibility = 'tenant' | 'group' | 'user' | 'agent' | 'conversation'
 
 export interface d8umDocument {
   /** UUID primary key. */
@@ -16,8 +16,8 @@ export interface d8umDocument {
   userId?: string | undefined
   /** Specific agent instance. */
   agentId?: string | undefined
-  /** Conversation session. */
-  sessionId?: string | undefined
+  /** Conversation thread. */
+  conversationId?: string | undefined
   title: string
   url?: string | undefined
   /** SHA256 of raw content at index time. Used for change detection. */
@@ -42,7 +42,7 @@ export interface DocumentFilter {
   groupId?: string | undefined
   userId?: string | undefined
   agentId?: string | undefined
-  sessionId?: string | undefined
+  conversationId?: string | undefined
   status?: DocumentStatus | DocumentStatus[] | undefined
   visibility?: Visibility | Visibility[] | undefined
   documentType?: string | string[] | undefined
@@ -58,7 +58,7 @@ export interface UpsertDocumentInput {
   groupId?: string | undefined
   userId?: string | undefined
   agentId?: string | undefined
-  sessionId?: string | undefined
+  conversationId?: string | undefined
   title: string
   url?: string | undefined
   contentHash: string

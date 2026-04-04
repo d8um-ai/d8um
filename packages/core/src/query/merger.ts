@@ -21,7 +21,7 @@ export interface NormalizedResult {
   userId?: string | undefined
   groupId?: string | undefined
   agentId?: string | undefined
-  sessionId?: string | undefined
+  conversationId?: string | undefined
 }
 
 export function dedupKey(r: NormalizedResult): string {

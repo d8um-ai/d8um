@@ -52,7 +52,7 @@ await memory.addConversationTurn([
 const episodes = await memory.recallEpisodes('database migration')
 ```
 
-Episodic memories include `eventType` (conversation, observation, action, tool trace), `participants`, `sessionId`, and `sequence` for temporal ordering. They can be consolidated into semantic facts over time.
+Episodic memories include `eventType` (conversation, observation, action, tool trace), `participants`, `conversationId`, and `sequence` for temporal ordering. They can be consolidated into semantic facts over time.
 
 ### Semantic Memory
 
@@ -194,7 +194,7 @@ d8um.jobs.create({ type: 'memory_consolidation', schedule: '0 3 * * *' })
 d8um.jobs.create({ type: 'memory_decay', schedule: '0 * * * *' })
 
 // Ingest conversations as a job
-d8um.jobs.create({ type: 'memory_conversation_ingest', config: { messages, sessionId } })
+d8um.jobs.create({ type: 'memory_conversation_ingest', config: { messages, conversationId } })
 ```
 
 The job system uses the same `JobTypeDefinition` interface as d8um's retrieval jobs, providing scheduling, status tracking, and run history.
@@ -209,7 +209,7 @@ const identity: d8umIdentity = {
   groupId: 'team-alpha',      // shared team/channel/project memory
   userId: 'alice',            // individual memory owner
   agentId: 'support-bot',     // specific agent's memory
-  sessionId: 'conv-123',      // conversation session
+  conversationId: 'conv-123', // conversation session
 }
 ```
 

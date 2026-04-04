@@ -39,6 +39,10 @@ export {
 export { WorkingMemory } from './working-memory.js'
 export type { WorkingMemoryItem, WorkingMemoryConfig } from './working-memory.js'
 
+// ── Events ──
+
+export type { d8umEvent, d8umEventType, d8umEventSink } from '@d8um-ai/core'
+
 // ── Extraction ──
 
 export type { LLMProvider } from '@d8um-ai/core'
@@ -92,7 +96,7 @@ export type { PgMemoryAdapterConfig } from './adapters/pgvector.js'
 // ── Unified API ──
 
 export { d8umMemory } from './d8um-memory.js'
-export type { d8umMemoryConfig } from './d8um-memory.js'
+export type { d8umMemoryConfig, MemoryHealthReport } from './d8um-memory.js'
 
 // ── Graph Bridge ──
 

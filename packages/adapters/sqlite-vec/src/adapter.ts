@@ -321,7 +321,7 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
     if (filter?.groupId) { conditions.push('group_id = ?'); params.push(filter.groupId) }
     if (filter?.userId) { conditions.push('user_id = ?'); params.push(filter.userId) }
     if (filter?.agentId) { conditions.push('agent_id = ?'); params.push(filter.agentId) }
-    if (filter?.sessionId) { conditions.push('session_id = ?'); params.push(filter.sessionId) }
+    if (filter?.conversationId) { conditions.push('conversation_id = ?'); params.push(filter.conversationId) }
     const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
     const rows = this.db.prepare(`SELECT * FROM ${this.bucketsTable}${where} ORDER BY created_at`).all(...params) as Record<string, unknown>[]
     return rows.map(r => ({ id: r.id as string, name: r.name as string, description: (r.description as string) ?? undefined, status: r.status as Bucket['status'], tenantId: (r.tenant_id as string) ?? undefined }))

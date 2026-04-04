@@ -60,7 +60,7 @@ export const MODEL_TABLE_SQL = (chunksTable: string, dimensions: number) => {
     group_id        TEXT,
     user_id         TEXT,
     agent_id        TEXT,
-    session_id      TEXT,
+    conversation_id      TEXT,
     document_id     TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     content         TEXT NOT NULL,
@@ -99,8 +99,8 @@ export const MODEL_TABLE_SQL = (chunksTable: string, dimensions: number) => {
   CREATE INDEX IF NOT EXISTS ${idx('tenant_agent_idx')}
     ON ${chunksTable} (tenant_id, agent_id);
 
-  CREATE INDEX IF NOT EXISTS ${idx('tenant_session_idx')}
-    ON ${chunksTable} (tenant_id, session_id);
+  CREATE INDEX IF NOT EXISTS ${idx('tenant_conversation_idx')}
+    ON ${chunksTable} (tenant_id, conversation_id);
 
   CREATE INDEX IF NOT EXISTS ${idx('user_idx')}
     ON ${chunksTable} (user_id);
@@ -111,8 +111,8 @@ export const MODEL_TABLE_SQL = (chunksTable: string, dimensions: number) => {
   CREATE INDEX IF NOT EXISTS ${idx('agent_idx')}
     ON ${chunksTable} (agent_id);
 
-  CREATE INDEX IF NOT EXISTS ${idx('session_idx')}
-    ON ${chunksTable} (session_id);
+  CREATE INDEX IF NOT EXISTS ${idx('conversation_idx')}
+    ON ${chunksTable} (conversation_id);
 `
 }
 
@@ -131,7 +131,7 @@ export const HASH_TABLE_SQL = (hashesTable: string) => {
     group_id        TEXT,
     user_id         TEXT,
     agent_id        TEXT,
-    session_id      TEXT,
+    conversation_id      TEXT,
     embedding_model TEXT NOT NULL,
     indexed_at      TIMESTAMPTZ NOT NULL,
     chunk_count     INTEGER NOT NULL
@@ -163,14 +163,14 @@ export const DOCUMENTS_TABLE_SQL = (documentsTable: string) => {
     group_id        TEXT,
     user_id         TEXT,
     agent_id        TEXT,
-    session_id      TEXT,
+    conversation_id      TEXT,
     title           TEXT NOT NULL DEFAULT '',
     url             TEXT,
     content_hash    TEXT NOT NULL,
     chunk_count     INTEGER NOT NULL DEFAULT 0,
     status          TEXT NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending', 'processing', 'complete', 'failed')),
-    visibility      TEXT CHECK (visibility IS NULL OR visibility IN ('tenant', 'group', 'user', 'agent', 'session')),
+    visibility      TEXT CHECK (visibility IS NULL OR visibility IN ('tenant', 'group', 'user', 'agent', 'conversation')),
     document_type   TEXT,
     source_type     TEXT,
     indexed_at      TIMESTAMPTZ,
@@ -203,8 +203,8 @@ export const DOCUMENTS_TABLE_SQL = (documentsTable: string) => {
   CREATE INDEX IF NOT EXISTS ${idx('tenant_agent_idx')}
     ON ${documentsTable} (tenant_id, agent_id);
 
-  CREATE INDEX IF NOT EXISTS ${idx('tenant_session_idx')}
-    ON ${documentsTable} (tenant_id, session_id);
+  CREATE INDEX IF NOT EXISTS ${idx('tenant_conversation_idx')}
+    ON ${documentsTable} (tenant_id, conversation_id);
 
   CREATE INDEX IF NOT EXISTS ${idx('user_idx')}
     ON ${documentsTable} (user_id);
@@ -215,8 +215,8 @@ export const DOCUMENTS_TABLE_SQL = (documentsTable: string) => {
   CREATE INDEX IF NOT EXISTS ${idx('agent_idx')}
     ON ${documentsTable} (agent_id);
 
-  CREATE INDEX IF NOT EXISTS ${idx('session_idx')}
-    ON ${documentsTable} (session_id);
+  CREATE INDEX IF NOT EXISTS ${idx('conversation_idx')}
+    ON ${documentsTable} (conversation_id);
 `
 }
 
@@ -236,7 +236,7 @@ export const BUCKETS_TABLE_SQL = (table: string) => {
     group_id    TEXT,
     user_id     TEXT,
     agent_id    TEXT,
-    session_id  TEXT,
+    conversation_id  TEXT,
     index_defaults JSONB,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -244,6 +244,83 @@ export const BUCKETS_TABLE_SQL = (table: string) => {
 
   CREATE INDEX IF NOT EXISTS ${idx('tenant_idx')}
     ON ${table} (tenant_id);
+`
+}
+
+/**
+ * DDL for the events table — append-only audit/observability log.
+ * Created once during deploy().
+ */
+export const EVENTS_TABLE_SQL = (eventsTable: string) => {
+  const idx = (suffix: string) => safeIdx(eventsTable, suffix)
+  return `
+  CREATE TABLE IF NOT EXISTS ${eventsTable} (
+    id              TEXT PRIMARY KEY,
+    event_type      TEXT NOT NULL,
+    tenant_id       TEXT,
+    group_id        TEXT,
+    user_id         TEXT,
+    agent_id        TEXT,
+    conversation_id TEXT,
+    target_id       TEXT,
+    target_type     TEXT,
+    payload         JSONB NOT NULL DEFAULT '{}',
+    duration_ms     INTEGER,
+    trace_id        TEXT,
+    span_id         TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
+  CREATE INDEX IF NOT EXISTS ${idx('tenant_time_idx')}
+    ON ${eventsTable} (tenant_id, created_at);
+
+  CREATE INDEX IF NOT EXISTS ${idx('type_time_idx')}
+    ON ${eventsTable} (event_type, created_at);
+
+  CREATE INDEX IF NOT EXISTS ${idx('target_idx')}
+    ON ${eventsTable} (target_id);
+
+  CREATE INDEX IF NOT EXISTS ${idx('conversation_time_idx')}
+    ON ${eventsTable} (conversation_id, created_at);
+
+  CREATE INDEX IF NOT EXISTS ${idx('agent_time_idx')}
+    ON ${eventsTable} (agent_id, created_at);
+
+  CREATE INDEX IF NOT EXISTS ${idx('trace_idx')}
+    ON ${eventsTable} (trace_id);
+`
+}
+
+/**
+ * DDL for the policies table — governance rules for memory access, retention, and data flow.
+ * Created once during deploy().
+ */
+export const POLICIES_TABLE_SQL = (policiesTable: string) => {
+  const idx = (suffix: string) => safeIdx(policiesTable, suffix)
+  return `
+  CREATE TABLE IF NOT EXISTS ${policiesTable} (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    policy_type TEXT NOT NULL
+                CHECK (policy_type IN ('access', 'retention', 'data_flow')),
+    tenant_id   TEXT,
+    group_id    TEXT,
+    user_id     TEXT,
+    agent_id    TEXT,
+    rules       JSONB NOT NULL,
+    enabled     BOOLEAN DEFAULT true,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
+  CREATE INDEX IF NOT EXISTS ${idx('tenant_idx')}
+    ON ${policiesTable} (tenant_id);
+
+  CREATE INDEX IF NOT EXISTS ${idx('type_idx')}
+    ON ${policiesTable} (policy_type);
+
+  CREATE INDEX IF NOT EXISTS ${idx('enabled_idx')}
+    ON ${policiesTable} (enabled) WHERE enabled = true;
 `
 }
 

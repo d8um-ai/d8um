@@ -5,7 +5,7 @@ export interface EmbeddedChunk {
   groupId?: string | undefined
   userId?: string | undefined
   agentId?: string | undefined
-  sessionId?: string | undefined
+  conversationId?: string | undefined
   /** UUID referencing d8um_documents.id. */
   documentId: string
 
@@ -25,7 +25,7 @@ export interface ChunkFilter {
   groupId?: string | undefined
   userId?: string | undefined
   agentId?: string | undefined
-  sessionId?: string | undefined
+  conversationId?: string | undefined
   documentId?: string | undefined
   idempotencyKey?: string | undefined
   metadata?: Record<string, unknown> | undefined

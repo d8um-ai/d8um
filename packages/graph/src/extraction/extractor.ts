@@ -152,7 +152,7 @@ export class MemoryExtractor {
    */
   createEpisodicMemory(
     messages: ConversationMessage[],
-    sessionId?: string,
+    conversationId?: string,
     sequence?: number,
   ): EpisodicMemory {
     const content = messages
@@ -174,7 +174,7 @@ export class MemoryExtractor {
       scope: this.scope,
       eventType: 'conversation',
       participants: [...new Set(messages.filter(m => m.role === 'user').map(() => this.scope.userId).filter(Boolean) as string[])],
-      sessionId,
+      conversationId,
       sequence,
       ...temporal,
     }
@@ -211,11 +211,11 @@ export class MemoryExtractor {
   async processConversation(
     messages: ConversationMessage[],
     existingFacts: SemanticFact[] = [],
-    sessionId?: string,
+    conversationId?: string,
     sequence?: number,
   ): Promise<ExtractionResult> {
     // Create episodic memory
-    const episode = this.createEpisodicMemory(messages, sessionId, sequence)
+    const episode = this.createEpisodicMemory(messages, conversationId, sequence)
 
     // Phase 1: Extract candidate facts
     const candidates = await this.extractFacts(messages)

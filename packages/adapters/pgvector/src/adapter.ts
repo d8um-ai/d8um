@@ -5,7 +5,7 @@ import type { Bucket } from '@d8um-ai/core'
 import { generateId, DEFAULT_BUCKET_ID } from '@d8um-ai/core'
 import {
   REGISTRY_SQL, MODEL_TABLE_SQL, HASH_TABLE_SQL, DOCUMENTS_TABLE_SQL,
-  BUCKETS_TABLE_SQL,
+  BUCKETS_TABLE_SQL, EVENTS_TABLE_SQL, POLICIES_TABLE_SQL,
   sanitizeModelKey,
 } from './migrations.js'
 import { PgHashStore } from './hash-store.js'
@@ -55,6 +55,8 @@ export class PgVectorAdapter implements VectorStoreAdapter {
   private documentsTable: string
   private registryTable: string
   private bucketsTable: string
+  private eventsTable: string
+  private policiesTable: string
 
   /** model key → table name */
   private modelTables = new Map<string, string>()
@@ -70,6 +72,8 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     this.hashesTable = config.hashesTable ?? `${prefix}d8um_hashes`
     this.documentsTable = config.documentsTable ?? `${prefix}d8um_documents`
     this.bucketsTable = config.bucketsTable ?? `${prefix}d8um_buckets`
+    this.eventsTable = `${prefix}d8um_events`
+    this.policiesTable = `${prefix}d8um_policies`
     this.registryTable = `${this.tablePrefix}_registry`
     this.hashStore = new PgHashStore(this.sql, this.hashesTable)
     this.documentStore = new PgDocumentStore(this.sql, this.documentsTable)
@@ -91,6 +95,8 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     await this.execStatements(HASH_TABLE_SQL(this.hashesTable))
     await this.execStatements(DOCUMENTS_TABLE_SQL(this.documentsTable))
     await this.execStatements(BUCKETS_TABLE_SQL(this.bucketsTable))
+    await this.execStatements(EVENTS_TABLE_SQL(this.eventsTable))
+    await this.execStatements(POLICIES_TABLE_SQL(this.policiesTable))
     await this.hashStore.initialize()
   }
 
@@ -152,6 +158,8 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     await this.sql(`DROP TABLE IF EXISTS ${this.hashesTable}_run_times`)
     await this.sql(`DROP TABLE IF EXISTS ${this.hashesTable}`)
     await this.sql(`DROP TABLE IF EXISTS ${this.registryTable}`)
+    await this.sql(`DROP TABLE IF EXISTS ${this.eventsTable}`)
+    await this.sql(`DROP TABLE IF EXISTS ${this.policiesTable}`)
 
     this.modelTables.clear()
 
@@ -190,7 +198,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     const groupIds: (string | null)[] = []
     const userIds: (string | null)[] = []
     const agentIds: (string | null)[] = []
-    const sessionIds: (string | null)[] = []
+    const conversationIds: (string | null)[] = []
     const documentIds: string[] = []
     const idempotencyKeys: string[] = []
     const contents: string[] = []
@@ -208,7 +216,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
       groupIds.push(chunk.groupId ?? null)
       userIds.push(chunk.userId ?? null)
       agentIds.push(chunk.agentId ?? null)
-      sessionIds.push(chunk.sessionId ?? null)
+      conversationIds.push(chunk.conversationId ?? null)
       documentIds.push(chunk.documentId)
       idempotencyKeys.push(chunk.idempotencyKey)
       contents.push(chunk.content)
@@ -222,7 +230,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
 
     await this.sql(
       `INSERT INTO ${table}
-        (id, bucket_id, tenant_id, group_id, user_id, agent_id, session_id,
+        (id, bucket_id, tenant_id, group_id, user_id, agent_id, conversation_id,
          document_id, idempotency_key, content, embedding,
          embedding_model, chunk_index, total_chunks, metadata, indexed_at)
        SELECT * FROM unnest(
@@ -238,7 +246,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
         metadata        = EXCLUDED.metadata,
         indexed_at      = EXCLUDED.indexed_at`,
       [
-        chunkIds, sourceIds, tenantIds, groupIds, userIds, agentIds, sessionIds,
+        chunkIds, sourceIds, tenantIds, groupIds, userIds, agentIds, conversationIds,
         documentIds, idempotencyKeys, contents, embeddings,
         embeddingModels, chunkIndices, totalChunks, metadatas, indexedAts,
       ]
@@ -508,7 +516,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
                d.content_hash AS doc_content_hash, d.chunk_count AS doc_chunk_count,
                d.status AS doc_status, d.visibility AS doc_visibility,
                d.group_id AS doc_group_id, d.user_id AS doc_user_id,
-               d.agent_id AS doc_agent_id, d.session_id AS doc_session_id,
+               d.agent_id AS doc_agent_id, d.conversation_id AS doc_conversation_id,
                d.document_type AS doc_document_type, d.source_type AS doc_source_type,
                d.indexed_at AS doc_indexed_at, d.created_at AS doc_created_at,
                d.updated_at AS doc_updated_at, d.metadata AS doc_metadata
@@ -557,20 +565,20 @@ export class PgVectorAdapter implements VectorStoreAdapter {
   async upsertBucket(bucket: Bucket): Promise<Bucket> {
     const rows = await this.sql(
       `INSERT INTO ${this.bucketsTable}
-        (id, name, description, status, tenant_id, group_id, user_id, agent_id, session_id, index_defaults, updated_at)
+        (id, name, description, status, tenant_id, group_id, user_id, agent_id, conversation_id, index_defaults, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name, description = EXCLUDED.description,
          status = EXCLUDED.status, tenant_id = EXCLUDED.tenant_id,
          group_id = EXCLUDED.group_id, user_id = EXCLUDED.user_id,
-         agent_id = EXCLUDED.agent_id, session_id = EXCLUDED.session_id,
+         agent_id = EXCLUDED.agent_id, conversation_id = EXCLUDED.conversation_id,
          index_defaults = EXCLUDED.index_defaults,
          updated_at = NOW()
        RETURNING *`,
       [
         bucket.id, bucket.name, bucket.description ?? null, bucket.status,
         bucket.tenantId ?? null, bucket.groupId ?? null, bucket.userId ?? null,
-        bucket.agentId ?? null, bucket.sessionId ?? null,
+        bucket.agentId ?? null, bucket.conversationId ?? null,
         bucket.indexDefaults ? JSON.stringify(bucket.indexDefaults) : null,
       ]
     )
@@ -589,7 +597,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     if (filter?.groupId) { params.push(filter.groupId); conditions.push(`group_id = $${params.length}`) }
     if (filter?.userId) { params.push(filter.userId); conditions.push(`user_id = $${params.length}`) }
     if (filter?.agentId) { params.push(filter.agentId); conditions.push(`agent_id = $${params.length}`) }
-    if (filter?.sessionId) { params.push(filter.sessionId); conditions.push(`session_id = $${params.length}`) }
+    if (filter?.conversationId) { params.push(filter.conversationId); conditions.push(`conversation_id = $${params.length}`) }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
     const rows = await this.sql(`SELECT * FROM ${this.bucketsTable} ${where} ORDER BY created_at`, params)
     return rows.map(mapRowToBucket)
@@ -633,9 +641,9 @@ function buildWhere(filter?: ChunkFilter): { where: string; params: unknown[] } 
     params.push(filter.agentId)
     conditions.push(`agent_id = $${params.length}`)
   }
-  if (filter.sessionId != null) {
-    params.push(filter.sessionId)
-    conditions.push(`session_id = $${params.length}`)
+  if (filter.conversationId != null) {
+    params.push(filter.conversationId)
+    conditions.push(`conversation_id = $${params.length}`)
   }
   if (filter.documentId != null) {
     params.push(filter.documentId)
@@ -663,7 +671,7 @@ function mapRowToScoredChunk(
     groupId: (row.group_id as string) ?? undefined,
     userId: (row.user_id as string) ?? undefined,
     agentId: (row.agent_id as string) ?? undefined,
-    sessionId: (row.session_id as string) ?? undefined,
+    conversationId: (row.conversation_id as string) ?? undefined,
     documentId: row.document_id as string,
     content: row.content as string,
     embedding: [], // Don't return the full vector - too large and unnecessary
@@ -695,7 +703,7 @@ function mapRowToBucket(row: Record<string, unknown>): Bucket {
     groupId: (row.group_id as string) ?? undefined,
     userId: (row.user_id as string) ?? undefined,
     agentId: (row.agent_id as string) ?? undefined,
-    sessionId: (row.session_id as string) ?? undefined,
+    conversationId: (row.conversation_id as string) ?? undefined,
   }
 }
 
@@ -707,7 +715,7 @@ function mapRowToDocument(row: Record<string, unknown>): d8umDocument {
     groupId: (row.doc_group_id as string) ?? undefined,
     userId: (row.doc_user_id as string) ?? undefined,
     agentId: (row.doc_agent_id as string) ?? undefined,
-    sessionId: (row.doc_session_id as string) ?? undefined,
+    conversationId: (row.doc_conversation_id as string) ?? undefined,
     title: row.doc_title as string,
     url: (row.doc_url as string) ?? undefined,
     contentHash: row.doc_content_hash as string,

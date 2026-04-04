@@ -45,6 +45,10 @@ export type {
   d8umIdentity,
   GraphBridge,
   ExtractionConfig,
+  d8umEvent,
+  d8umEventType,
+  d8umEventSink,
+  TokenUsage,
 } from './types/index.js'
 export { IndexError } from './types/index.js'
 export { D8umError, NotFoundError, NotInitializedError, ConfigError } from './types/index.js'

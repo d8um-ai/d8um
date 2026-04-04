@@ -67,7 +67,7 @@ When you call `d8um.deploy()`, d8um creates these tables in your database:
 
 | Table | Purpose |
 |-------|---------|
-| `d8um_documents` | Document records with identity columns (tenant_id, group_id, user_id, agent_id, session_id) and visibility |
+| `d8um_documents` | Document records with identity columns (tenant_id, group_id, user_id, agent_id, conversation_id) and visibility |
 | `d8um_hashes` | Content hashes for deduplication and incremental sync |
 | `d8um_buckets` | Bucket registry with identity columns |
 | `d8um_jobs` | Scheduled job definitions with identity columns |
@@ -94,7 +94,7 @@ d8um_chunks_openai_text_embedding_3_small (
   group_id        TEXT,
   user_id         TEXT,
   agent_id        TEXT,
-  session_id      TEXT,
+  conversation_id TEXT,
   document_id     UUID REFERENCES d8um_documents,
   content         TEXT,
   embedding       VECTOR(1536),          -- pgvector column
@@ -284,7 +284,7 @@ await d8um.ingest(bucket.id, documents, {
   groupId: 'team-alpha',       // team, channel, or project
   userId: 'alice',             // individual user
   agentId: 'support-bot',      // specific agent instance
-  sessionId: 'conv-123',       // conversation session
+  conversationId: 'conv-123',   // conversation session
 })
 
 // Queries filter by identity automatically
@@ -294,7 +294,7 @@ const { results } = await d8um.query('SSO setup', {
 })
 ```
 
-Each identity-bearing table includes 9 B-tree indexes for efficient filtering. Documents also carry a `visibility` field (`'tenant' | 'group' | 'user' | 'agent' | 'session'`) that controls access level.
+Each identity-bearing table includes 9 B-tree indexes for efficient filtering. Documents also carry a `visibility` field (`'tenant' | 'group' | 'user' | 'agent' | 'conversation'`) that controls access level.
 
 ### Postgres Schema Isolation
 

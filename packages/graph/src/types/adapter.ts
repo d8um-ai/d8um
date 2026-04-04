@@ -17,7 +17,7 @@ export interface MemoryFilter {
   groupId?: string | undefined
   userId?: string | undefined
   agentId?: string | undefined
-  sessionId?: string | undefined
+  conversationId?: string | undefined
   visibility?: Visibility | Visibility[] | undefined
   category?: MemoryCategory | MemoryCategory[] | undefined
   /** Filter by lifecycle status */
@@ -89,4 +89,13 @@ export interface MemoryStoreAdapter {
   getEdgesBatch?(entityIds: string[], direction?: 'in' | 'out' | 'both'): Promise<SemanticEdge[]>
   findEdges?(sourceId: string, targetId: string, relation?: string): Promise<SemanticEdge[]>
   invalidateEdge?(id: string, invalidAt?: Date): Promise<void>
+
+  // ── Counts (optional - used for health checks) ──
+
+  /** Count memory records matching an optional filter. */
+  countMemories?(filter?: MemoryFilter): Promise<number>
+  /** Count total semantic entities. */
+  countEntities?(): Promise<number>
+  /** Count total semantic edges. */
+  countEdges?(): Promise<number>
 }

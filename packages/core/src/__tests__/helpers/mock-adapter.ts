@@ -233,7 +233,7 @@ export function createMockAdapter(): VectorStoreAdapter & {
         groupId: input.groupId,
         userId: input.userId,
         agentId: input.agentId,
-        sessionId: input.sessionId,
+        conversationId: input.conversationId,
         documentType: input.documentType,
         sourceType: input.sourceType,
         indexedAt: now,

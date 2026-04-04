@@ -183,7 +183,7 @@ describe('MemoryExtractor', () => {
 
       expect(episode.category).toBe('episodic')
       expect(episode.eventType).toBe('conversation')
-      expect(episode.sessionId).toBe('session-1')
+      expect(episode.conversationId).toBe('session-1')
       expect(episode.sequence).toBe(1)
       expect(episode.content).toContain('Hello world')
       expect(episode.scope).toEqual(testScope)

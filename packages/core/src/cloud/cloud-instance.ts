@@ -45,7 +45,7 @@ export function createCloudInstance(config: CloudConfig): d8umCloudInstance {
       if (filter?.groupId) searchParams.set('groupId', filter.groupId)
       if (filter?.userId) searchParams.set('userId', filter.userId)
       if (filter?.agentId) searchParams.set('agentId', filter.agentId)
-      if (filter?.sessionId) searchParams.set('sessionId', filter.sessionId)
+      if (filter?.conversationId) searchParams.set('conversationId', filter.conversationId)
       const qs = searchParams.toString()
       return client.get<Bucket[]>(`/v1/buckets${qs ? `?${qs}` : ''}`)
     },
@@ -131,9 +131,9 @@ export function createCloudInstance(config: CloudConfig): d8umCloudInstance {
     async addConversationTurn(
       messages: Array<{ role: string; content: string; timestamp?: Date }>,
       identity: d8umIdentity,
-      sessionId?: string,
+      conversationId?: string,
     ): Promise<unknown> {
-      return client.post('/v1/memory/conversation', { messages, identity, sessionId })
+      return client.post('/v1/memory/conversation', { messages, identity, conversationId })
     },
 
     async destroy(): Promise<void> {

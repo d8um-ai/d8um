@@ -92,7 +92,7 @@ export async function searchWithContext(
       userId: r.userId,
       groupId: r.groupId,
       agentId: r.agentId,
-      sessionId: r.sessionId,
+      conversationId: r.conversationId,
     },
     chunk: r.chunk ?? { index: 0, total: 1, isNeighbor: false },
     metadata: r.metadata,

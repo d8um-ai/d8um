@@ -22,13 +22,13 @@ All user-facing tables use a standardized 5-field identity model with explicit B
 | `groupId` | `group_id TEXT` | Team, channel, or project |
 | `userId` | `user_id TEXT` | Individual user |
 | `agentId` | `agent_id TEXT` | Specific agent instance |
-| `sessionId` | `session_id TEXT` | Conversation session |
+| `conversationId` | `conversation_id TEXT` | Conversation session |
 
-**Visibility** controls access level: `'tenant' | 'group' | 'user' | 'agent' | 'session'`. Stored as a `TEXT` column with CHECK constraint. Replaces the old `DocumentScope` type (which only had `'tenant' | 'group' | 'user'`).
+**Visibility** controls access level: `'tenant' | 'group' | 'user' | 'agent' | 'conversation'`. Stored as a `TEXT` column with CHECK constraint. Replaces the old `DocumentScope` type (which only had `'tenant' | 'group' | 'user'`).
 
 **Indexes per identity-bearing table (9 B-tree indexes):**
-- 4 composite: `(tenant_id, user_id)`, `(tenant_id, group_id)`, `(tenant_id, agent_id)`, `(tenant_id, session_id)`
-- 4 individual: `(user_id)`, `(group_id)`, `(agent_id)`, `(session_id)`
+- 4 composite: `(tenant_id, user_id)`, `(tenant_id, group_id)`, `(tenant_id, agent_id)`, `(tenant_id, conversation_id)`
+- 4 individual: `(user_id)`, `(group_id)`, `(agent_id)`, `(conversation_id)`
 - 1 visibility: `(visibility)`
 
 **Tables with full identity columns:**
@@ -344,7 +344,7 @@ Note: neural graph tables use `{prefix}memories` (no extra underscore), e.g. `be
 
 #### Current DB State (as of 2026-04-02)
 
-**NOTE:** All existing tables in the live database pre-date the identity model standardization (2026-04-02). They are missing the `group_id`, `user_id`, `agent_id`, `session_id` columns on chunks/hashes/buckets/jobs, and the `visibility` column on documents (still has `scope`). Memory tables are missing explicit identity columns. Any reseed will need fresh table creation (DROP + deploy) or ALTER TABLE migrations. The `schema` isolation feature only applies to new deployments.
+**NOTE:** All existing tables in the live database pre-date the identity model standardization (2026-04-02). They are missing the `group_id`, `user_id`, `agent_id`, `conversation_id` columns on chunks/hashes/buckets/jobs, and the `visibility` column on documents (still has `scope`). Memory tables are missing explicit identity columns. Any reseed will need fresh table creation (DROP + deploy) or ALTER TABLE migrations. The `schema` isolation feature only applies to new deployments.
 
 
 | Dataset | Variant | Chunks | Docs | Hashes | Graph (entities/edges) | Status |
@@ -927,19 +927,19 @@ Earlier 100-query sample showed 56.6% — the full eval converged to 58.4%, demo
 
 ### 2026-04-02 — Identity model standardization + Postgres schema isolation
 
-**Goal:** Standardize the 5-field identity model (`tenantId`, `groupId`, `userId`, `agentId`, `sessionId`) across every table, type, and query path in the SDK. Add `Visibility` type. Add Postgres schema isolation support.
+**Goal:** Standardize the 5-field identity model (`tenantId`, `groupId`, `userId`, `agentId`, `conversationId`) across every table, type, and query path in the SDK. Add `Visibility` type. Add Postgres schema isolation support.
 
 #### Changes made (23 files modified, 1 created)
 
 **Type layer (`packages/core/src/types/`):**
-- Renamed `DocumentScope` → `Visibility`, expanded from `'tenant' | 'group' | 'user'` to include `'agent' | 'session'`
-- Added `groupId`, `userId`, `agentId`, `sessionId` to: `IndexOpts`, `ChunkFilter`, `EmbeddedChunk`, `Bucket`, `CreateBucketInput`, `Job`, `CreateJobInput`
-- Added `agentId`, `sessionId`, `visibility` to: `d8umDocument`, `DocumentFilter`, `UpsertDocumentInput`
+- Renamed `DocumentScope` → `Visibility`, expanded from `'tenant' | 'group' | 'user'` to include `'agent' | 'conversation'`
+- Added `groupId`, `userId`, `agentId`, `conversationId` to: `IndexOpts`, `ChunkFilter`, `EmbeddedChunk`, `Bucket`, `CreateBucketInput`, `Job`, `CreateJobInput`
+- Added `agentId`, `conversationId`, `visibility` to: `d8umDocument`, `DocumentFilter`, `UpsertDocumentInput`
 - Added `deploy?(): Promise<void>` to `GraphBridge` interface
 - Updated `d8umResult.bucket` to carry all 5 identity fields + `visibility` (was `scope`)
 
 **DDL / Schema (`packages/adapters/pgvector/src/migrations.ts`):**
-- Added `group_id`, `user_id`, `agent_id`, `session_id` columns to chunks, documents, hashes, buckets, jobs tables
+- Added `group_id`, `user_id`, `agent_id`, `conversation_id` columns to chunks, documents, hashes, buckets, jobs tables
 - Replaced `scope TEXT` with `visibility TEXT` (with expanded CHECK constraint) on documents
 - Changed documents `group_id`/`user_id` from UUID to TEXT (consistent with all other identity columns)
 - Added 8 B-tree indexes per table (4 composite tenant+sub, 4 individual) + visibility index on documents
@@ -948,7 +948,7 @@ Earlier 100-query sample showed 56.6% — the full eval converged to 58.4%, demo
 **Memory DDL (`packages/graph/src/adapters/pgvector.ts`):**
 - Added 5 explicit identity columns + `visibility` column (with CHECK constraint) to memories, entities, edges tables
 - Added 9 B-tree indexes per table (same pattern as core tables)
-- Renamed episodic `session_id` → `episodic_session_id` to avoid collision with identity `session_id`
+- Renamed episodic `session_id` → `episodic_session_id` to avoid collision with identity `conversation_id`
 - Added `schema` config + `CREATE SCHEMA IF NOT EXISTS` in `initialize()`
 - Index naming: `idxPrefix(t)` replaces dots with underscores for schema-qualified table names (Postgres cannot schema-qualify index names in `CREATE INDEX`)
 - HNSW index creation (`ensureHnswIndex`) uses same `idxPrefix` pattern
@@ -965,14 +965,14 @@ Earlier 100-query sample showed 56.6% — the full eval converged to 58.4%, demo
 
 **Document store (`packages/adapters/pgvector/src/document-store.ts`):**
 - `upsert`: 15 params with all identity fields, `scope` → `visibility`
-- `buildDocWhere()`: filters on `agentId`, `sessionId`, `visibility` (was `scope`)
+- `buildDocWhere()`: filters on `agentId`, `conversationId`, `visibility` (was `scope`)
 
 **Query pipeline:**
 - `IndexedRunner.run()`: accepts full `d8umIdentity` (was `tenantId?: string`), passes all 5 fields to chunk filter
 - `QueryPlanner`: passes full identity to IndexedRunner (was only `tenantId`)
-- `merger.ts`: `NormalizedResult` carries `documentVisibility`, `agentId`, `sessionId` (was `documentScope`)
+- `merger.ts`: `NormalizedResult` carries `documentVisibility`, `agentId`, `conversationId` (was `documentScope`)
 - `context-search.ts`: passes identity object, maps `visibility` (was `scope`)
-- `planner.ts`: maps `visibility`, `agentId`, `sessionId` to result bucket
+- `planner.ts`: maps `visibility`, `agentId`, `conversationId` to result bucket
 
 **Ingest pipeline (`packages/core/src/index-engine/engine.ts`):**
 - All 3 ingest methods (`indexWithConnector`, `ingestWithChunks`, `ingestBatch`): destructure full identity from `IndexOpts`, propagate to documents and embedded chunks

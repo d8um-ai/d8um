@@ -68,10 +68,10 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
   async function addConversationTurn(
     messages: Array<{ role: string; content: string; timestamp?: Date }>,
     identity: d8umIdentity,
-    sessionId?: string,
+    conversationId?: string,
   ): Promise<unknown> {
     const mem = getMemory(identity)
-    return mem.addConversationTurn(messages as ConversationMessage[], sessionId)
+    return mem.addConversationTurn(messages as ConversationMessage[], conversationId)
   }
 
   async function recall(query: string, identity: d8umIdentity, opts?: { limit?: number; types?: string[] }): Promise<unknown[]> {

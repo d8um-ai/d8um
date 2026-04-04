@@ -67,7 +67,7 @@ export interface EpisodicMemory extends MemoryRecord {
   /** Participants involved in this episode */
   participants?: string[] | undefined
   /** Session this episode belongs to */
-  sessionId?: string | undefined
+  conversationId?: string | undefined
   /** Ordering within a session */
   sequence?: number | undefined
   /** Whether this episode has been consolidated into semantic/procedural memory */

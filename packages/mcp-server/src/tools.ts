@@ -1,4 +1,4 @@
-import type { d8umMemory } from '@d8um-ai/graph'
+import type { d8umMemory, d8umEventSink } from '@d8um-ai/graph'
 
 // ── MCP Tool Definitions ──
 // These define the tools that the MCP server exposes to AI agents.
@@ -89,9 +89,17 @@ export function getToolDefinitions(): MCPToolDefinition[] {
             },
             description: 'Conversation messages to ingest',
           },
-          sessionId: { type: 'string', description: 'Optional session identifier' },
+          conversationId: { type: 'string', description: 'Optional session identifier' },
         },
         required: ['messages'],
+      },
+    },
+    {
+      name: 'd8um_health_check',
+      description: 'Check the health and statistics of the memory system. Returns precision, staleness, entity/edge counts.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
       },
     },
   ]
@@ -104,40 +112,93 @@ export async function executeTool(
   memory: d8umMemory,
   toolName: string,
   args: Record<string, unknown>,
+  eventSink?: d8umEventSink,
 ): Promise<unknown> {
-  switch (toolName) {
-    case 'd8um_remember':
-      return memory.remember(
-        args['content'] as string,
-        (args['category'] as 'episodic' | 'semantic' | 'procedural') ?? 'semantic',
-      )
+  const identity = memory.identity
 
-    case 'd8um_recall':
-      return memory.recall(args['query'] as string, {
-        types: args['types'] as ('episodic' | 'semantic' | 'procedural')[] | undefined,
-        limit: args['limit'] as number | undefined,
+  if (eventSink && identity) {
+    eventSink.emit({
+      id: crypto.randomUUID(),
+      eventType: 'tool.call',
+      identity,
+      payload: { toolName, args },
+      timestamp: new Date(),
+    })
+  }
+
+  const t0 = Date.now()
+
+  try {
+    let result: unknown
+    switch (toolName) {
+      case 'd8um_remember':
+        result = await memory.remember(
+          args['content'] as string,
+          (args['category'] as 'episodic' | 'semantic' | 'procedural') ?? 'semantic',
+        )
+        break
+
+      case 'd8um_recall':
+        result = await memory.recall(args['query'] as string, {
+          types: args['types'] as ('episodic' | 'semantic' | 'procedural')[] | undefined,
+          limit: args['limit'] as number | undefined,
+        })
+        break
+
+      case 'd8um_recall_facts':
+        result = await memory.recallFacts(
+          args['query'] as string,
+          (args['limit'] as number) ?? 10,
+        )
+        break
+
+      case 'd8um_forget':
+        await memory.forget(args['id'] as string)
+        result = { success: true }
+        break
+
+      case 'd8um_correct':
+        result = await memory.correct(args['correction'] as string)
+        break
+
+      case 'd8um_add_conversation':
+        result = await memory.addConversationTurn(
+          args['messages'] as { role: 'user' | 'assistant' | 'system' | 'tool'; content: string }[],
+          args['conversationId'] as string | undefined,
+        )
+        break
+
+      case 'd8um_health_check':
+        result = await memory.healthCheck()
+        break
+
+      default:
+        throw new Error(`Unknown tool: ${toolName}`)
+    }
+
+    if (eventSink && identity) {
+      eventSink.emit({
+        id: crypto.randomUUID(),
+        eventType: 'tool.result',
+        identity,
+        payload: { toolName, success: true },
+        durationMs: Date.now() - t0,
+        timestamp: new Date(),
       })
+    }
 
-    case 'd8um_recall_facts':
-      return memory.recallFacts(
-        args['query'] as string,
-        (args['limit'] as number) ?? 10,
-      )
-
-    case 'd8um_forget':
-      await memory.forget(args['id'] as string)
-      return { success: true }
-
-    case 'd8um_correct':
-      return memory.correct(args['correction'] as string)
-
-    case 'd8um_add_conversation':
-      return memory.addConversationTurn(
-        args['messages'] as { role: 'user' | 'assistant' | 'system' | 'tool'; content: string }[],
-        args['sessionId'] as string | undefined,
-      )
-
-    default:
-      throw new Error(`Unknown tool: ${toolName}`)
+    return result
+  } catch (err) {
+    if (eventSink && identity) {
+      eventSink.emit({
+        id: crypto.randomUUID(),
+        eventType: 'tool.result',
+        identity,
+        payload: { toolName, success: false, error: err instanceof Error ? err.message : String(err) },
+        durationMs: Date.now() - t0,
+        timestamp: new Date(),
+      })
+    }
+    throw err
   }
 }

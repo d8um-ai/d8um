@@ -72,9 +72,9 @@ export function d8umMemoryMiddleware(memory: d8umMemory, opts: MemoryMiddlewareO
      */
     async afterResponse(
       messages: { role: 'user' | 'assistant'; content: string }[],
-      sessionId?: string,
+      conversationId?: string,
     ): Promise<void> {
-      await memory.addConversationTurn(messages, sessionId)
+      await memory.addConversationTurn(messages, conversationId)
     },
   }
 }

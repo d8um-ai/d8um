@@ -3,10 +3,12 @@ import type { EmbeddingProvider } from '../../embedding/provider.js'
 import type { DocumentFilter } from '../../types/d8um-document.js'
 import type { d8umIdentity } from '../../types/identity.js'
 import type { NormalizedResult } from '../merger.js'
+import type { d8umEvent, d8umEventSink } from '../../types/events.js'
 
 export class IndexedRunner {
   constructor(
-    private adapter: VectorStoreAdapter
+    private adapter: VectorStoreAdapter,
+    private eventSink?: d8umEventSink
   ) {}
 
   /**
@@ -19,12 +21,15 @@ export class IndexedRunner {
     count: number,
     identity?: d8umIdentity,
     documentFilter?: DocumentFilter,
-    vectorOnly?: boolean
+    vectorOnly?: boolean,
+    traceId?: string,
+    spanId?: string
   ): Promise<NormalizedResult[]> {
     const allResults: NormalizedResult[] = []
     const fetchCount = count * 3
 
     for (const [modelId, group] of sourcesByModel) {
+      const bucketStartMs = Date.now()
       const queryEmbedding = await group.embedding.embed(text)
 
       const filter = {
@@ -32,7 +37,7 @@ export class IndexedRunner {
         groupId: identity?.groupId,
         userId: identity?.userId,
         agentId: identity?.agentId,
-        sessionId: identity?.sessionId,
+        conversationId: identity?.conversationId,
         bucketId: group.bucketIds.length === 1 ? group.bucketIds[0] : undefined,
       }
 
@@ -77,7 +82,7 @@ export class IndexedRunner {
             userId: chunk.document?.userId,
             groupId: chunk.document?.groupId,
             agentId: chunk.document?.agentId,
-            sessionId: chunk.document?.sessionId,
+            conversationId: chunk.document?.conversationId,
           })
         }
       } else {
@@ -112,6 +117,26 @@ export class IndexedRunner {
             updatedAt: chunk.indexedAt,
             tenantId: chunk.tenantId,
           })
+        }
+      }
+
+      // Emit per-bucket events after this model group's search completes
+      if (this.eventSink) {
+        const bucketDurationMs = Date.now() - bucketStartMs
+        const mode = vectorOnly ? 'fast' : 'hybrid'
+        for (const bucketId of group.bucketIds) {
+          const bucketResultCount = allResults.filter(r => r.bucketId === bucketId).length
+          const event: d8umEvent = {
+            id: crypto.randomUUID(),
+            eventType: 'query.bucket_result',
+            identity: identity ?? {},
+            payload: { bucketId, resultCount: bucketResultCount, mode },
+            durationMs: bucketDurationMs,
+            traceId,
+            spanId,
+            timestamp: new Date(),
+          }
+          void this.eventSink.emit(event)
         }
       }
     }

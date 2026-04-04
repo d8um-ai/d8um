@@ -49,7 +49,7 @@ export interface d8umResult {
     groupId?: string | undefined
     userId?: string | undefined
     agentId?: string | undefined
-    sessionId?: string | undefined
+    conversationId?: string | undefined
   }
 
   chunk: {
@@ -74,7 +74,7 @@ export interface QueryOpts {
   groupId?: string | undefined
   userId?: string | undefined
   agentId?: string | undefined
-  sessionId?: string | undefined
+  conversationId?: string | undefined
   /** Filter results by document-level fields (status, scope, type, etc.). */
   documentFilter?: import('./d8um-document.js').DocumentFilter | undefined
 
@@ -99,6 +99,11 @@ export interface QueryOpts {
   temporalAt?: Date | undefined
   /** Include invalidated/expired results. Default: false */
   includeInvalidated?: boolean | undefined
+
+  /** OpenTelemetry trace ID for distributed tracing correlation. */
+  traceId?: string | undefined
+  /** OpenTelemetry span ID for distributed tracing correlation. */
+  spanId?: string | undefined
 }
 
 export interface QueryResponse {

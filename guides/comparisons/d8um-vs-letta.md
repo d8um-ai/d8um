@@ -187,7 +187,7 @@ Your App ──REST──> Letta Server (Docker / Cloud)
 
 | Dimension | d8um | Letta |
 |---|---|---|
-| **Scope levels** | 5: tenantId, groupId, userId, agentId, sessionId | Per-agent isolation (each agent has its own memory) |
+| **Scope levels** | 5: tenantId, groupId, userId, agentId, conversationId | Per-agent isolation (each agent has its own memory) |
 | **Shared memory** | Subset filtering across scope levels | Sleep-time agents can share memory blocks with primary agents |
 | **Organization isolation** | tenantId for org-level | Managed at server/cloud level |
 

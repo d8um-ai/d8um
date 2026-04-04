@@ -3,6 +3,7 @@ import type { QueryOpts, QueryResponse, d8umResult } from '../types/query.js'
 import type { VectorStoreAdapter } from '../types/adapter.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
 import type { GraphBridge } from '../types/graph-bridge.js'
+import type { d8umEvent, d8umEventSink } from '../types/events.js'
 import { IndexedRunner } from './runners/indexed.js'
 import { MemoryRunner } from './runners/memory-runner.js'
 import { GraphRunner } from './runners/graph-runner.js'
@@ -14,7 +15,8 @@ export class QueryPlanner {
     private adapter: VectorStoreAdapter,
     private bucketIds: string[],
     private bucketEmbeddings: Map<string, EmbeddingProvider>,
-    private graph?: GraphBridge
+    private graph?: GraphBridge,
+    private eventSink?: d8umEventSink
   ) {}
 
   async execute(text: string, opts: QueryOpts = {}): Promise<QueryResponse> {
@@ -58,7 +60,7 @@ export class QueryPlanner {
           warnings: ['Memory mode requires a graph bridge. Configure graph in d8umConfig.'],
         }
       }
-      const identity = { tenantId: opts.tenantId, groupId: opts.groupId, userId: opts.userId, agentId: opts.agentId, sessionId: opts.sessionId }
+      const identity = { tenantId: opts.tenantId, groupId: opts.groupId, userId: opts.userId, agentId: opts.agentId, conversationId: opts.conversationId }
       const memoryRunner = new MemoryRunner(this.graph)
       const memResults = await memoryRunner.run(text, identity, count)
       const results: d8umResult[] = memResults.map(r => ({
@@ -89,10 +91,10 @@ export class QueryPlanner {
 
     if (modelGroups.size > 0) {
       const runnerStart = Date.now()
-      const runner = new IndexedRunner(this.adapter)
+      const runner = new IndexedRunner(this.adapter, this.eventSink)
       const vectorOnly = resolvedMode === 'fast'
-      const identity = { tenantId: opts.tenantId, groupId: opts.groupId, userId: opts.userId, agentId: opts.agentId, sessionId: opts.sessionId }
-      const results = await runner.run(text, modelGroups, count, identity, opts.documentFilter, vectorOnly)
+      const identity = { tenantId: opts.tenantId, groupId: opts.groupId, userId: opts.userId, agentId: opts.agentId, conversationId: opts.conversationId }
+      const results = await runner.run(text, modelGroups, count, identity, opts.documentFilter, vectorOnly, opts.traceId, opts.spanId)
       const runnerDuration = Date.now() - runnerStart
 
       for (const bucketId of activeBucketIds) {
@@ -111,7 +113,7 @@ export class QueryPlanner {
     // Neural mode: also run memory + graph runners in parallel
     const runnerArrays: NormalizedResult[][] = [allResults]
     if (resolvedMode === 'neural' && this.graph) {
-      const identity = { tenantId: opts.tenantId, groupId: opts.groupId, userId: opts.userId, agentId: opts.agentId, sessionId: opts.sessionId }
+      const identity = { tenantId: opts.tenantId, groupId: opts.groupId, userId: opts.userId, agentId: opts.agentId, conversationId: opts.conversationId }
 
       // Skip memory runner if store has no memories (avoids empty table query per query)
       const skipMemory = this.graph.hasMemories ? !(await this.graph.hasMemories()) : false
@@ -202,12 +204,34 @@ export class QueryPlanner {
         userId: r.userId,
         groupId: r.groupId,
         agentId: r.agentId,
-        sessionId: r.sessionId,
+        conversationId: r.conversationId,
       },
       chunk: r.chunk ?? { index: 0, total: 1, isNeighbor: false },
       metadata: r.metadata,
       tenantId: r.tenantId,
     }})
+
+    const durationMs = Date.now() - startMs
+
+    if (this.eventSink) {
+      const identity = { tenantId: opts.tenantId, groupId: opts.groupId, userId: opts.userId, agentId: opts.agentId, conversationId: opts.conversationId }
+      const event: d8umEvent = {
+        id: crypto.randomUUID(),
+        eventType: 'query.execute',
+        identity,
+        payload: {
+          mode: resolvedMode,
+          text,
+          resultCount: results.length,
+          bucketCount: activeBucketIds.length,
+        },
+        durationMs,
+        traceId: opts.traceId,
+        spanId: opts.spanId,
+        timestamp: new Date(),
+      }
+      void this.eventSink.emit(event)
+    }
 
     return {
       results,
@@ -215,7 +239,7 @@ export class QueryPlanner {
       query: {
         text,
         tenantId,
-        durationMs: Date.now() - startMs,
+        durationMs,
         mergeStrategy: opts.mergeStrategy ?? 'rrf',
       },
       warnings: warnings.length > 0 ? warnings : undefined,

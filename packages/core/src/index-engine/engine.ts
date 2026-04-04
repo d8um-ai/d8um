@@ -9,6 +9,7 @@ import { sha256, resolveIdempotencyKey, buildHashStoreKey } from './hash.js'
 import { defaultChunker } from './chunker.js'
 import { stripMarkdown } from './strip-markdown.js'
 import type { TripleExtractor, EntityContext } from './triple-extractor.js'
+import type { d8umEventSink } from '../types/events.js'
 
 /** Race a promise against a timeout. Resolves to undefined on timeout (never rejects). */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
@@ -22,11 +23,15 @@ const TRIPLE_EXTRACTION_TIMEOUT_MS = 120_000 // 2 minutes per chunk
 
 export class IndexEngine {
   tripleExtractor?: TripleExtractor
+  eventSink: d8umEventSink | undefined
 
   constructor(
     private adapter: VectorStoreAdapter,
-    private embedding: EmbeddingProvider
-  ) {}
+    private embedding: EmbeddingProvider,
+    eventSink?: d8umEventSink
+  ) {
+    this.eventSink = eventSink
+  }
 
   /**
    * Ingest a document with pre-built chunks.
@@ -39,7 +44,7 @@ export class IndexEngine {
     opts: IndexOpts = {},
     indexConfig?: IndexConfig,
   ): Promise<IndexResult> {
-    const { tenantId, groupId, userId, agentId, sessionId, visibility, dryRun = false } = opts
+    const { tenantId, groupId, userId, agentId, conversationId, visibility, dryRun = false } = opts
 
     const modelId = this.embedding.model
     const startMs = Date.now()
@@ -61,7 +66,7 @@ export class IndexEngine {
         groupId,
         userId,
         agentId,
-        sessionId,
+        conversationId,
         title: doc.title,
         url: doc.url,
         contentHash,
@@ -89,7 +94,7 @@ export class IndexEngine {
         groupId,
         userId,
         agentId,
-        sessionId,
+        conversationId,
         documentId,
         content: chunk.content,
         embedding: embeddings[i]!,
@@ -160,9 +165,19 @@ export class IndexEngine {
     opts: IndexOpts = {},
     indexConfig?: IndexConfig,
   ): Promise<IndexResult> {
-    const { tenantId, groupId, userId, agentId, sessionId, visibility, dryRun = false } = opts
+    const { tenantId, groupId, userId, agentId, conversationId, visibility, dryRun = false, traceId, spanId } = opts
     const modelId = this.embedding.model
     const startMs = Date.now()
+
+    this.eventSink?.emit({
+      id: crypto.randomUUID(),
+      eventType: 'index.start',
+      identity: { tenantId, groupId, userId, agentId, conversationId },
+      payload: { bucketId, documentCount: items.length },
+      traceId,
+      spanId,
+      timestamp: new Date(),
+    })
 
     if (!dryRun) {
       await this.adapter.ensureModel(modelId, this.embedding.dimensions)
@@ -224,7 +239,7 @@ export class IndexEngine {
           groupId,
           userId,
           agentId,
-          sessionId,
+          conversationId,
           title: doc.title,
           url: doc.url,
           contentHash,
@@ -266,7 +281,7 @@ export class IndexEngine {
         groupId,
         userId,
         agentId,
-        sessionId,
+        conversationId,
         documentId,
         content: chunk.content,
         embedding: embeddings[i]!,
@@ -309,6 +324,18 @@ export class IndexEngine {
       }
 
       result.inserted++
+
+      this.eventSink?.emit({
+        id: crypto.randomUUID(),
+        eventType: 'index.document',
+        identity: { tenantId, groupId, userId, agentId, conversationId },
+        targetId: ikey,
+        targetType: 'document',
+        payload: { bucketId, chunkCount: chunks.length, status: 'new' },
+        traceId,
+        spanId,
+        timestamp: new Date(),
+      })
     }
 
     if (concurrency <= 1) {
@@ -334,6 +361,23 @@ export class IndexEngine {
     }
 
     result.durationMs = Date.now() - startMs
+
+    this.eventSink?.emit({
+      id: crypto.randomUUID(),
+      eventType: 'index.complete',
+      identity: { tenantId, groupId, userId, agentId, conversationId },
+      payload: {
+        bucketId,
+        documentsProcessed: result.inserted,
+        documentsSkipped: result.skipped,
+        documentsFailed: 0,
+      },
+      durationMs: result.durationMs,
+      traceId,
+      spanId,
+      timestamp: new Date(),
+    })
+
     return result
   }
 

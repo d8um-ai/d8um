@@ -18,7 +18,7 @@ export interface Bucket {
   groupId?: string | undefined
   userId?: string | undefined
   agentId?: string | undefined
-  sessionId?: string | undefined
+  conversationId?: string | undefined
 }
 
 /**
@@ -40,7 +40,7 @@ export interface CreateBucketInput {
   groupId?: string | undefined
   userId?: string | undefined
   agentId?: string | undefined
-  sessionId?: string | undefined
+  conversationId?: string | undefined
 }
 
 export interface BucketListFilter {
@@ -48,7 +48,7 @@ export interface BucketListFilter {
   groupId?: string | undefined
   userId?: string | undefined
   agentId?: string | undefined
-  sessionId?: string | undefined
+  conversationId?: string | undefined
 }
 
 export type EmbeddingInput = EmbeddingProvider | AISDKEmbeddingInput

@@ -22,7 +22,7 @@ export interface GraphBridge {
   addConversationTurn(
     messages: Array<{ role: string; content: string; timestamp?: Date }>,
     identity: d8umIdentity,
-    sessionId?: string
+    conversationId?: string
   ): Promise<unknown>
 
   /** Recall memories by semantic similarity. */
