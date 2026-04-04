@@ -54,14 +54,14 @@ export const MODEL_TABLE_SQL = (chunksTable: string, dimensions: number) => {
   const idx = (suffix: string) => safeIdx(chunksTable, suffix)
   return `
   CREATE TABLE IF NOT EXISTS ${chunksTable} (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              TEXT PRIMARY KEY,
     bucket_id       TEXT NOT NULL,
     tenant_id       TEXT,
     group_id        TEXT,
     user_id         TEXT,
     agent_id        TEXT,
     session_id      TEXT,
-    document_id     UUID NOT NULL,
+    document_id     TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     content         TEXT NOT NULL,
     embedding       VECTOR(${dimensions}),
@@ -157,7 +157,7 @@ export const DOCUMENTS_TABLE_SQL = (documentsTable: string) => {
   const idx = (suffix: string) => safeIdx(documentsTable, suffix)
   return `
   CREATE TABLE IF NOT EXISTS ${documentsTable} (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id              TEXT PRIMARY KEY,
     bucket_id       TEXT NOT NULL,
     tenant_id       TEXT,
     group_id        TEXT,

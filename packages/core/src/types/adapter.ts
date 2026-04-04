@@ -1,6 +1,6 @@
 import type { EmbeddedChunk, ChunkFilter, ScoredChunk } from './document.js'
 import type { d8umDocument, DocumentFilter, DocumentStatus, UpsertDocumentInput } from './d8um-document.js'
-import type { Bucket } from './bucket.js'
+import type { Bucket, BucketListFilter } from './bucket.js'
 
 export interface SearchOpts {
   count: number
@@ -99,8 +99,8 @@ export interface VectorStoreAdapter {
   upsertBucket?(bucket: Bucket): Promise<Bucket>
   /** Get a bucket by ID. */
   getBucket?(id: string): Promise<Bucket | null>
-  /** List buckets, optionally filtered by tenant. */
-  listBuckets?(tenantId?: string): Promise<Bucket[]>
+  /** List buckets, optionally filtered by identity fields. */
+  listBuckets?(filter?: BucketListFilter): Promise<Bucket[]>
   /** Delete a bucket by ID. */
   deleteBucket?(id: string): Promise<void>
 

@@ -1,5 +1,5 @@
 import type { d8umInstance, d8umConfig, BucketsApi } from '../d8um.js'
-import type { Bucket, CreateBucketInput, IndexConfig } from '../types/bucket.js'
+import type { Bucket, CreateBucketInput, BucketListFilter, IndexConfig } from '../types/bucket.js'
 import type { QueryOpts, QueryResponse, d8umResult, AssembleOpts } from '../types/query.js'
 import type { IndexOpts, IndexResult } from '../types/index-types.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
@@ -9,6 +9,7 @@ import type { d8umIdentity } from '../types/identity.js'
 import type { ContextSearchOpts, ContextSearchResponse } from '../query/context-search.js'
 import type { UndeployResult } from '../types/adapter.js'
 import { assemble as assembleResults } from '../query/assemble.js'
+import { DEFAULT_BUCKET_ID } from '../d8um.js'
 import { HttpClient } from './http-client.js'
 import type { CloudConfig } from './http-client.js'
 
@@ -38,9 +39,15 @@ export function createCloudInstance(config: CloudConfig): d8umCloudInstance {
     async get(bucketId: string): Promise<Bucket | undefined> {
       return client.get<Bucket>(`/v1/buckets/${e(bucketId)}`)
     },
-    async list(tenantId?: string): Promise<Bucket[]> {
-      const params = tenantId ? `?tenantId=${e(tenantId)}` : ''
-      return client.get<Bucket[]>(`/v1/buckets${params}`)
+    async list(filter?: BucketListFilter): Promise<Bucket[]> {
+      const searchParams = new URLSearchParams()
+      if (filter?.tenantId) searchParams.set('tenantId', filter.tenantId)
+      if (filter?.groupId) searchParams.set('groupId', filter.groupId)
+      if (filter?.userId) searchParams.set('userId', filter.userId)
+      if (filter?.agentId) searchParams.set('agentId', filter.agentId)
+      if (filter?.sessionId) searchParams.set('sessionId', filter.sessionId)
+      const qs = searchParams.toString()
+      return client.get<Bucket[]>(`/v1/buckets${qs ? `?${qs}` : ''}`)
     },
     async update(bucketId: string, input): Promise<Bucket> {
       return client.patch<Bucket>(`/v1/buckets/${e(bucketId)}`, input)
@@ -86,21 +93,23 @@ export function createCloudInstance(config: CloudConfig): d8umCloudInstance {
     },
 
     async ingest(
-      bucketId: string,
+      bucketId: string | undefined,
       docs: RawDocument[],
       _indexConfig: IndexConfig,
       opts?: IndexOpts,
     ): Promise<IndexResult> {
-      return client.post<IndexResult>(`/v1/buckets/${e(bucketId)}/ingest`, { docs, ...opts })
+      const resolved = bucketId || DEFAULT_BUCKET_ID
+      return client.post<IndexResult>(`/v1/buckets/${e(resolved)}/ingest`, { docs, ...opts })
     },
 
     async ingestWithChunks(
-      bucketId: string,
+      bucketId: string | undefined,
       doc: RawDocument,
       chunks: Chunk[],
       opts?: IndexOpts,
     ): Promise<IndexResult> {
-      return client.post<IndexResult>(`/v1/buckets/${e(bucketId)}/ingest`, { doc, chunks, ...opts })
+      const resolved = bucketId || DEFAULT_BUCKET_ID
+      return client.post<IndexResult>(`/v1/buckets/${e(resolved)}/ingest`, { doc, chunks, ...opts })
     },
 
     assemble(results: d8umResult[], opts?: AssembleOpts): string {

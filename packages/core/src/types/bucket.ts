@@ -43,6 +43,14 @@ export interface CreateBucketInput {
   sessionId?: string | undefined
 }
 
+export interface BucketListFilter {
+  tenantId?: string | undefined
+  groupId?: string | undefined
+  userId?: string | undefined
+  agentId?: string | undefined
+  sessionId?: string | undefined
+}
+
 export type EmbeddingInput = EmbeddingProvider | AISDKEmbeddingInput
 
 /**

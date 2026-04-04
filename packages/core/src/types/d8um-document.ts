@@ -51,6 +51,8 @@ export interface DocumentFilter {
 }
 
 export interface UpsertDocumentInput {
+  /** Prefixed document ID (e.g. doc_550e8400...). Must be provided by caller. */
+  id: string
   bucketId: string
   tenantId?: string | undefined
   groupId?: string | undefined

@@ -34,10 +34,10 @@ export class PgDocumentStore {
   async upsert(input: UpsertDocumentInput): Promise<d8umDocument> {
     const rows = await this.sql(
       `INSERT INTO ${this.tableName}
-        (bucket_id, tenant_id, group_id, user_id, agent_id, session_id,
+        (id, bucket_id, tenant_id, group_id, user_id, agent_id, session_id,
          title, url, content_hash, chunk_count, status,
          visibility, document_type, source_type, metadata, indexed_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), NOW())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
        ON CONFLICT (bucket_id, COALESCE(tenant_id, ''), content_hash)
          DO UPDATE SET
            title = EXCLUDED.title,
@@ -56,6 +56,7 @@ export class PgDocumentStore {
            updated_at = NOW()
        RETURNING *`,
       [
+        input.id,
         input.bucketId,
         input.tenantId ?? null,
         input.groupId ?? null,

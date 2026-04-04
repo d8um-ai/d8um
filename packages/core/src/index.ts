@@ -1,5 +1,5 @@
 // Main public API
-export { d8um, d8umCreate, d8umDeploy, resolveEmbeddingProvider, resolveLLMProvider } from './d8um.js'
+export { d8um, d8umCreate, d8umDeploy, resolveEmbeddingProvider, resolveLLMProvider, DEFAULT_BUCKET_ID } from './d8um.js'
 export type { d8umConfig, d8umInstance, BucketsApi, LLMInput } from './d8um.js'
 
 // Types
@@ -9,6 +9,7 @@ export type {
   Chunk,
   Bucket,
   CreateBucketInput,
+  BucketListFilter,
   IndexConfig,
   EmbeddingInput,
   EmbeddedChunk,
@@ -23,6 +24,11 @@ export type {
   QueryMode,
   d8umQuery,
   d8umResult,
+  d8umScores,
+  FastScores,
+  HybridScores,
+  NeuralScores,
+  MemoryScores,
   QueryOpts,
   QueryResponse,
   AssembleOpts,
@@ -61,6 +67,9 @@ export { mergeAndRank, minMaxNormalize } from './query/index.js'
 export { searchWithContext } from './query/index.js'
 export type { NormalizedResult } from './query/index.js'
 export type { ContextSearchOpts, ContextPassage, ContextSearchResponse } from './query/index.js'
+
+// Utilities
+export { generateId } from './utils/id.js'
 
 // Cloud mode
 export { createCloudInstance, HttpClient, d8umApiError } from './cloud/index.js'

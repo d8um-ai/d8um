@@ -1,5 +1,5 @@
 import type { VectorStoreAdapter, UndeployResult } from './types/adapter.js'
-import type { Bucket, CreateBucketInput, EmbeddingInput, IndexConfig } from './types/bucket.js'
+import type { Bucket, CreateBucketInput, BucketListFilter, EmbeddingInput, IndexConfig } from './types/bucket.js'
 import type { QueryOpts, QueryResponse, d8umResult, AssembleOpts } from './types/query.js'
 import type { IndexOpts, IndexResult } from './types/index-types.js'
 import type { EmbeddingProvider } from './embedding/provider.js'
@@ -18,7 +18,13 @@ import { TripleExtractor } from './index-engine/triple-extractor.js'
 import { searchWithContext as searchWithContextFn } from './query/context-search.js'
 import { assemble as assembleResults } from './query/assemble.js'
 import { NotFoundError, NotInitializedError, ConfigError } from './types/errors.js'
-import { randomUUID } from 'crypto'
+import { generateId } from './utils/id.js'
+
+// ── Default Bucket ──
+
+export const DEFAULT_BUCKET_ID = 'bkt_default'
+export const DEFAULT_BUCKET_NAME = 'Default'
+export const DEFAULT_BUCKET_DESCRIPTION = 'System default bucket. All ingested documents without an explicit bucket assignment are stored here. Cannot be deleted.'
 
 /** Union type: pass a native LLMProvider or an AI SDK model wrapped as { model }. */
 export type LLMInput = LLMProvider | AISDKLLMInput
@@ -75,7 +81,7 @@ export function resolveLLMProvider(config: LLMInput): LLMProvider {
 export interface BucketsApi {
   create(input: CreateBucketInput): Promise<Bucket>
   get(bucketId: string): Promise<Bucket | undefined>
-  list(tenantId?: string): Promise<Bucket[]>
+  list(filter?: BucketListFilter): Promise<Bucket[]>
   update(bucketId: string, input: Partial<Pick<Bucket, 'name' | 'description' | 'status' | 'indexDefaults'>>): Promise<Bucket>
   delete(bucketId: string): Promise<void>
 }
@@ -98,10 +104,10 @@ export interface d8umInstance {
   groupBucketsByModel(bucketIds?: string[]): Map<string, string[]>
 
   /** Ingest documents directly into a bucket. All chunks are embedded in a single batch call. */
-  ingest(bucketId: string, docs: RawDocument[], indexConfig: IndexConfig, opts?: IndexOpts): Promise<IndexResult>
+  ingest(bucketId: string | undefined, docs: RawDocument[], indexConfig: IndexConfig, opts?: IndexOpts): Promise<IndexResult>
 
   /** Ingest a document with pre-chunked content. */
-  ingestWithChunks(bucketId: string, doc: RawDocument, chunks: Chunk[], opts?: IndexOpts): Promise<IndexResult>
+  ingestWithChunks(bucketId: string | undefined, doc: RawDocument, chunks: Chunk[], opts?: IndexOpts): Promise<IndexResult>
 
   /** Search across buckets. */
   query(text: string, opts?: QueryOpts): Promise<QueryResponse>
@@ -141,7 +147,7 @@ class d8umImpl implements d8umInstance {
     create: async (input: CreateBucketInput): Promise<Bucket> => {
       this.assertConfigured()
       const bucket: Bucket = {
-        id: randomUUID(),
+        id: generateId('bkt'),
         name: input.name,
         description: input.description,
         status: 'active',
@@ -174,9 +180,9 @@ class d8umImpl implements d8umInstance {
       return this._buckets.get(bucketId)
     },
 
-    list: async (tenantId?: string): Promise<Bucket[]> => {
+    list: async (filter?: BucketListFilter): Promise<Bucket[]> => {
       if (this.adapter.listBuckets) {
-        const buckets = await this.adapter.listBuckets(tenantId)
+        const buckets = await this.adapter.listBuckets(filter)
         for (const b of buckets) {
           this._buckets.set(b.id, b)
           if (!this.bucketEmbeddings.has(b.id)) {
@@ -185,8 +191,14 @@ class d8umImpl implements d8umInstance {
         }
         return buckets
       }
-      const all = [...this._buckets.values()]
-      if (tenantId) return all.filter(s => s.tenantId === tenantId)
+      let all = [...this._buckets.values()]
+      if (filter) {
+        if (filter.tenantId) all = all.filter(s => s.tenantId === filter.tenantId)
+        if (filter.groupId) all = all.filter(s => s.groupId === filter.groupId)
+        if (filter.userId) all = all.filter(s => s.userId === filter.userId)
+        if (filter.agentId) all = all.filter(s => s.agentId === filter.agentId)
+        if (filter.sessionId) all = all.filter(s => s.sessionId === filter.sessionId)
+      }
       return all
     },
 
@@ -205,6 +217,9 @@ class d8umImpl implements d8umInstance {
     },
 
     delete: async (bucketId: string): Promise<void> => {
+      if (bucketId === DEFAULT_BUCKET_ID) {
+        throw new Error('Cannot delete the default bucket.')
+      }
       if (this.adapter.deleteBucket) {
         await this.adapter.deleteBucket(bucketId)
       } else {
@@ -230,6 +245,32 @@ class d8umImpl implements d8umInstance {
       await config.graph.deploy()
     }
     this.configured = true
+
+    // Create the default protected bucket (idempotent via upsert)
+    if (this.adapter.upsertBucket) {
+      const defaultBucket: Bucket = {
+        id: DEFAULT_BUCKET_ID,
+        name: DEFAULT_BUCKET_NAME,
+        description: DEFAULT_BUCKET_DESCRIPTION,
+        status: 'active',
+        tenantId: config.tenantId,
+      }
+      const persisted = await this.adapter.upsertBucket(defaultBucket)
+      this._buckets.set(persisted.id, persisted)
+      this.bucketEmbeddings.set(persisted.id, this.defaultEmbedding)
+    } else {
+      // In-memory only: register default bucket
+      const defaultBucket: Bucket = {
+        id: DEFAULT_BUCKET_ID,
+        name: DEFAULT_BUCKET_NAME,
+        description: DEFAULT_BUCKET_DESCRIPTION,
+        status: 'active',
+        tenantId: config.tenantId,
+      }
+      this._buckets.set(defaultBucket.id, defaultBucket)
+      this.bucketEmbeddings.set(defaultBucket.id, this.defaultEmbedding)
+    }
+
     return this
   }
 
@@ -331,41 +372,43 @@ class d8umImpl implements d8umInstance {
   }
 
   async ingest(
-    bucketId: string,
+    bucketId: string | undefined,
     docs: RawDocument[],
     indexConfig: IndexConfig,
     opts?: IndexOpts
   ): Promise<IndexResult> {
     await this.ensureInitialized()
-    const bucket = await this.buckets.get(bucketId)
-    if (!bucket) throw new NotFoundError('Bucket', bucketId)
+    const resolvedBucketId = bucketId || DEFAULT_BUCKET_ID
+    const bucket = await this.buckets.get(resolvedBucketId)
+    if (!bucket) throw new NotFoundError('Bucket', resolvedBucketId)
     // Merge bucket-level index defaults with per-call config (per-call wins)
     const merged = this.mergeIndexConfig(indexConfig, bucket)
     const { defaultChunker: chunker } = await import('./index-engine/chunker.js')
     const items = docs.map(doc => ({ doc, chunks: chunker(doc, merged) }))
-    const embedding = await this.resolveEmbeddingForBucket(bucketId)
+    const embedding = await this.resolveEmbeddingForBucket(resolvedBucketId)
     const engine = this.createIndexEngine(embedding)
-    await this.config.hooks?.onIndexStart?.(bucketId, opts ?? {})
-    const result = await engine.ingestBatch(bucketId, items, opts, merged)
-    await this.config.hooks?.onIndexComplete?.(bucketId, result)
+    await this.config.hooks?.onIndexStart?.(resolvedBucketId, opts ?? {})
+    const result = await engine.ingestBatch(resolvedBucketId, items, opts, merged)
+    await this.config.hooks?.onIndexComplete?.(resolvedBucketId, result)
     return result
   }
 
   async ingestWithChunks(
-    bucketId: string,
+    bucketId: string | undefined,
     doc: RawDocument,
     chunks: Chunk[],
     opts?: IndexOpts
   ): Promise<IndexResult> {
     await this.ensureInitialized()
-    const bucket = await this.buckets.get(bucketId)
-    if (!bucket) throw new NotFoundError('Bucket', bucketId)
-    const embedding = await this.resolveEmbeddingForBucket(bucketId)
+    const resolvedBucketId = bucketId || DEFAULT_BUCKET_ID
+    const bucket = await this.buckets.get(resolvedBucketId)
+    if (!bucket) throw new NotFoundError('Bucket', resolvedBucketId)
+    const embedding = await this.resolveEmbeddingForBucket(resolvedBucketId)
     const engine = this.createIndexEngine(embedding)
 
-    await this.config.hooks?.onIndexStart?.(bucketId, opts ?? {})
-    const result = await engine.ingestWithChunks(bucketId, doc, chunks, opts)
-    await this.config.hooks?.onIndexComplete?.(bucketId, result)
+    await this.config.hooks?.onIndexStart?.(resolvedBucketId, opts ?? {})
+    const result = await engine.ingestWithChunks(resolvedBucketId, doc, chunks, opts)
+    await this.config.hooks?.onIndexComplete?.(resolvedBucketId, result)
     return result
   }
 

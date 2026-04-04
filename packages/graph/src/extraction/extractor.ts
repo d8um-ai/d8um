@@ -4,7 +4,7 @@ import type { EpisodicMemory, SemanticFact } from '../types/memory.js'
 import type { LLMProvider } from './llm-provider.js'
 import { factExtractionPrompt, conflictResolutionPrompt } from './prompts.js'
 import { createTemporal } from '../temporal.js'
-import { randomUUID } from 'crypto'
+import { generateId } from '@d8um-ai/core'
 
 // ── Extraction Types ──
 
@@ -163,7 +163,7 @@ export class MemoryExtractor {
     const temporal = createTemporal(timestamp)
 
     return {
-      id: randomUUID(),
+      id: generateId('mem'),
       category: 'episodic',
       status: 'active',
       content,
@@ -186,7 +186,7 @@ export class MemoryExtractor {
   candidateToFact(candidate: CandidateFact, episodeId: string): SemanticFact {
     const temporal = createTemporal()
     return {
-      id: randomUUID(),
+      id: generateId('fact'),
       category: 'semantic',
       status: 'active',
       content: candidate.content,

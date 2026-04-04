@@ -2,6 +2,7 @@ import type { VectorStoreAdapter, SearchOpts, ScoredChunkWithDocument, UndeployR
 import type { EmbeddedChunk, ChunkFilter, ScoredChunk } from '@d8um-ai/core'
 import type { d8umDocument, DocumentFilter, DocumentStatus, UpsertDocumentInput } from '@d8um-ai/core'
 import type { Bucket } from '@d8um-ai/core'
+import { generateId, DEFAULT_BUCKET_ID } from '@d8um-ai/core'
 import {
   REGISTRY_SQL, MODEL_TABLE_SQL, HASH_TABLE_SQL, DOCUMENTS_TABLE_SQL,
   BUCKETS_TABLE_SQL,
@@ -183,6 +184,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     if (chunks.length === 0) return
     const table = this.getTable(model)
 
+    const chunkIds: string[] = []
     const sourceIds: string[] = []
     const tenantIds: (string | null)[] = []
     const groupIds: (string | null)[] = []
@@ -200,6 +202,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     const indexedAts: string[] = []
 
     for (const chunk of chunks) {
+      chunkIds.push(generateId('chk'))
       sourceIds.push(chunk.bucketId)
       tenantIds.push(chunk.tenantId ?? null)
       groupIds.push(chunk.groupId ?? null)
@@ -219,13 +222,13 @@ export class PgVectorAdapter implements VectorStoreAdapter {
 
     await this.sql(
       `INSERT INTO ${table}
-        (bucket_id, tenant_id, group_id, user_id, agent_id, session_id,
+        (id, bucket_id, tenant_id, group_id, user_id, agent_id, session_id,
          document_id, idempotency_key, content, embedding,
          embedding_model, chunk_index, total_chunks, metadata, indexed_at)
        SELECT * FROM unnest(
-        $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
-        $7::uuid[], $8::text[], $9::text[], $10::vector[],
-        $11::text[], $12::int[], $13::int[], $14::jsonb[], $15::timestamptz[]
+        $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[],
+        $8::text[], $9::text[], $10::text[], $11::vector[],
+        $12::text[], $13::int[], $14::int[], $15::jsonb[], $16::timestamptz[]
        )
        ON CONFLICT (idempotency_key, chunk_index, bucket_id) DO UPDATE SET
         content         = EXCLUDED.content,
@@ -235,7 +238,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
         metadata        = EXCLUDED.metadata,
         indexed_at      = EXCLUDED.indexed_at`,
       [
-        sourceIds, tenantIds, groupIds, userIds, agentIds, sessionIds,
+        chunkIds, sourceIds, tenantIds, groupIds, userIds, agentIds, sessionIds,
         documentIds, idempotencyKeys, contents, embeddings,
         embeddingModels, chunkIndices, totalChunks, metadatas, indexedAts,
       ]
@@ -340,7 +343,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
           ),
           scored AS (
             SELECT *,
-              COALESCE(1.0 / (60 + vrank), 0) + COALESCE(1.0 / (60 + krank), 0) AS rrf_score,
+              (COALESCE(1.0::float8 / (60 + vrank), 0) + COALESCE(1.0::float8 / (60 + krank), 0))::double precision AS rrf_score,
               ROW_NUMBER() OVER (
                 PARTITION BY id
                 ORDER BY COALESCE(similarity, 0) DESC
@@ -351,12 +354,12 @@ export class PgVectorAdapter implements VectorStoreAdapter {
                embedding_model, chunk_index, total_chunks, metadata, indexed_at,
                MAX(similarity) AS similarity,
                MAX(kw_score) AS keyword_score,
-               SUM(rrf_score) AS rrf_score
+               SUM(rrf_score)::double precision AS rrf_score
         FROM scored
         WHERE dedup_rank = 1
         GROUP BY id, bucket_id, tenant_id, document_id, idempotency_key, content,
                  embedding_model, chunk_index, total_chunks, metadata, indexed_at
-        ORDER BY SUM(rrf_score) DESC
+        ORDER BY SUM(rrf_score)::double precision DESC
         LIMIT $3`,
         [vectorStr, query, count, ...filterParams]
       )
@@ -364,7 +367,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
       return rows.map(row => mapRowToScoredChunk(row, {
         vector: (row.similarity as number) ?? undefined,
         keyword: (row.keyword_score as number) ?? undefined,
-        rrf: row.rrf_score as number,
+        rrf: Number(row.rrf_score),
       }))
     }
 
@@ -480,7 +483,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
           ),
           scored AS (
             SELECT *,
-              COALESCE(1.0 / (60 + vrank), 0) + COALESCE(1.0 / (60 + krank), 0) AS rrf_score,
+              (COALESCE(1.0::float8 / (60 + vrank), 0) + COALESCE(1.0::float8 / (60 + krank), 0))::double precision AS rrf_score,
               ROW_NUMBER() OVER (
                 PARTITION BY id
                 ORDER BY COALESCE(similarity, 0) DESC
@@ -492,12 +495,12 @@ export class PgVectorAdapter implements VectorStoreAdapter {
                    embedding_model, chunk_index, total_chunks, metadata, indexed_at,
                    MAX(similarity) AS similarity,
                    MAX(kw_score) AS keyword_score,
-                   SUM(rrf_score) AS rrf_score
+                   SUM(rrf_score)::double precision AS rrf_score
             FROM scored
             WHERE dedup_rank = 1
             GROUP BY id, bucket_id, tenant_id, document_id, idempotency_key, content,
                      embedding_model, chunk_index, total_chunks, metadata, indexed_at
-            ORDER BY SUM(rrf_score) DESC
+            ORDER BY SUM(rrf_score)::double precision DESC
             LIMIT $3
           )
         SELECT fc.*,
@@ -519,7 +522,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
         ...mapRowToScoredChunk(row, {
           vector: (row.similarity as number) ?? undefined,
           keyword: (row.keyword_score as number) ?? undefined,
-          rrf: row.rrf_score as number,
+          rrf: Number(row.rrf_score),
         }),
         document: mapRowToDocument(row),
       }))
@@ -579,14 +582,23 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     return rows.length > 0 ? mapRowToBucket(rows[0]!) : null
   }
 
-  async listBuckets(tenantId?: string): Promise<Bucket[]> {
-    const rows = tenantId
-      ? await this.sql(`SELECT * FROM ${this.bucketsTable} WHERE tenant_id = $1 ORDER BY created_at`, [tenantId])
-      : await this.sql(`SELECT * FROM ${this.bucketsTable} ORDER BY created_at`)
+  async listBuckets(filter?: import('@d8um-ai/core').BucketListFilter): Promise<Bucket[]> {
+    const conditions: string[] = []
+    const params: unknown[] = []
+    if (filter?.tenantId) { params.push(filter.tenantId); conditions.push(`tenant_id = $${params.length}`) }
+    if (filter?.groupId) { params.push(filter.groupId); conditions.push(`group_id = $${params.length}`) }
+    if (filter?.userId) { params.push(filter.userId); conditions.push(`user_id = $${params.length}`) }
+    if (filter?.agentId) { params.push(filter.agentId); conditions.push(`agent_id = $${params.length}`) }
+    if (filter?.sessionId) { params.push(filter.sessionId); conditions.push(`session_id = $${params.length}`) }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const rows = await this.sql(`SELECT * FROM ${this.bucketsTable} ${where} ORDER BY created_at`, params)
     return rows.map(mapRowToBucket)
   }
 
   async deleteBucket(id: string): Promise<void> {
+    if (id === DEFAULT_BUCKET_ID) {
+      throw new Error('Cannot delete the default bucket.')
+    }
     await this.sql(`DELETE FROM ${this.bucketsTable} WHERE id = $1`, [id])
   }
 

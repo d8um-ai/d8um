@@ -14,7 +14,7 @@ import { MemoryExtractor } from './extraction/extractor.js'
 import { InvalidationEngine } from './extraction/invalidation.js'
 import { WorkingMemory, type WorkingMemoryConfig } from './working-memory.js'
 import { createTemporal } from './temporal.js'
-import { randomUUID } from 'crypto'
+import { generateId } from '@d8um-ai/core'
 
 // ── d8umMemory Config ──
 
@@ -71,7 +71,7 @@ export class d8umMemory {
     const temporal = createTemporal()
 
     const record: MemoryRecord = {
-      id: randomUUID(),
+      id: generateId('mem'),
       category,
       status: 'active',
       content,
@@ -137,7 +137,7 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
     // Create corrected fact
     const embedding = await this.embedding.embed(parsed.newContent)
     const newFact: SemanticFact = {
-      id: randomUUID(),
+      id: generateId('fact'),
       category: 'semantic',
       status: 'active',
       content: parsed.newContent,

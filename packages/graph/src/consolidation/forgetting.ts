@@ -1,5 +1,6 @@
 import type { LLMProvider } from '@d8um-ai/core'
 import type { d8umIdentity } from '@d8um-ai/core'
+import { generateId } from '@d8um-ai/core'
 import type { MemoryRecord } from '../types/index.js'
 import type { MemoryStoreAdapter } from '../types/adapter.js'
 import { findDecayedMemories, type DecayConfig, DEFAULT_DECAY_CONFIG } from './decay.js'
@@ -103,7 +104,7 @@ export class ForgettingEngine {
       const maxImportance = Math.max(...group.map(m => m.importance))
       const summaryRecord: MemoryRecord = {
         ...group[0]!,
-        id: crypto.randomUUID(),
+        id: generateId('mem'),
         status: 'active',
         content: summaryContent.trim(),
         importance: maxImportance,
