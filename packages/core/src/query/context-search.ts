@@ -160,7 +160,7 @@ export async function searchWithContext(
       documentType: bestHit.result.bucket.documentType,
       sourceType: bestHit.result.bucket.sourceType,
       rrfScore: bestHit.result.score,
-      similarity: bestHit.result.scores.vector ?? 0,
+      similarity: 'vector' in bestHit.result.scores ? (bestHit.result.scores.vector ?? 0) : 0,
       chunks: chunkList,
       content: stitchedContent,
     })

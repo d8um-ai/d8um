@@ -1,6 +1,7 @@
 import type { VectorStoreAdapter, SearchOpts, UndeployResult } from '@d8um-ai/core'
 import type { EmbeddedChunk, ChunkFilter, ScoredChunk } from '@d8um-ai/core'
-import type { Bucket } from '@d8um-ai/core'
+import type { Bucket, BucketListFilter } from '@d8um-ai/core'
+import { generateId } from '@d8um-ai/core'
 import Database from 'better-sqlite3'
 import * as sqliteVec from 'sqlite-vec'
 import { SqliteHashStore } from './hash-store.js'
@@ -190,7 +191,7 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
 
     const transaction = this.db.transaction((chunks: EmbeddedChunk[]) => {
       for (const chunk of chunks) {
-        const id = crypto.randomUUID()
+        const id = generateId('chk')
         upsertChunk.run(
           id,
           chunk.bucketId,
@@ -313,10 +314,16 @@ export class SqliteVecAdapter implements VectorStoreAdapter {
     return { id: row.id as string, name: row.name as string, description: (row.description as string) ?? undefined, status: row.status as Bucket['status'], tenantId: (row.tenant_id as string) ?? undefined }
   }
 
-  async listBuckets(tenantId?: string): Promise<Bucket[]> {
-    const rows = tenantId
-      ? this.db.prepare(`SELECT * FROM ${this.bucketsTable} WHERE tenant_id = ? ORDER BY created_at`).all(tenantId) as Record<string, unknown>[]
-      : this.db.prepare(`SELECT * FROM ${this.bucketsTable} ORDER BY created_at`).all() as Record<string, unknown>[]
+  async listBuckets(filter?: BucketListFilter): Promise<Bucket[]> {
+    const conditions: string[] = []
+    const params: unknown[] = []
+    if (filter?.tenantId) { conditions.push('tenant_id = ?'); params.push(filter.tenantId) }
+    if (filter?.groupId) { conditions.push('group_id = ?'); params.push(filter.groupId) }
+    if (filter?.userId) { conditions.push('user_id = ?'); params.push(filter.userId) }
+    if (filter?.agentId) { conditions.push('agent_id = ?'); params.push(filter.agentId) }
+    if (filter?.sessionId) { conditions.push('session_id = ?'); params.push(filter.sessionId) }
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
+    const rows = this.db.prepare(`SELECT * FROM ${this.bucketsTable}${where} ORDER BY created_at`).all(...params) as Record<string, unknown>[]
     return rows.map(r => ({ id: r.id as string, name: r.name as string, description: (r.description as string) ?? undefined, status: r.status as Bucket['status'], tenantId: (r.tenant_id as string) ?? undefined }))
   }
 

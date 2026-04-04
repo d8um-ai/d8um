@@ -3,7 +3,7 @@ import type { VectorStoreAdapter } from '../types/adapter.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
 import type { IndexOpts, IndexResult } from '../types/index-types.js'
 import type { RawDocument, Chunk } from '../types/connector.js'
-import { randomUUID } from 'crypto'
+import { generateId } from '../utils/id.js'
 import { IndexError } from '../types/index-types.js'
 import { sha256, resolveIdempotencyKey, buildHashStoreKey } from './hash.js'
 import { defaultChunker } from './chunker.js'
@@ -52,9 +52,10 @@ export class IndexEngine {
     const deduplicateBy = indexConfig?.deduplicateBy ?? ['url']
     const ikey = resolveIdempotencyKey(doc, deduplicateBy)
 
-    let documentId = doc.id ?? randomUUID()
+    const documentId = doc.id ?? generateId('doc')
     if (this.adapter.upsertDocumentRecord && !dryRun) {
-      const docRecord = await this.adapter.upsertDocumentRecord({
+      await this.adapter.upsertDocumentRecord({
+        id: documentId,
         bucketId,
         tenantId,
         groupId,
@@ -71,7 +72,6 @@ export class IndexEngine {
         sourceType: indexConfig?.sourceType,
         metadata: doc.metadata,
       })
-      documentId = docRecord.id
     }
 
     try {
@@ -214,10 +214,11 @@ export class IndexEngine {
         }
       }
 
-      let documentId = doc.id ?? randomUUID()
+      const documentId = doc.id ?? generateId('doc')
 
       if (this.adapter.upsertDocumentRecord && !dryRun) {
-        const docRecord = await this.adapter.upsertDocumentRecord({
+        await this.adapter.upsertDocumentRecord({
+          id: documentId,
           bucketId,
           tenantId,
           groupId,
@@ -234,7 +235,6 @@ export class IndexEngine {
           sourceType: indexConfig?.sourceType,
           metadata: doc.metadata,
         })
-        documentId = docRecord.id
       }
 
       const textOffset = allTexts.length

@@ -64,7 +64,7 @@ export class QueryPlanner {
       const results: d8umResult[] = memResults.map(r => ({
         content: r.content,
         score: r.normalizedScore,
-        scores: { memory: r.rawScores.memory, rrf: r.normalizedScore },
+        scores: { memory: r.rawScores.memory ?? r.normalizedScore },
         bucket: {
           id: r.bucketId,
           documentId: r.documentId,
@@ -165,15 +165,29 @@ export class QueryPlanner {
       ? mergeAndRank(runnerArrays, count, weights)
       : allResults.slice(0, count)
 
-    // Map NormalizedResult → d8umResult
-    const results: d8umResult[] = mergedResults.map(r => ({
+    // Map NormalizedResult → d8umResult with mode-specific scores
+    const results: d8umResult[] = mergedResults.map(r => {
+      // Use finalScore from mergeAndRank when available (multi-runner merge),
+      // otherwise fall back to the individual runner's normalizedScore
+      const compositeScore = (r as any).finalScore ?? r.normalizedScore
+
+      // Build mode-specific scores object
+      const scores = resolvedMode === 'fast'
+        ? { vector: r.rawScores.vector ?? compositeScore }
+        : resolvedMode === 'neural'
+        ? {
+            vector: r.rawScores.vector,
+            keyword: r.rawScores.keyword,
+            memory: r.rawScores.memory,
+            graph: r.rawScores.graph,
+            rrf: compositeScore,
+          }
+        : { vector: r.rawScores.vector ?? 0, keyword: r.rawScores.keyword ?? 0, rrf: compositeScore }
+
+      return {
       content: r.content,
-      score: r.normalizedScore,
-      scores: {
-        vector: r.rawScores.vector,
-        keyword: r.rawScores.keyword,
-        rrf: r.normalizedScore,
-      },
+      score: compositeScore,
+      scores,
       bucket: {
         id: r.bucketId,
         documentId: r.documentId,
@@ -193,7 +207,7 @@ export class QueryPlanner {
       chunk: r.chunk ?? { index: 0, total: 1, isNeighbor: false },
       metadata: r.metadata,
       tenantId: r.tenantId,
-    }))
+    }})
 
     return {
       results,

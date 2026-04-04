@@ -2,7 +2,7 @@ import type { d8umIdentity } from '@d8um-ai/core'
 import type { EmbeddingProvider } from '@d8um-ai/core'
 import type { MemoryStoreAdapter } from '../types/adapter.js'
 import type { SemanticEntity, SemanticEdge } from '../types/memory.js'
-import { randomUUID } from 'crypto'
+import { generateId } from '@d8um-ai/core'
 
 export interface EntityLinkerConfig {
   embedding: EmbeddingProvider
@@ -65,7 +65,7 @@ export class EntityLinker {
 
         // Create synonym edge
         const edge: SemanticEdge = {
-          id: randomUUID(),
+          id: generateId('edge'),
           sourceEntityId: entity.id,
           targetEntityId: candidate.id,
           relation: 'SYNONYM',

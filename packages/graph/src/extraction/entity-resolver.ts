@@ -3,7 +3,7 @@ import type { d8umIdentity } from '@d8um-ai/core'
 import type { SemanticEntity } from '../types/memory.js'
 import type { MemoryStoreAdapter } from '../types/adapter.js'
 import { createTemporal } from '../temporal.js'
-import { randomUUID } from 'crypto'
+import { generateId } from '@d8um-ai/core'
 
 // ── Entity Resolver ──
 // Deduplicates entities using a 5-phase cascade:
@@ -132,7 +132,7 @@ export class EntityResolver {
       nameEmbedding = await this.embedding.embed(name)
     }
     const entity: SemanticEntity = {
-      id: randomUUID(),
+      id: generateId('ent'),
       name,
       entityType,
       aliases,

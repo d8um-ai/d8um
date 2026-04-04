@@ -1,3 +1,4 @@
+import { generateId } from '@d8um-ai/core'
 import type { EmbeddingProvider, LLMProvider } from '@d8um-ai/core'
 import type { MemoryStoreAdapter } from '../types/adapter.js'
 import type { d8umIdentity } from '@d8um-ai/core'
@@ -144,7 +145,7 @@ Respond with only valid JSON: [{"content": "...", "subject": "...", "predicate":
           for (const fact of facts) {
             const embedding = await this.embedding.embed(fact.content)
             const semanticFact: SemanticFact = {
-              id: crypto.randomUUID(),
+              id: generateId('fact'),
               category: 'semantic',
               status: 'active',
               content: fact.content,
@@ -226,7 +227,7 @@ Respond with only valid JSON: [{"trigger": "...", "steps": ["..."], "confidence"
           if (proc.confidence < 0.5) continue
 
           const proceduralMemory: ProceduralMemory = {
-            id: crypto.randomUUID(),
+            id: generateId('pmem'),
             category: 'procedural',
             status: 'active',
             content: `When: ${proc.trigger}\nSteps: ${proc.steps.join(' → ')}`,

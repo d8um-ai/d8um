@@ -7,15 +7,33 @@ export interface d8umQuery {
   filters?: Record<string, unknown> | undefined
 }
 
+/** Fast mode: pure vector similarity */
+export interface FastScores { vector: number }
+
+/** Hybrid mode: vector + keyword combined via RRF */
+export interface HybridScores { vector: number; keyword: number; rrf: number }
+
+/** Neural mode: hybrid + memory + graph, merged via weighted RRF */
+export interface NeuralScores {
+  vector?: number | undefined
+  keyword?: number | undefined
+  memory?: number | undefined
+  graph?: number | undefined
+  rrf: number
+}
+
+/** Memory mode: recall-based scoring */
+export interface MemoryScores { memory: number }
+
+export type d8umScores = FastScores | HybridScores | NeuralScores | MemoryScores
+
 export interface d8umResult {
   content: string
 
+  /** Composite score — the final ranking value regardless of mode */
   score: number
-  scores: {
-    vector?: number | undefined
-    keyword?: number | undefined
-    rrf?: number | undefined
-  }
+  /** Mode-specific component scores that make up the composite score */
+  scores: d8umScores
 
   bucket: {
     id: string

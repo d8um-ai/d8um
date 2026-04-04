@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto'
+import { generateId } from '@d8um-ai/core'
 
 // ── Working Memory Item ──
 
@@ -58,7 +58,7 @@ export class WorkingMemory {
     metadata?: Record<string, unknown>,
   ): WorkingMemoryItem {
     const item: WorkingMemoryItem = {
-      id: randomUUID(),
+      id: generateId('wmem'),
       content,
       role,
       priority,

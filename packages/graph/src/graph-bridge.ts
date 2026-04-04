@@ -9,7 +9,7 @@ import { EntityResolver } from './extraction/entity-resolver.js'
 import { PredicateNormalizer } from './extraction/predicate-normalizer.js'
 import { createTemporal } from './temporal.js'
 import { scopeKey } from './types/scope.js'
-import { randomUUID } from 'crypto'
+import { generateId } from '@d8um-ai/core'
 
 // ── Config ──
 
@@ -167,7 +167,7 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
 
     // Create edge with chunk provenance stored in properties
     const edge: SemanticEdge = {
-      id: randomUUID(),
+      id: generateId('edge'),
       sourceEntityId: subjectResult.entity.id,
       targetEntityId: objectResult.entity.id,
       relation,
@@ -211,7 +211,7 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
           const coKey = [newId, linkTo].sort().join(':')
           if (!directEdgePairs.has(coKey)) {
             await graph.addEdge({
-              id: randomUUID(),
+              id: generateId('edge'),
               sourceEntityId: newId,
               targetEntityId: linkTo,
               relation: 'CO_OCCURS',

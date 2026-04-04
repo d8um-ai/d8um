@@ -3,7 +3,7 @@ import type { MemoryStoreAdapter } from '../types/adapter.js'
 import type { d8umIdentity } from '@d8um-ai/core'
 import type { SemanticFact } from '../types/index.js'
 import { invalidateRecord, createTemporal } from '../temporal.js'
-import { randomUUID } from 'crypto'
+import { generateId } from '@d8um-ai/core'
 
 // ── Correction Types ──
 
@@ -76,7 +76,7 @@ export class MemoryCorrector {
     if (parsed.newContent) {
       const temporal = createTemporal()
       const newFact: SemanticFact = {
-        id: randomUUID(),
+        id: generateId('fact'),
         category: 'semantic',
         status: 'active',
         content: parsed.newContent,
