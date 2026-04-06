@@ -10,7 +10,10 @@ export interface GraphBridge {
   deploy?(): Promise<void>
 
   /** Store a memory. LLM extracts triples → entity graph + memory record. */
-  remember(content: string, identity: d8umIdentity, category?: string): Promise<unknown>
+  remember(content: string, identity: d8umIdentity, category?: string, opts?: {
+    importance?: number
+    metadata?: Record<string, unknown>
+  }): Promise<unknown>
 
   /** Invalidate a memory and its associated graph edges. */
   forget(id: string): Promise<void>
@@ -27,6 +30,19 @@ export interface GraphBridge {
 
   /** Recall memories by semantic similarity. */
   recall(query: string, identity: d8umIdentity, opts?: { limit?: number; types?: string[] }): Promise<unknown[]>
+
+  /** Build an LLM-ready context string from memories. */
+  assembleContext?(query: string, identity: d8umIdentity, opts?: {
+    includeWorking?: boolean
+    includeFacts?: boolean
+    includeEpisodes?: boolean
+    includeProcedures?: boolean
+    maxMemoryTokens?: number
+    format?: 'xml' | 'markdown' | 'plain'
+  }): Promise<string>
+
+  /** Get memory system health statistics. */
+  healthCheck?(identity: d8umIdentity): Promise<unknown>
 
   /** Check if the memory store has any active memories. Used to skip memory runner when empty. */
   hasMemories?(): Promise<boolean>

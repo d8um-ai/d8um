@@ -1,4 +1,4 @@
-import type { d8umInstance, d8umConfig, BucketsApi } from '../d8um.js'
+import type { d8umInstance, d8umConfig, BucketsApi, DocumentsApi } from '../d8um.js'
 import type { Bucket, CreateBucketInput, BucketListFilter, IndexConfig } from '../types/bucket.js'
 import type { QueryOpts, QueryResponse, d8umResult, AssembleOpts } from '../types/query.js'
 import type { IndexOpts, IndexResult } from '../types/index-types.js'
@@ -6,6 +6,7 @@ import type { EmbeddingProvider } from '../embedding/provider.js'
 import type { RawDocument, Chunk } from '../types/connector.js'
 import type { d8umDocument, DocumentFilter } from '../types/d8um-document.js'
 import type { d8umIdentity } from '../types/identity.js'
+import type { CreatePolicyInput, UpdatePolicyInput, Policy, PolicyType } from '../types/policy.js'
 import type { ContextSearchOpts, ContextSearchResponse } from '../query/context-search.js'
 import type { UndeployResult } from '../types/adapter.js'
 import { assemble as assembleResults } from '../query/assemble.js'
@@ -72,6 +73,36 @@ export function createCloudInstance(config: CloudConfig): d8umCloudInstance {
 
     buckets,
 
+    documents: {
+      async get(id: string): Promise<d8umDocument | null> {
+        return client.get<d8umDocument | null>(`/v1/documents/${e(id)}`)
+      },
+      async list(filter?: DocumentFilter): Promise<d8umDocument[]> {
+        return client.post<d8umDocument[]>('/v1/documents/list', filter)
+      },
+      async delete(filter: DocumentFilter): Promise<number> {
+        return client.delete<number>('/v1/documents', filter)
+      },
+    } satisfies DocumentsApi,
+
+    policies: {
+      async create(input: CreatePolicyInput): Promise<Policy> {
+        return client.post<Policy>('/v1/policies', input)
+      },
+      async get(id: string): Promise<Policy | null> {
+        return client.get<Policy | null>(`/v1/policies/${e(id)}`)
+      },
+      async list(filter?: { tenantId?: string; policyType?: PolicyType; enabled?: boolean }): Promise<Policy[]> {
+        return client.post<Policy[]>('/v1/policies/list', filter)
+      },
+      async update(id: string, input: UpdatePolicyInput): Promise<Policy> {
+        return client.patch<Policy>(`/v1/policies/${e(id)}`, input)
+      },
+      async delete(id: string): Promise<void> {
+        await client.delete(`/v1/policies/${e(id)}`)
+      },
+    },
+
     getEmbeddingForBucket(_bucketId: string): EmbeddingProvider {
       throw new Error('getEmbeddingForBucket() is not available in cloud mode — embedding is managed server-side.')
     },
@@ -93,22 +124,41 @@ export function createCloudInstance(config: CloudConfig): d8umCloudInstance {
     },
 
     async ingest(
-      bucketId: string | undefined,
-      docs: RawDocument[],
-      _indexConfig: IndexConfig,
+      bucketIdOrDocs: string | undefined | RawDocument[],
+      docsOrConfig?: RawDocument[] | IndexConfig,
+      indexConfigOrOpts?: IndexConfig | IndexOpts,
       opts?: IndexOpts,
     ): Promise<IndexResult> {
-      const resolved = bucketId || DEFAULT_BUCKET_ID
+      let resolved: string
+      let docs: RawDocument[]
+      if (Array.isArray(bucketIdOrDocs)) {
+        resolved = DEFAULT_BUCKET_ID
+        docs = bucketIdOrDocs
+      } else {
+        resolved = bucketIdOrDocs || DEFAULT_BUCKET_ID
+        docs = docsOrConfig as RawDocument[]
+      }
       return client.post<IndexResult>(`/v1/buckets/${e(resolved)}/ingest`, { docs, ...opts })
     },
 
     async ingestWithChunks(
-      bucketId: string | undefined,
-      doc: RawDocument,
-      chunks: Chunk[],
+      bucketIdOrDoc: string | undefined | RawDocument,
+      docOrChunks?: RawDocument | Chunk[],
+      chunksOrOpts?: Chunk[] | IndexOpts,
       opts?: IndexOpts,
     ): Promise<IndexResult> {
-      const resolved = bucketId || DEFAULT_BUCKET_ID
+      let resolved: string
+      let doc: RawDocument
+      let chunks: Chunk[]
+      if (typeof bucketIdOrDoc === 'string' || bucketIdOrDoc === undefined || bucketIdOrDoc === null) {
+        resolved = (bucketIdOrDoc as string) || DEFAULT_BUCKET_ID
+        doc = docOrChunks as RawDocument
+        chunks = chunksOrOpts as Chunk[]
+      } else {
+        resolved = DEFAULT_BUCKET_ID
+        doc = bucketIdOrDoc as RawDocument
+        chunks = docOrChunks as Chunk[]
+      }
       return client.post<IndexResult>(`/v1/buckets/${e(resolved)}/ingest`, { doc, chunks, ...opts })
     },
 
@@ -116,8 +166,11 @@ export function createCloudInstance(config: CloudConfig): d8umCloudInstance {
       return assembleResults(results, opts)
     },
 
-    async remember(content: string, identity: d8umIdentity, category?: string): Promise<unknown> {
-      return client.post('/v1/memory/remember', { content, identity, category })
+    async remember(content: string, identity: d8umIdentity, category?: string, opts?: {
+      importance?: number
+      metadata?: Record<string, unknown>
+    }): Promise<unknown> {
+      return client.post('/v1/memory/remember', { content, identity, category, ...opts })
     },
 
     async forget(id: string): Promise<void> {
@@ -126,6 +179,25 @@ export function createCloudInstance(config: CloudConfig): d8umCloudInstance {
 
     async correct(correction: string, identity: d8umIdentity): Promise<{ invalidated: number; created: number; summary: string }> {
       return client.post('/v1/memory/correct', { correction, identity })
+    },
+
+    async recall(query: string, identity: d8umIdentity, opts?: { limit?: number; types?: string[] }): Promise<unknown[]> {
+      return client.post<unknown[]>('/v1/memory/recall', { query, identity, ...opts })
+    },
+
+    async assembleContext(query: string, identity: d8umIdentity, opts?: {
+      includeWorking?: boolean
+      includeFacts?: boolean
+      includeEpisodes?: boolean
+      includeProcedures?: boolean
+      maxMemoryTokens?: number
+      format?: 'xml' | 'markdown' | 'plain'
+    }): Promise<string> {
+      return client.post<string>('/v1/memory/assemble-context', { query, identity, ...opts })
+    },
+
+    async healthCheck(identity: d8umIdentity): Promise<unknown> {
+      return client.post('/v1/memory/health', { identity })
     },
 
     async addConversationTurn(

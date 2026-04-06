@@ -102,7 +102,10 @@ export class d8umMemory {
    * Store a memory. If content is a plain string, creates a semantic fact
    * with LLM extraction. For full control, use addConversationTurn().
    */
-  async remember(content: string, category: MemoryCategory = 'semantic'): Promise<MemoryRecord> {
+  async remember(content: string, category: MemoryCategory = 'semantic', opts?: {
+    importance?: number
+    metadata?: Record<string, unknown>
+  }): Promise<MemoryRecord> {
     const embedding = await this.embedding.embed(content)
     const temporal = createTemporal()
 
@@ -112,10 +115,10 @@ export class d8umMemory {
       status: 'active',
       content,
       embedding,
-      importance: 0.5,
+      importance: opts?.importance ?? 0.5,
       accessCount: 0,
       lastAccessedAt: new Date(),
-      metadata: {},
+      metadata: opts?.metadata ?? {},
       scope: this.scope,
       ...temporal,
     }
@@ -286,21 +289,36 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
     // Store episodic memories
     for (const episode of result.episodic) {
       episode.embedding = await this.embedding.embed(episode.content)
-      await this.store.upsert(episode)
+      const stored = await this.store.upsert(episode)
+      this.emit('memory.write', stored.id, { category: 'episodic', source: 'conversation' })
     }
 
     // Store new facts and check for contradictions
+    let contradictionCount = 0
     for (const fact of result.facts) {
       fact.embedding = await this.embedding.embed(fact.content)
 
       // Check contradictions before storing
       const contradictions = await this.invalidation.checkContradictions(fact, this.scope)
       if (contradictions.length > 0) {
+        contradictionCount += contradictions.length
+        this.emit('extraction.contradiction', undefined, {
+          factContent: fact.content.slice(0, 100),
+          contradictionCount: contradictions.length,
+        })
         await this.invalidation.resolveContradictions(contradictions)
       }
 
-      await this.store.upsert(fact)
+      const stored = await this.store.upsert(fact)
+      this.emit('memory.write', stored.id, { category: 'semantic', source: 'conversation' })
     }
+
+    this.emit('extraction.facts', undefined, {
+      episodicCount: result.episodic.length,
+      factCount: result.facts.length,
+      contradictionCount,
+      conversationId,
+    })
 
     return result
   }

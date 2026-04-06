@@ -98,6 +98,19 @@ export class PgHashStore implements HashStoreAdapter {
     )
   }
 
+  async deleteByIdempotencyKeys(keys: string[], bucketId: string, tenantId?: string): Promise<number> {
+    if (keys.length === 0) return 0
+    const rows = await this.sql(
+      `DELETE FROM ${this.tableName}
+       WHERE idempotency_key = ANY($1::text[])
+         AND bucket_id = $2
+         AND ${tenantId != null ? 'tenant_id = $3' : 'tenant_id IS NULL'}
+       RETURNING store_key`,
+      tenantId != null ? [keys, bucketId, tenantId] : [keys, bucketId]
+    )
+    return rows.length
+  }
+
   async deleteByBucket(bucketId: string, tenantId?: string): Promise<void> {
     if (tenantId != null) {
       await this.sql(
@@ -118,5 +131,17 @@ export class PgHashStore implements HashStoreAdapter {
         [bucketId]
       )
     }
+  }
+
+  /** Delete ALL hash entries for a bucket regardless of tenant. Used by bucket cascade delete. */
+  async deleteAllByBucket(bucketId: string): Promise<void> {
+    await this.sql(
+      `DELETE FROM ${this.tableName} WHERE bucket_id = $1`,
+      [bucketId]
+    )
+    await this.sql(
+      `DELETE FROM ${this.tableName}_run_times WHERE bucket_id = $1`,
+      [bucketId]
+    )
   }
 }

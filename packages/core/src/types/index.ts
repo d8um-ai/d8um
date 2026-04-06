@@ -73,3 +73,16 @@ export type {
 } from './events.js'
 
 export { D8umError, NotFoundError, NotInitializedError, ConfigError } from './errors.js'
+
+export type {
+  PolicyType,
+  PolicyAction,
+  PolicyRule,
+  Policy,
+  CreatePolicyInput,
+  UpdatePolicyInput,
+  PolicyEvalContext,
+  PolicyDecision,
+  PolicyViolation,
+  PolicyStoreAdapter,
+} from './policy.js'

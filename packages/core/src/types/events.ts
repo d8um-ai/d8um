@@ -28,7 +28,17 @@ export type d8umEventType =
   // Tool calls (MCP)
   | 'tool.call'
   | 'tool.result'
+  // Bucket lifecycle
+  | 'bucket.create'
+  | 'bucket.update'
+  | 'bucket.delete'
+  // Document lifecycle
+  | 'document.update'
+  | 'document.delete'
   // Governance
+  | 'policy.create'
+  | 'policy.update'
+  | 'policy.delete'
   | 'policy.violation'
 
 export interface d8umEvent {

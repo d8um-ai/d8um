@@ -1,4 +1,4 @@
-import type { EmbeddingProvider, d8umIdentity, LLMProvider } from '@d8um-ai/core'
+import type { EmbeddingProvider, d8umIdentity, LLMProvider, d8umEventSink } from '@d8um-ai/core'
 import type { GraphBridge } from '@d8um-ai/core'
 import type { MemoryStoreAdapter } from './types/adapter.js'
 import type { SemanticEdge } from './types/memory.js'
@@ -19,6 +19,8 @@ export interface CreateGraphBridgeConfig {
   llm: LLMProvider
   /** Default scope for addTriple (which has no per-call identity) */
   scope?: d8umIdentity
+  /** Optional event sink for observability. Passed through to d8umMemory instances. */
+  eventSink?: d8umEventSink
 }
 
 // ── Factory ──
@@ -43,7 +45,7 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
     const key = scopeKey(identity)
     let mem = memoryCache.get(key)
     if (!mem) {
-      mem = new d8umMemory({ memoryStore, embedding, llm, scope: identity })
+      mem = new d8umMemory({ memoryStore, embedding, llm, scope: identity, eventSink: config.eventSink })
       memoryCache.set(key, mem)
     }
     return mem
@@ -51,9 +53,12 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
 
   // ── Required methods (delegate to d8umMemory) ──
 
-  async function remember(content: string, identity: d8umIdentity, category?: string): Promise<unknown> {
+  async function remember(content: string, identity: d8umIdentity, category?: string, opts?: {
+    importance?: number
+    metadata?: Record<string, unknown>
+  }): Promise<unknown> {
     const mem = getMemory(identity)
-    return mem.remember(content, (category as 'episodic' | 'semantic' | 'procedural') ?? 'semantic')
+    return mem.remember(content, (category as 'episodic' | 'semantic' | 'procedural') ?? 'semantic', opts)
   }
 
   async function forget(id: string): Promise<void> {
@@ -80,6 +85,25 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
       limit: opts?.limit,
       types: opts?.types as ('episodic' | 'semantic' | 'procedural')[] | undefined,
     })
+  }
+
+  // ── Assemble context & health ──
+
+  async function assembleContext(query: string, identity: d8umIdentity, opts?: {
+    includeWorking?: boolean
+    includeFacts?: boolean
+    includeEpisodes?: boolean
+    includeProcedures?: boolean
+    maxMemoryTokens?: number
+    format?: 'xml' | 'markdown' | 'plain'
+  }): Promise<string> {
+    const mem = getMemory(identity)
+    return mem.assembleContext(query, opts)
+  }
+
+  async function healthCheck(identity: d8umIdentity): Promise<unknown> {
+    const mem = getMemory(identity)
+    return mem.healthCheck()
   }
 
   // ── Memory check (cached) ──
@@ -391,6 +415,8 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
     correct,
     addConversationTurn,
     recall,
+    assembleContext,
+    healthCheck,
     hasMemories,
     addTriple,
     searchEntities,

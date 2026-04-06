@@ -406,7 +406,38 @@ export class PgVectorAdapter implements VectorStoreAdapter {
   }
 
   async deleteDocuments(filter: DocumentFilter): Promise<number> {
-    return this.documentStore.delete(filter)
+    const { count, ids } = await this.documentStore.delete(filter)
+    if (ids.length === 0) return 0
+
+    // Cascade: delete chunks from all registered model tables
+    let totalChunksDeleted = 0
+    for (const table of this.modelTables.values()) {
+      // Collect idempotency keys before deleting chunks (for hash cleanup)
+      const ikeyRows = await this.sql(
+        `SELECT DISTINCT idempotency_key, bucket_id, tenant_id FROM ${table}
+         WHERE document_id = ANY($1::text[])`,
+        [ids]
+      )
+      const chunkRows = await this.sql(
+        `DELETE FROM ${table} WHERE document_id = ANY($1::text[]) RETURNING id`,
+        [ids]
+      )
+      totalChunksDeleted += chunkRows.length
+
+      // Cascade: delete hash entries by idempotency keys
+      for (const row of ikeyRows) {
+        const ikey = row.idempotency_key as string
+        const bucketId = row.bucket_id as string
+        const tenantId = (row.tenant_id as string) ?? undefined
+        await this.hashStore.deleteByIdempotencyKeys([ikey], bucketId, tenantId)
+      }
+    }
+
+    return count
+  }
+
+  async updateDocument(id: string, input: Partial<Pick<d8umDocument, 'title' | 'url' | 'visibility' | 'documentType' | 'sourceType' | 'metadata'>>): Promise<d8umDocument | null> {
+    return this.documentStore.update(id, input)
   }
 
   async updateDocumentStatus(id: string, status: DocumentStatus, chunkCount?: number): Promise<void> {
@@ -597,6 +628,11 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     if (id === DEFAULT_BUCKET_ID) {
       throw new Error('Cannot delete the default bucket.')
     }
+    // Cascade: delete all documents (which cascades to chunks + hashes)
+    await this.deleteDocuments({ bucketId: id })
+    // Clean up any remaining hash entries for this bucket (all tenants)
+    await this.hashStore.deleteAllByBucket(id)
+    // Delete the bucket record
     await this.sql(`DELETE FROM ${this.bucketsTable} WHERE id = $1`, [id])
   }
 

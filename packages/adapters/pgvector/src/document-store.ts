@@ -96,14 +96,31 @@ export class PgDocumentStore {
     return rows.map(mapDocRow)
   }
 
-  async delete(filter: DocumentFilter): Promise<number> {
+  async delete(filter: DocumentFilter): Promise<{ count: number; ids: string[] }> {
     const { where, params } = buildDocWhere(filter)
     if (!where) throw new Error('deleteDocuments() requires at least one filter field')
     const rows = await this.sql(
       `DELETE FROM ${this.tableName} WHERE ${where} RETURNING id`,
       params
     )
-    return rows.length
+    return { count: rows.length, ids: rows.map(r => r.id as string) }
+  }
+
+  async update(id: string, input: Partial<Pick<d8umDocument, 'title' | 'url' | 'visibility' | 'documentType' | 'sourceType' | 'metadata'>>): Promise<d8umDocument | null> {
+    const setClauses: string[] = ['updated_at = NOW()']
+    const params: unknown[] = []
+    if (input.title !== undefined) { params.push(input.title); setClauses.push(`title = $${params.length}`) }
+    if (input.url !== undefined) { params.push(input.url); setClauses.push(`url = $${params.length}`) }
+    if (input.visibility !== undefined) { params.push(input.visibility); setClauses.push(`visibility = $${params.length}`) }
+    if (input.documentType !== undefined) { params.push(input.documentType); setClauses.push(`document_type = $${params.length}`) }
+    if (input.sourceType !== undefined) { params.push(input.sourceType); setClauses.push(`source_type = $${params.length}`) }
+    if (input.metadata !== undefined) { params.push(JSON.stringify(input.metadata)); setClauses.push(`metadata = $${params.length}::jsonb`) }
+    params.push(id)
+    const rows = await this.sql(
+      `UPDATE ${this.tableName} SET ${setClauses.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      params
+    )
+    return rows.length > 0 ? mapDocRow(rows[0]!) : null
   }
 
   async updateStatus(id: string, status: DocumentStatus, chunkCount?: number): Promise<void> {

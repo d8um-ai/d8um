@@ -1,6 +1,6 @@
 // Main public API
 export { d8um, d8umCreate, d8umDeploy, resolveEmbeddingProvider, resolveLLMProvider, DEFAULT_BUCKET_ID } from './d8um.js'
-export type { d8umConfig, d8umInstance, BucketsApi, LLMInput } from './d8um.js'
+export type { d8umConfig, d8umInstance, BucketsApi, DocumentsApi, LLMInput } from './d8um.js'
 
 // Types
 export type {
@@ -46,6 +46,16 @@ export type {
   d8umEventType,
   d8umEventSink,
   TokenUsage,
+  PolicyType,
+  PolicyAction,
+  PolicyRule,
+  Policy,
+  CreatePolicyInput,
+  UpdatePolicyInput,
+  PolicyEvalContext,
+  PolicyDecision,
+  PolicyViolation,
+  PolicyStoreAdapter,
 } from './types/index.js'
 export { IndexError } from './types/index.js'
 export { D8umError, NotFoundError, NotInitializedError, ConfigError } from './types/index.js'
@@ -58,6 +68,9 @@ export type { AISDKEmbeddingModel, AISDKEmbeddingInput } from './embedding/index
 // LLM
 export { aiSdkLlmProvider, isAISDKLLMInput } from './llm/index.js'
 export type { AISDKLanguageModel, AISDKLLMInput } from './llm/index.js'
+
+// Governance
+export { PolicyEngine, PolicyViolationError } from './governance/index.js'
 
 // Index engine
 export { IndexEngine, defaultChunker, sha256, stripMarkdown } from './index-engine/index.js'

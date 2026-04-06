@@ -4,12 +4,15 @@ import type { QueryOpts, QueryResponse, d8umResult, AssembleOpts } from './types
 import type { IndexOpts, IndexResult } from './types/index-types.js'
 import type { EmbeddingProvider } from './embedding/provider.js'
 import type { RawDocument, Chunk } from './types/connector.js'
+import type { d8umDocument, DocumentFilter } from './types/d8um-document.js'
 import type { d8umHooks } from './types/hooks.js'
 import type { LLMProvider } from './types/llm-provider.js'
 import type { GraphBridge } from './types/graph-bridge.js'
 import type { ExtractionConfig } from './types/extraction-config.js'
 import type { d8umIdentity } from './types/identity.js'
-import type { d8umEventSink } from './types/events.js'
+import type { d8umEventSink, d8umEventType } from './types/events.js'
+import type { PolicyStoreAdapter, CreatePolicyInput, UpdatePolicyInput, Policy, PolicyType, PolicyAction } from './types/policy.js'
+import { PolicyEngine, PolicyViolationError } from './governance/policy-engine.js'
 import type { ContextSearchOpts, ContextSearchResponse } from './query/context-search.js'
 import type { AISDKLLMInput } from './llm/ai-sdk-adapter.js'
 import { aiSdkEmbeddingProvider, isAISDKEmbeddingInput } from './embedding/ai-sdk-adapter.js'
@@ -53,6 +56,8 @@ export interface d8umConfig {
   extraction?: ExtractionConfig | undefined
   /** Optional event sink for observability. Events are emitted fire-and-forget. */
   eventSink?: d8umEventSink | undefined
+  /** Optional policy store for governance. When provided, actions are checked against active policies. */
+  policyStore?: PolicyStoreAdapter | undefined
 }
 
 function isEmbeddingProvider(
@@ -89,6 +94,14 @@ export interface BucketsApi {
   delete(bucketId: string): Promise<void>
 }
 
+// ── Documents Sub-API ──
+
+export interface DocumentsApi {
+  get(id: string): Promise<d8umDocument | null>
+  list(filter?: DocumentFilter): Promise<d8umDocument[]>
+  delete(filter: DocumentFilter): Promise<number>
+}
+
 /** The d8um instance interface — all public methods. */
 export interface d8umInstance {
   /** One-off infrastructure provisioning. Creates all tables/extensions. Idempotent. */
@@ -101,6 +114,7 @@ export interface d8umInstance {
   undeploy(): Promise<UndeployResult>
 
   buckets: BucketsApi
+  documents: DocumentsApi
 
   getEmbeddingForBucket(bucketId: string): EmbeddingProvider
   getDistinctEmbeddings(bucketIds?: string[]): Map<string, EmbeddingProvider>
@@ -108,9 +122,11 @@ export interface d8umInstance {
 
   /** Ingest documents directly into a bucket. All chunks are embedded in a single batch call. */
   ingest(bucketId: string | undefined, docs: RawDocument[], indexConfig: IndexConfig, opts?: IndexOpts): Promise<IndexResult>
+  ingest(docs: RawDocument[], indexConfig: IndexConfig, opts?: IndexOpts): Promise<IndexResult>
 
   /** Ingest a document with pre-chunked content. */
   ingestWithChunks(bucketId: string | undefined, doc: RawDocument, chunks: Chunk[], opts?: IndexOpts): Promise<IndexResult>
+  ingestWithChunks(doc: RawDocument, chunks: Chunk[], opts?: IndexOpts): Promise<IndexResult>
 
   /** Search across buckets. */
   query(text: string, opts?: QueryOpts): Promise<QueryResponse>
@@ -120,17 +136,43 @@ export interface d8umInstance {
   // ── Memory operations (require graph bridge) ──
 
   /** Store a memory. LLM extracts triples → entity graph + memory record. */
-  remember(content: string, identity: d8umIdentity, category?: string): Promise<unknown>
+  remember(content: string, identity: d8umIdentity, category?: string, opts?: {
+    importance?: number
+    metadata?: Record<string, unknown>
+  }): Promise<unknown>
   /** Invalidate a memory and its associated graph edges. */
   forget(id: string): Promise<void>
   /** Apply a natural language correction. */
   correct(correction: string, identity: d8umIdentity): Promise<{ invalidated: number; created: number; summary: string }>
+  /** Search memories by semantic similarity. */
+  recall(query: string, identity: d8umIdentity, opts?: { limit?: number; types?: string[] }): Promise<unknown[]>
+  /** Build a formatted memory context block for LLM system prompts. */
+  assembleContext(query: string, identity: d8umIdentity, opts?: {
+    includeWorking?: boolean
+    includeFacts?: boolean
+    includeEpisodes?: boolean
+    includeProcedures?: boolean
+    maxMemoryTokens?: number
+    format?: 'xml' | 'markdown' | 'plain'
+  }): Promise<string>
+  /** Check memory system health — returns stats about stored memories, entities, and edges. */
+  healthCheck(identity: d8umIdentity): Promise<unknown>
   /** Ingest a conversation turn with extraction. */
   addConversationTurn(
     messages: Array<{ role: string; content: string; timestamp?: Date }>,
     identity: d8umIdentity,
     conversationId?: string,
   ): Promise<unknown>
+
+  // ── Policy operations (require policyStore) ──
+
+  policies: {
+    create(input: CreatePolicyInput): Promise<Policy>
+    get(id: string): Promise<Policy | null>
+    list(filter?: { tenantId?: string; policyType?: PolicyType; enabled?: boolean }): Promise<Policy[]>
+    update(id: string, input: UpdatePolicyInput): Promise<Policy>
+    delete(id: string): Promise<void>
+  }
 
   destroy(): Promise<void>
 }
@@ -143,6 +185,19 @@ class d8umImpl implements d8umInstance {
   private config!: d8umConfig
   private configured = false
   private initialized = false
+  private policyEngine?: PolicyEngine
+
+  private emitEvent(eventType: d8umEventType, targetId?: string, payload: Record<string, unknown> = {}): void {
+    if (!this.config?.eventSink) return
+    this.config.eventSink.emit({
+      id: crypto.randomUUID(),
+      eventType,
+      identity: { tenantId: this.config.tenantId },
+      targetId,
+      payload,
+      timestamp: new Date(),
+    })
+  }
 
   // ── Buckets ──
 
@@ -161,10 +216,12 @@ class d8umImpl implements d8umInstance {
         const persisted = await this.adapter.upsertBucket(bucket)
         this._buckets.set(persisted.id, persisted)
         this.bucketEmbeddings.set(persisted.id, this.defaultEmbedding)
+        this.emitEvent('bucket.create', persisted.id, { name: persisted.name })
         return persisted
       }
       this._buckets.set(bucket.id, bucket)
       this.bucketEmbeddings.set(bucket.id, this.defaultEmbedding)
+      this.emitEvent('bucket.create', bucket.id, { name: bucket.name })
       return bucket
     },
 
@@ -212,23 +269,62 @@ class d8umImpl implements d8umInstance {
       if (input.description !== undefined) bucket.description = input.description
       if (input.status !== undefined) bucket.status = input.status
       if (input.indexDefaults !== undefined) bucket.indexDefaults = input.indexDefaults
+      let result: Bucket
       if (this.adapter.upsertBucket) {
-        return this.adapter.upsertBucket(bucket)
+        result = await this.adapter.upsertBucket(bucket)
+      } else {
+        this._buckets.set(bucket.id, bucket)
+        result = bucket
       }
-      this._buckets.set(bucket.id, bucket)
-      return bucket
+      this.emitEvent('bucket.update', result.id, { name: result.name })
+      return result
     },
 
     delete: async (bucketId: string): Promise<void> => {
       if (bucketId === DEFAULT_BUCKET_ID) {
         throw new Error('Cannot delete the default bucket.')
       }
+      await this.enforcePolicy('bucket.delete', { tenantId: this.config.tenantId }, bucketId)
       if (this.adapter.deleteBucket) {
         await this.adapter.deleteBucket(bucketId)
       } else {
         this._buckets.delete(bucketId)
       }
       this.bucketEmbeddings.delete(bucketId)
+      this.emitEvent('bucket.delete', bucketId)
+    },
+  }
+
+  // ── Documents ──
+
+  documents: DocumentsApi = {
+    get: async (id: string): Promise<d8umDocument | null> => {
+      this.assertConfigured()
+      if (!this.adapter.getDocument) {
+        throw new ConfigError('Adapter does not support document operations.')
+      }
+      return this.adapter.getDocument(id)
+    },
+
+    list: async (filter?: DocumentFilter): Promise<d8umDocument[]> => {
+      this.assertConfigured()
+      if (!this.adapter.listDocuments) {
+        throw new ConfigError('Adapter does not support document operations.')
+      }
+      return this.adapter.listDocuments(filter ?? {})
+    },
+
+    delete: async (filter: DocumentFilter): Promise<number> => {
+      this.assertConfigured()
+      if (!this.adapter.deleteDocuments) {
+        throw new ConfigError('Adapter does not support document operations.')
+      }
+      await this.enforcePolicy('document.delete', { tenantId: filter.tenantId ?? this.config.tenantId })
+      const count = await this.adapter.deleteDocuments(filter)
+      if (count > 0) {
+        this.emitEvent('document.delete', undefined, { count, filter })
+      }
+      return count
     },
   }
 
@@ -246,6 +342,10 @@ class d8umImpl implements d8umInstance {
     // Deploy memory/graph tables when graph bridge is configured
     if (config.graph?.deploy) {
       await config.graph.deploy()
+    }
+    // Initialize policy engine when policyStore is configured
+    if (config.policyStore) {
+      this.policyEngine = new PolicyEngine(config.policyStore, config.eventSink)
     }
     this.configured = true
 
@@ -296,6 +396,10 @@ class d8umImpl implements d8umInstance {
         this._buckets.set(s.id, s)
         this.bucketEmbeddings.set(s.id, this.defaultEmbedding)
       }
+    }
+    // Initialize policy engine when policyStore is configured
+    if (config.policyStore) {
+      this.policyEngine = new PolicyEngine(config.policyStore, config.eventSink)
     }
     this.configured = true
     this.initialized = true
@@ -375,13 +479,34 @@ class d8umImpl implements d8umInstance {
   }
 
   async ingest(
-    bucketId: string | undefined,
-    docs: RawDocument[],
-    indexConfig: IndexConfig,
+    bucketIdOrDocs: string | undefined | RawDocument[],
+    docsOrConfig: RawDocument[] | IndexConfig,
+    indexConfigOrOpts?: IndexConfig | IndexOpts,
     opts?: IndexOpts
   ): Promise<IndexResult> {
+    // Support both: ingest(bucketId, docs, config, opts?) and ingest(docs, config, opts?)
+    let bucketId: string | undefined
+    let docs: RawDocument[]
+    let indexConfig: IndexConfig
+    let resolvedOpts: IndexOpts | undefined
+
+    if (Array.isArray(bucketIdOrDocs)) {
+      // ingest(docs, config, opts?)
+      bucketId = undefined
+      docs = bucketIdOrDocs
+      indexConfig = docsOrConfig as IndexConfig
+      resolvedOpts = indexConfigOrOpts as IndexOpts | undefined
+    } else {
+      // ingest(bucketId, docs, config, opts?)
+      bucketId = bucketIdOrDocs
+      docs = docsOrConfig as RawDocument[]
+      indexConfig = indexConfigOrOpts as IndexConfig
+      resolvedOpts = opts
+    }
+
     await this.ensureInitialized()
     const resolvedBucketId = bucketId || DEFAULT_BUCKET_ID
+    await this.enforcePolicy('index', { tenantId: this.config.tenantId }, resolvedBucketId)
     const bucket = await this.buckets.get(resolvedBucketId)
     if (!bucket) throw new NotFoundError('Bucket', resolvedBucketId)
     // Merge bucket-level index defaults with per-call config (per-call wins)
@@ -390,33 +515,55 @@ class d8umImpl implements d8umInstance {
     const items = docs.map(doc => ({ doc, chunks: chunker(doc, merged) }))
     const embedding = await this.resolveEmbeddingForBucket(resolvedBucketId)
     const engine = this.createIndexEngine(embedding)
-    await this.config.hooks?.onIndexStart?.(resolvedBucketId, opts ?? {})
-    const result = await engine.ingestBatch(resolvedBucketId, items, opts, merged)
+    await this.config.hooks?.onIndexStart?.(resolvedBucketId, resolvedOpts ?? {})
+    const result = await engine.ingestBatch(resolvedBucketId, items, resolvedOpts, merged)
     await this.config.hooks?.onIndexComplete?.(resolvedBucketId, result)
     return result
   }
 
   async ingestWithChunks(
-    bucketId: string | undefined,
-    doc: RawDocument,
-    chunks: Chunk[],
+    bucketIdOrDoc: string | undefined | RawDocument,
+    docOrChunks: RawDocument | Chunk[],
+    chunksOrOpts?: Chunk[] | IndexOpts,
     opts?: IndexOpts
   ): Promise<IndexResult> {
+    // Support both: ingestWithChunks(bucketId, doc, chunks, opts?) and ingestWithChunks(doc, chunks, opts?)
+    let bucketId: string | undefined
+    let doc: RawDocument
+    let chunks: Chunk[]
+    let resolvedOpts: IndexOpts | undefined
+
+    if (typeof bucketIdOrDoc === 'string' || bucketIdOrDoc === undefined || bucketIdOrDoc === null) {
+      // ingestWithChunks(bucketId, doc, chunks, opts?)
+      bucketId = bucketIdOrDoc as string | undefined
+      doc = docOrChunks as RawDocument
+      chunks = chunksOrOpts as Chunk[]
+      resolvedOpts = opts
+    } else {
+      // ingestWithChunks(doc, chunks, opts?)
+      bucketId = undefined
+      doc = bucketIdOrDoc as RawDocument
+      chunks = docOrChunks as Chunk[]
+      resolvedOpts = chunksOrOpts as IndexOpts | undefined
+    }
+
     await this.ensureInitialized()
     const resolvedBucketId = bucketId || DEFAULT_BUCKET_ID
+    await this.enforcePolicy('index', { tenantId: this.config.tenantId }, resolvedBucketId)
     const bucket = await this.buckets.get(resolvedBucketId)
     if (!bucket) throw new NotFoundError('Bucket', resolvedBucketId)
     const embedding = await this.resolveEmbeddingForBucket(resolvedBucketId)
     const engine = this.createIndexEngine(embedding)
 
-    await this.config.hooks?.onIndexStart?.(resolvedBucketId, opts ?? {})
-    const result = await engine.ingestWithChunks(resolvedBucketId, doc, chunks, opts)
+    await this.config.hooks?.onIndexStart?.(resolvedBucketId, resolvedOpts ?? {})
+    const result = await engine.ingestWithChunks(resolvedBucketId, doc, chunks, resolvedOpts)
     await this.config.hooks?.onIndexComplete?.(resolvedBucketId, result)
     return result
   }
 
   async query(text: string, opts?: QueryOpts): Promise<QueryResponse> {
     await this.ensureInitialized()
+    await this.enforcePolicy('query', { tenantId: opts?.tenantId ?? this.config.tenantId })
     const { QueryPlanner } = await import('./query/planner.js')
     const planner = new QueryPlanner(
       this.adapter,
@@ -459,16 +606,45 @@ class d8umImpl implements d8umInstance {
     return this.config.graph
   }
 
-  async remember(content: string, identity: d8umIdentity, category?: string): Promise<unknown> {
-    return this.requireGraph().remember(content, identity, category)
+  async remember(content: string, identity: d8umIdentity, category?: string, opts?: {
+    importance?: number
+    metadata?: Record<string, unknown>
+  }): Promise<unknown> {
+    await this.enforcePolicy('memory.write', identity)
+    return this.requireGraph().remember(content, identity, category, opts)
   }
 
   async forget(id: string): Promise<void> {
+    await this.enforcePolicy('memory.delete', { tenantId: this.config.tenantId }, id)
     return this.requireGraph().forget(id)
   }
 
   async correct(correction: string, identity: d8umIdentity): Promise<{ invalidated: number; created: number; summary: string }> {
     return this.requireGraph().correct(correction, identity)
+  }
+
+  async recall(query: string, identity: d8umIdentity, opts?: { limit?: number; types?: string[] }): Promise<unknown[]> {
+    await this.enforcePolicy('memory.read', identity)
+    return this.requireGraph().recall(query, identity, opts)
+  }
+
+  async assembleContext(query: string, identity: d8umIdentity, opts?: {
+    includeWorking?: boolean
+    includeFacts?: boolean
+    includeEpisodes?: boolean
+    includeProcedures?: boolean
+    maxMemoryTokens?: number
+    format?: 'xml' | 'markdown' | 'plain'
+  }): Promise<string> {
+    const graph = this.requireGraph()
+    if (!graph.assembleContext) throw new Error('assembleContext not supported by this graph bridge')
+    return graph.assembleContext(query, identity, opts)
+  }
+
+  async healthCheck(identity: d8umIdentity): Promise<unknown> {
+    const graph = this.requireGraph()
+    if (!graph.healthCheck) throw new Error('healthCheck not supported by this graph bridge')
+    return graph.healthCheck(identity)
   }
 
   async addConversationTurn(
@@ -477,6 +653,47 @@ class d8umImpl implements d8umInstance {
     conversationId?: string,
   ): Promise<unknown> {
     return this.requireGraph().addConversationTurn(messages, identity, conversationId)
+  }
+
+  // ── Policy operations ──
+
+  private requirePolicyStore(): PolicyStoreAdapter {
+    if (!this.config.policyStore) {
+      throw new ConfigError('Policy store not configured. Pass a policyStore to d8umConfig to enable policy operations.')
+    }
+    return this.config.policyStore
+  }
+
+  policies = {
+    create: async (input: CreatePolicyInput): Promise<Policy> => {
+      const store = this.requirePolicyStore()
+      const policy = await store.createPolicy(input)
+      this.emitEvent('policy.create', policy.id, { name: policy.name, policyType: policy.policyType })
+      return policy
+    },
+
+    get: async (id: string): Promise<Policy | null> => {
+      const store = this.requirePolicyStore()
+      return store.getPolicy(id)
+    },
+
+    list: async (filter?: { tenantId?: string; policyType?: PolicyType; enabled?: boolean }): Promise<Policy[]> => {
+      const store = this.requirePolicyStore()
+      return store.listPolicies(filter)
+    },
+
+    update: async (id: string, input: UpdatePolicyInput): Promise<Policy> => {
+      const store = this.requirePolicyStore()
+      const policy = await store.updatePolicy(id, input)
+      this.emitEvent('policy.update', policy.id, { name: policy.name })
+      return policy
+    },
+
+    delete: async (id: string): Promise<void> => {
+      const store = this.requirePolicyStore()
+      await store.deletePolicy(id)
+      this.emitEvent('policy.delete', id)
+    },
   }
 
   async destroy(): Promise<void> {
@@ -496,6 +713,15 @@ class d8umImpl implements d8umInstance {
       })
     }
     return engine
+  }
+
+  private async enforcePolicy(action: PolicyAction, identity?: d8umIdentity, targetId?: string): Promise<void> {
+    if (!this.policyEngine) return
+    await this.policyEngine.enforce({
+      action,
+      identity: identity ?? { tenantId: this.config.tenantId },
+      targetId,
+    })
   }
 
   private assertConfigured(): void {
