@@ -32,15 +32,34 @@ export function signalLabel(signals: QuerySignals): string {
   return active.join('+') || 'none'
 }
 
+/** Compute weighted score, redistributing weight from zero-valued components
+ *  to non-zero components proportionally. This ensures activating additional
+ *  signals can never hurt a result's score — it either helps (signal fires)
+ *  or is neutral (signal returns 0). */
+function weightedScoreWithRedistribution(components: [number, number][]): number {
+  const nonZero = components.filter(([, v]) => v > 0)
+  if (nonZero.length === 0) return 0
+  const zeroWeight = components
+    .filter(([, v]) => v === 0)
+    .reduce((s, [w]) => s + w, 0)
+  const totalNonZeroWeight = nonZero.reduce((s, [w]) => s + w, 0)
+  return nonZero.reduce((score, [w, v]) => {
+    const adjusted = w + zeroWeight * (w / totalNonZeroWeight)
+    return score + adjusted * v
+  }, 0)
+}
+
 /** Compute composite score from normalized signal scores and weights.
- *  When no explicit weights are provided, derives defaults from which signals are active. */
+ *  When no explicit weights are provided, derives defaults from which signals are active.
+ *  Zero-valued signals have their weight redistributed to non-zero signals so that
+ *  activating additional retrieval systems never penalizes a result. */
 export function computeCompositeScore(
   normalizedScores: NormalizedScores,
   signals: Required<QuerySignals>,
   userWeights?: Partial<Record<'rrf' | 'semantic' | 'keyword' | 'graph' | 'memory', number>>
 ): number {
   if (userWeights && Object.keys(userWeights).length > 0) {
-    // User-provided weights — use directly
+    // User-provided weights — use directly (no redistribution)
     let score = 0
     score += (userWeights.rrf ?? 0) * (normalizedScores.rrf ?? 0)
     score += (userWeights.semantic ?? 0) * (normalizedScores.semantic ?? 0)
@@ -60,21 +79,24 @@ export function computeCompositeScore(
     return normalizedScores.semantic ?? 0
   }
 
+  // Build weighted components from active signals
+  const components: [number, number][] = []
+
   if (hasKeyword && !hasGraph && !hasMemory) {
     // Vector + keyword (hybrid)
-    const nRRF = normalizedScores.rrf ?? 0
-    const semantic = normalizedScores.semantic ?? 0
-    const kw = normalizedScores.keyword ?? 0
-    return 0.4 * nRRF + 0.5 * semantic + 0.1 * kw
+    components.push([0.4, normalizedScores.rrf ?? 0])
+    components.push([0.5, normalizedScores.semantic ?? 0])
+    components.push([0.1, normalizedScores.keyword ?? 0])
+  } else {
+    // Multi-signal (any combination with graph/memory)
+    components.push([0.25, normalizedScores.rrf ?? 0])
+    components.push([0.35, normalizedScores.semantic ?? 0])
+    if (hasKeyword) components.push([0.1, normalizedScores.keyword ?? 0])
+    if (hasGraph) components.push([0.15, normalizedScores.graph ?? 0])
+    if (hasMemory) components.push([0.15, normalizedScores.memory ?? 0])
   }
 
-  // Multi-signal (any combination with graph/memory)
-  const nRRF = normalizedScores.rrf ?? 0
-  const semantic = normalizedScores.semantic ?? 0
-  const kw = normalizedScores.keyword ?? 0
-  const graph = normalizedScores.graph ?? 0
-  const memory = normalizedScores.memory ?? 0
-  return 0.25 * nRRF + 0.35 * semantic + 0.1 * kw + 0.15 * graph + 0.15 * memory
+  return weightedScoreWithRedistribution(components)
 }
 
 export class QueryPlanner {
@@ -332,7 +354,14 @@ export class QueryPlanner {
         rawScores.rrf = rawRrf
         normalizedScores.keyword = agg.keyword ?? 0
         const numListsForRRF = merged.compositeScore != null ? runnerArrays.length : 2
-        normalizedScores.rrf = normalizeRRF(rawRrf, numListsForRRF)
+        const baseRRF = normalizeRRF(rawRrf, numListsForRRF)
+        // Attenuate RRF for results that only matched one retrieval list.
+        // RRF is rank-based and doesn't know relevance — a result ranked #1 in
+        // vector search gets high RRF even with near-zero cosine similarity.
+        // When keyword signal is active but a result has no keyword match,
+        // penalize its RRF to prevent rank inflation from dominating the score.
+        const matchedBothLists = (agg.keyword ?? 0) > 0
+        normalizedScores.rrf = matchedBothLists ? baseRRF : baseRRF * 0.5
       } else if (signals.vector && (needsGraph || needsMemory) && merged.compositeScore != null) {
         // Vector + graph/memory without keyword: still have RRF from multi-runner merge
         rawScores.rrf = rawRrf

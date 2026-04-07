@@ -77,6 +77,16 @@ export function mergeAndRank(
   scoreWeights?: Partial<Record<'rrf' | 'semantic' | 'keyword' | 'graph' | 'memory', number>>
 ): NormalizedResult[] {
   const numLists = runnerResults.length
+
+  // Compute theoretical max RRF from actual runner weights (not numLists which assumes weight=1).
+  // Each runner's weight comes from the mode of its first result.
+  const k = 60
+  const sumOfWeights = runnerResults.reduce((sum, results) => {
+    const mode = results[0]?.mode
+    return sum + ((weights ?? RRF_WEIGHTS)[mode ?? 'indexed'] ?? 0.5)
+  }, 0)
+  const theoreticalMaxRRF = sumOfWeights / (k + 1)
+
   const ranked = runnerResults.flatMap((results) =>
     results.map((r, i) => ({ ...r, runnerRank: i + 1 }))
   )
@@ -112,8 +122,11 @@ export function mergeAndRank(
       }
     }
 
-    // Compute normalized composite score using shared function
-    const nRRF = normalizeRRF(rrfScore, numLists)
+    // Compute normalized composite score using shared function.
+    // Normalize RRF by the weight-corrected theoretical max (not numLists).
+    // No additional attenuation — the raw RRF already reflects how many runners
+    // contributed (fewer runners = lower raw RRF = lower normalized score).
+    const nRRF = theoreticalMaxRRF > 0 ? Math.min(rrfScore / theoreticalMaxRRF, 1) : 0
     const normalizedScores: NormalizedScores = {
       rrf: nRRF,
       semantic: aggregatedScores.vector ?? 0,
