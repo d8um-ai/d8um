@@ -1,0 +1,27 @@
+{
+  "name": "@typegraph-ai/adapter-pgvector-neon",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@typegraph-ai/adapter-pgvector": "workspace:*",
+    "@neondatabase/serverless": "^0.10.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

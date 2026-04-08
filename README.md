@@ -25,31 +25,30 @@ TypeGraph closes that gap:
 
 - **Retrieval + memory in one SDK** - not two separate tools bolted together
 - **TypeScript-native** - no Python runtime, no managed service, no vendor lock-in
-- **Vercel AI Gateway + Neon Postgres** - production-ready with pgvector, access 40+ model providers through one dependency
+- **Any Postgres provider** - Neon, Supabase, Amazon RDS, Nile, Prisma, self-hosted - production-ready with pgvector
 - **Vercel AI SDK integration** - memory tools and middleware for `generateText()` / `streamText()`
 - **Composable** - works alongside your stack, not inside a framework
 - **Per-bucket embedding models** - different models for different content, merged at query time via RRF
 
 ## Quick Start
 
-**Prerequisites:** A [Neon](https://neon.tech) Postgres database. `deploy()` automatically enables the pgvector extension and creates all required tables.
+**Prerequisites:** A PostgreSQL database with pgvector support. `deploy()` automatically enables the pgvector extension and creates all required tables.
 
 ```bash
-npm install @typegraph-ai/core @typegraph-ai/adapter-pgvector @ai-sdk/gateway @neondatabase/serverless
+npm install @typegraph-ai/core @typegraph-ai/adapter-pgvector-neon @ai-sdk/gateway
 ```
 
 ```ts
 import { TypeGraph } from '@typegraph-ai/core'
-import { PgVectorAdapter } from '@typegraph-ai/adapter-pgvector'
+import { createNeonAdapter } from '@typegraph-ai/adapter-pgvector-neon'
 import { gateway } from '@ai-sdk/gateway'
-import { neon } from '@neondatabase/serverless'
 
 const config = {
   embedding: {
     model: gateway.embeddingModel('openai/text-embedding-3-small'),
     dimensions: 1536,
   },
-  vectorStore: new PgVectorAdapter({ sql: neon(process.env.DATABASE_URL!) }),
+  vectorStore: createNeonAdapter(process.env.DATABASE_URL!),
 }
 
 // One-time setup - creates tables (run once, e.g. in a setup script or CI)
@@ -231,14 +230,74 @@ TypeGraph overall ACC (58.4%) is statistically significant over HippoRAG2 (56.5%
 | --------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------ |
 | **Core**                                                                    |                                                                       |        |
 | `[@typegraph-ai/core](packages/core)`                                               | Query engine, index engine, memory operations                         | Alpha  |
-| `[@typegraph-ai/adapter-pgvector](packages/adapters/pgvector)`                      | PostgreSQL + pgvector storage                                         | Alpha  |
+| `[@typegraph-ai/adapter-pgvector](packages/adapters/pgvector)`                      | PostgreSQL + pgvector storage (base adapter)                          | Alpha  |
 | `[@typegraph-ai/adapter-sqlite-vec](packages/adapters/sqlite-vec)`                  | SQLite + sqlite-vec - local dev / edge                                | Alpha  |
 | `[@typegraph-ai/hosted](packages/hosted)`                                           | Hosted client SDK                                                     | Alpha  |
+| **Database Providers**                                                      |                                                                       |        |
+| `[@typegraph-ai/adapter-pgvector-neon](packages/adapters/pgvector-neon)`             | [Neon](https://neon.tech) serverless Postgres                        | Alpha  |
+| `[@typegraph-ai/adapter-pgvector-supabase](packages/adapters/pgvector-supabase)`     | [Supabase](https://supabase.com) Postgres                           | Alpha  |
+| `[@typegraph-ai/adapter-pgvector-pg](packages/adapters/pgvector-pg)`                 | Self-hosted / Docker / Cloud SQL / Azure (node-postgres)             | Alpha  |
+| `[@typegraph-ai/adapter-pgvector-rds](packages/adapters/pgvector-rds)`               | [Amazon RDS](https://aws.amazon.com/rds/) with optional IAM auth     | Alpha  |
+| `[@typegraph-ai/adapter-pgvector-nile](packages/adapters/pgvector-nile)`             | [Nile](https://thenile.dev) tenant-aware Postgres                    | Alpha  |
+| `[@typegraph-ai/adapter-pgvector-prisma](packages/adapters/pgvector-prisma)`         | [Prisma](https://prisma.io) Postgres                                 | Alpha  |
 | **Graph + Memory**                                                          |                                                                       |        |
 | `[@typegraph-ai/graph](packages/graph)`                                             | Knowledge graph, cognitive memory, PPR, entity linking, consolidation | Alpha  |
 | `[@typegraph-ai/mcp-server](packages/mcp-server)`                                   | MCP tools + resources for agent frameworks                            | Alpha  |
 | `[@typegraph-ai/vercel-ai-provider](packages/vercel-ai-provider)`                   | Vercel AI SDK memory tools + middleware                               | Alpha  |
 
+
+## Database Providers
+
+TypeGraph works with any PostgreSQL provider. Install the adapter for your provider:
+
+```bash
+# Neon (serverless)
+npm install @typegraph-ai/adapter-pgvector-neon
+
+# Supabase
+npm install @typegraph-ai/adapter-pgvector-supabase
+
+# Amazon RDS (with optional IAM auth)
+npm install @typegraph-ai/adapter-pgvector-rds
+
+# Nile (tenant-aware)
+npm install @typegraph-ai/adapter-pgvector-nile
+
+# Prisma Postgres
+npm install @typegraph-ai/adapter-pgvector-prisma
+
+# Self-hosted / Docker / Cloud SQL / Azure
+npm install @typegraph-ai/adapter-pgvector-pg
+```
+
+Each provider package is a one-liner:
+
+```ts
+import { createNeonAdapter } from '@typegraph-ai/adapter-pgvector-neon'
+const adapter = createNeonAdapter(process.env.DATABASE_URL!)
+
+import { createSupabaseAdapter } from '@typegraph-ai/adapter-pgvector-supabase'
+const adapter = createSupabaseAdapter(process.env.DATABASE_URL!)
+
+import { createPgAdapter } from '@typegraph-ai/adapter-pgvector-pg'
+const adapter = createPgAdapter(process.env.DATABASE_URL!)
+
+import { createRdsAdapter } from '@typegraph-ai/adapter-pgvector-rds'
+const adapter = await createRdsAdapter(process.env.DATABASE_URL!)
+
+import { createNileAdapter } from '@typegraph-ai/adapter-pgvector-nile'
+const adapter = createNileAdapter(nileServer)
+
+import { createPrismaAdapter } from '@typegraph-ai/adapter-pgvector-prisma'
+const adapter = createPrismaAdapter(prisma)
+```
+
+For custom drivers, use the base adapter directly with your own `SqlExecutor`:
+
+```ts
+import { PgVectorAdapter } from '@typegraph-ai/adapter-pgvector'
+const adapter = new PgVectorAdapter({ sql: myCustomExecutor })
+```
 
 ## Guides
 

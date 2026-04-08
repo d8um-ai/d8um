@@ -1,0 +1,31 @@
+{
+  "name": "@typegraph-ai/adapter-pgvector-rds",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@typegraph-ai/adapter-pgvector": "workspace:*",
+    "pg": "^8.13.0"
+  },
+  "optionalDependencies": {
+    "@aws-sdk/rds-signer": "^3.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.4.0"
+  }
+}
