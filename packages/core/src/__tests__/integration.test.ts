@@ -83,8 +83,8 @@ describe('integration', () => {
     await instance.ingest(docs1, indexConfig1, { bucketId: 'src-1' })
     await instance.ingest(docs2, indexConfig2, { bucketId: 'src-2' })
 
-    expect(adapter._chunks.has('model-a')).toBe(true)
-    expect(adapter._chunks.has('model-b')).toBe(true)
+    expect(adapter._chunks.has('model-a:4')).toBe(true)
+    expect(adapter._chunks.has('model-b:4')).toBe(true)
   })
 
   it('idempotency (repeated ingestion is no-op)', async () => {

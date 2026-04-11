@@ -82,7 +82,7 @@ export { TypegraphError, NotFoundError, NotInitializedError, ConfigError } from 
 
 // Embedding
 export type { EmbeddingProvider } from './embedding/index.js'
-export { aiSdkEmbeddingProvider, isAISDKEmbeddingInput } from './embedding/index.js'
+export { aiSdkEmbeddingProvider, isAISDKEmbeddingInput, embeddingModelKey, parseEmbeddingModelKey } from './embedding/index.js'
 export type { AISDKEmbeddingModel, AISDKEmbeddingInput } from './embedding/index.js'
 
 // LLM

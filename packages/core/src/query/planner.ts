@@ -2,6 +2,7 @@ import type { Bucket } from '../types/bucket.js'
 import type { QueryOpts, QueryResponse, QuerySignals, typegraphResult, RawScores, NormalizedScores } from '../types/query.js'
 import type { VectorStoreAdapter } from '../types/adapter.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
+import { embeddingModelKey } from '../embedding/provider.js'
 import type { GraphBridge } from '../types/graph-bridge.js'
 import type { typegraphEvent, typegraphEventSink } from '../types/events.js'
 import type { typegraphLogger } from '../types/logger.js'
@@ -162,7 +163,7 @@ export class QueryPlanner {
         continue
       }
       const queryEmb = this.bucketQueryEmbeddings.get(bucketId) ?? ingestEmb
-      const ingestModelId = ingestEmb.model
+      const ingestModelId = embeddingModelKey(ingestEmb)
 
       const existing = modelGroups.get(ingestModelId)
       if (existing) {

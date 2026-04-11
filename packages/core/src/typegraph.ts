@@ -3,6 +3,7 @@ import type { Bucket, CreateBucketInput, BucketListFilter, EmbeddingConfig, Inde
 import type { QueryOpts, QueryResponse, typegraphResult } from './types/query.js'
 import type { IndexOpts, IndexResult } from './types/index-types.js'
 import type { EmbeddingProvider } from './embedding/provider.js'
+import { embeddingModelKey } from './embedding/provider.js'
 import type { RawDocument, Chunk } from './types/connector.js'
 import type { typegraphDocument, DocumentFilter, UpsertDocumentInput } from './types/typegraph-document.js'
 import type { typegraphHooks } from './types/hooks.js'
@@ -266,10 +267,10 @@ class TypegraphImpl implements typegraphInstance {
   buckets: BucketsApi = {
     create: async (input: CreateBucketInput): Promise<Bucket> => {
       this.assertConfigured()
-      const embeddingModel = input.embeddingModel ?? this.defaultEmbedding.model
-      const queryEmbeddingModel = input.queryEmbeddingModel ?? this.defaultQueryEmbedding?.model
+      const embeddingModel = input.embeddingModel ?? embeddingModelKey(this.defaultEmbedding)
+      const queryEmbeddingModel = input.queryEmbeddingModel ?? (this.defaultQueryEmbedding ? embeddingModelKey(this.defaultQueryEmbedding) : undefined)
 
-      // Validate model strings exist in registry
+      // Validate model keys exist in registry
       if (!this.embeddingRegistry.has(embeddingModel)) {
         throw new ConfigError(`Embedding model "${embeddingModel}" is not registered. Register it via embedding, queryEmbedding, or additionalEmbeddings in typegraphConfig.`)
       }
@@ -506,31 +507,31 @@ class TypegraphImpl implements typegraphInstance {
       this.defaultQueryEmbedding = resolveEmbeddingProvider(config.queryEmbedding)
     }
 
-    // Build embedding registry — keyed by model string
+    // Build embedding registry — keyed by dimension-aware key "{model}:{dimensions}"
     this.embeddingRegistry.clear()
-    this.embeddingRegistry.set(this.defaultEmbedding.model, this.defaultEmbedding)
+    this.embeddingRegistry.set(embeddingModelKey(this.defaultEmbedding), this.defaultEmbedding)
     if (this.defaultQueryEmbedding) {
-      if (this.embeddingRegistry.has(this.defaultQueryEmbedding.model)) {
-        // Same model string is fine (user might provide same model as both default + query)
-      } else {
-        this.embeddingRegistry.set(this.defaultQueryEmbedding.model, this.defaultQueryEmbedding)
+      const qKey = embeddingModelKey(this.defaultQueryEmbedding)
+      if (!this.embeddingRegistry.has(qKey)) {
+        this.embeddingRegistry.set(qKey, this.defaultQueryEmbedding)
       }
     }
     if (config.additionalEmbeddings) {
       for (const embConfig of config.additionalEmbeddings) {
         const provider = resolveEmbeddingProvider(embConfig)
-        if (this.embeddingRegistry.has(provider.model)) {
-          throw new ConfigError(`Duplicate embedding model "${provider.model}" in additionalEmbeddings. Each model string must be unique.`)
+        const key = embeddingModelKey(provider)
+        if (this.embeddingRegistry.has(key)) {
+          throw new ConfigError(`Duplicate embedding "${key}" in additionalEmbeddings. Each model+dimensions combination must be unique.`)
         }
-        this.embeddingRegistry.set(provider.model, provider)
+        this.embeddingRegistry.set(key, provider)
       }
     }
   }
 
   /** Resolve a bucket's embedding + query embedding model strings to providers from the registry. */
   private resolveBucketEmbeddings(bucket: Bucket): void {
-    // Resolve ingest embedding
-    const ingestModel = bucket.embeddingModel ?? this.defaultEmbedding.model
+    // Resolve ingest embedding — bucket stores dimension-aware keys
+    const ingestModel = bucket.embeddingModel ?? embeddingModelKey(this.defaultEmbedding)
     const ingestProvider = this.embeddingRegistry.get(ingestModel)
     if (!ingestProvider) {
       throw new ConfigError(
@@ -590,8 +591,8 @@ class TypegraphImpl implements typegraphInstance {
       name: DEFAULT_BUCKET_NAME,
       description: DEFAULT_BUCKET_DESCRIPTION,
       status: 'active',
-      embeddingModel: this.defaultEmbedding.model,
-      queryEmbeddingModel: this.defaultQueryEmbedding?.model,
+      embeddingModel: embeddingModelKey(this.defaultEmbedding),
+      queryEmbeddingModel: this.defaultQueryEmbedding ? embeddingModelKey(this.defaultQueryEmbedding) : undefined,
       tenantId: config.tenantId,
     }
     if (this.adapter.upsertBucket) {
@@ -680,7 +681,7 @@ class TypegraphImpl implements typegraphInstance {
     const ids = bucketIds ?? [...this._buckets.keys()]
     for (const id of ids) {
       const emb = this.bucketEmbeddings.get(id)
-      if (emb) map.set(emb.model, emb)
+      if (emb) map.set(embeddingModelKey(emb), emb)
     }
     return map
   }
@@ -691,9 +692,10 @@ class TypegraphImpl implements typegraphInstance {
     for (const id of ids) {
       const emb = this.bucketEmbeddings.get(id)
       if (!emb) continue
-      const group = groups.get(emb.model) ?? []
+      const key = embeddingModelKey(emb)
+      const group = groups.get(key) ?? []
       group.push(id)
-      groups.set(emb.model, group)
+      groups.set(key, group)
     }
     return groups
   }

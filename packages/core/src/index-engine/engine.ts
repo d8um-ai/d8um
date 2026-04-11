@@ -1,6 +1,7 @@
 import type { IndexConfig } from '../types/bucket.js'
 import type { VectorStoreAdapter, HashRecord } from '../types/adapter.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
+import { embeddingModelKey } from '../embedding/provider.js'
 import type { IndexOpts, IndexResult } from '../types/index-types.js'
 import type { RawDocument, Chunk } from '../types/connector.js'
 import { generateId } from '../utils/id.js'
@@ -46,7 +47,7 @@ export class IndexEngine {
   ): Promise<IndexResult> {
     const { tenantId, groupId, userId, agentId, conversationId, visibility, dryRun = false } = opts
 
-    const modelId = this.embedding.model
+    const modelId = embeddingModelKey(this.embedding)
     const startMs = Date.now()
 
     if (!dryRun) {
@@ -170,7 +171,7 @@ export class IndexEngine {
     indexConfig?: IndexConfig,
   ): Promise<IndexResult> {
     const { tenantId, groupId, userId, agentId, conversationId, visibility, dryRun = false, traceId, spanId } = opts
-    const modelId = this.embedding.model
+    const modelId = embeddingModelKey(this.embedding)
     const startMs = Date.now()
 
     this.eventSink?.emit({

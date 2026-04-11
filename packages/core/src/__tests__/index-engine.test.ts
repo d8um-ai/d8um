@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { IndexEngine } from '../index-engine/engine.js'
+import { embeddingModelKey } from '../embedding/provider.js'
 import { createMockAdapter } from './helpers/mock-adapter.js'
 import { createMockEmbedding } from './helpers/mock-embedding.js'
 import { createMockBucket } from './helpers/mock-source.js'
@@ -128,7 +129,7 @@ describe('IndexEngine', () => {
       const engine = new IndexEngine(adapter, embedding)
       await ingestDocs(engine, bucket.id, [doc], indexConfig)
 
-      const stored = adapter._chunks.get(embedding.model)!
+      const stored = adapter._chunks.get(embeddingModelKey(embedding))!
       expect(stored[0]!.metadata.title).toBe('My Doc')
       expect(stored[0]!.metadata.url).toBe('https://example.com')
     })
@@ -144,7 +145,7 @@ describe('IndexEngine', () => {
       const engine = new IndexEngine(adapter, embedding)
       await ingestDocs(engine, bucket.id, [doc], indexConfig)
 
-      const stored = adapter._chunks.get(embedding.model)!
+      const stored = adapter._chunks.get(embeddingModelKey(embedding))!
       expect(stored[0]!.metadata.category).toBe('tech')
       expect(stored[0]!.metadata.priority).toBe('high')
     })
@@ -172,7 +173,7 @@ describe('IndexEngine', () => {
       expect(result.inserted).toBe(1)
       expect(result.total).toBe(1)
 
-      const stored = adapter._chunks.get(embedding.model)!
+      const stored = adapter._chunks.get(embeddingModelKey(embedding))!
       expect(stored).toHaveLength(2)
     })
 

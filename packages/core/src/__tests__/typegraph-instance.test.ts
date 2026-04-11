@@ -80,7 +80,7 @@ describe('typegraphInit', () => {
       registerTestBucket(instance, s2, embB)
       const distinct = instance.getDistinctEmbeddings(['src-1'])
       expect(distinct.size).toBe(1)
-      expect(distinct.has('model-a')).toBe(true)
+      expect(distinct.has('model-a:4')).toBe(true)
     })
   })
 
