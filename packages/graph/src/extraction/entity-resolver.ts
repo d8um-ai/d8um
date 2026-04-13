@@ -6,12 +6,23 @@ import { createTemporal } from '../temporal.js'
 import { generateId } from '@typegraph-ai/core'
 
 // ── Entity Resolver ──
-// Deduplicates entities using a 5-phase cascade:
+// Deduplicates entities using a 6-phase cascade:
 //   Phase 0: In-memory session cache (instant)
 //   Phase 1: Exact alias matching via DB ILIKE (cheapest DB call)
 //   Phase 2: Normalized string matching (catches case/punctuation variants)
 //   Phase 2.5: Fuzzy matching via trigram Jaccard (catches abbreviations/reorderings)
 //   Phase 3: Vector similarity on name embeddings (catches semantic equivalents)
+//   Phase 3.5: Description-confirmed near-miss (catches nickname/variant name matches)
+//
+// Cross-cutting guards:
+//   - Type compatibility: prevents merging person with location, etc.
+//   - Distinguishing attributes: prevents merging "1992 team" with "1988 team"
+
+/** Minimum name similarity to enter Phase 3.5 description matching */
+const NEAR_MISS_NAME_THRESHOLD = 0.45
+
+/** Required description cosine similarity for Phase 3.5 merge */
+const DESC_SIMILARITY_THRESHOLD = 0.8
 
 export interface EntityResolverConfig {
   store: MemoryStoreAdapter
@@ -31,7 +42,7 @@ export class EntityResolver {
   constructor(config: EntityResolverConfig) {
     this.store = config.store
     this.embedding = config.embedding
-    this.threshold = config.similarityThreshold ?? 0.68
+    this.threshold = config.similarityThreshold ?? 0.85
   }
 
   private cacheEntity(entity: SemanticEntity): void {
@@ -56,7 +67,7 @@ export class EntityResolver {
     const normalizedName = normalizeForComparison(name)
     const cached = this.nameCache.get(normalizedName)
     if (cached) {
-      const merged = this.merge(cached, { name, entityType, aliases, description })
+      const merged = await this.merge(cached, { name, entityType, aliases, description })
       this.cacheEntity(merged)
       return { entity: merged, isNew: false }
     }
@@ -64,7 +75,7 @@ export class EntityResolver {
     for (const alias of aliases) {
       const cachedByAlias = this.nameCache.get(normalizeForComparison(alias))
       if (cachedByAlias) {
-        const merged = this.merge(cachedByAlias, { name, entityType, aliases, description })
+        const merged = await this.merge(cachedByAlias, { name, entityType, aliases, description })
         this.cacheEntity(merged)
         return { entity: merged, isNew: false }
       }
@@ -75,7 +86,7 @@ export class EntityResolver {
       const candidates = await this.store.findEntities(name, scope, 10)
       const aliasMatch = this.findByAlias(name, aliases, candidates)
       if (aliasMatch) {
-        const merged = this.merge(aliasMatch, { name, entityType, aliases, description })
+        const merged = await this.merge(aliasMatch, { name, entityType, aliases, description })
         this.cacheEntity(merged)
         return { entity: merged, isNew: false }
       }
@@ -83,13 +94,13 @@ export class EntityResolver {
       // Phase 2: Normalized string matching (catches case/punctuation variants)
       for (const candidate of candidates) {
         if (normalizeForComparison(candidate.name) === normalizedName) {
-          const merged = this.merge(candidate, { name, entityType, aliases, description })
+          const merged = await this.merge(candidate, { name, entityType, aliases, description })
           this.cacheEntity(merged)
           return { entity: merged, isNew: false }
         }
         for (const alias of candidate.aliases) {
           if (normalizeForComparison(alias) === normalizedName) {
-            const merged = this.merge(candidate, { name, entityType, aliases, description })
+            const merged = await this.merge(candidate, { name, entityType, aliases, description })
             this.cacheEntity(merged)
             return { entity: merged, isNew: false }
           }
@@ -100,27 +111,42 @@ export class EntityResolver {
       // e.g., "NY Times" vs "New York Times", "J.K. Rowling" vs "JK Rowling"
       const fuzzyMatch = this.findByFuzzy(name, aliases, entityType, candidates)
       if (fuzzyMatch) {
-        const merged = this.merge(fuzzyMatch, { name, entityType, aliases, description })
+        const merged = await this.merge(fuzzyMatch, { name, entityType, aliases, description })
         this.cacheEntity(merged)
         return { entity: merged, isNew: false }
       }
     }
 
-    // Phase 3: Vector similarity (uses pgvector similarity score directly — no re-embedding)
+    // Phase 3 + 3.5: Vector similarity with optional description confirmation
     let nameEmbedding: number[] | undefined
     if (this.store.searchEntities) {
       nameEmbedding = await this.embedding.embed(name)
       const similar = await this.store.searchEntities(nameEmbedding, scope, 5)
 
+      // Phase 3: Direct name-embedding match
       for (const candidate of similar) {
-        // Type guard: don't merge entities with conflicting specific types
         if (!typesCompatible(entityType, candidate.entityType)) continue
+        if (hasConflictingDistinguishers(name, candidate.name)) continue
+        if (!hasSharedNameToken(name, candidate.name)) continue
 
-        // Use pgvector's cosine similarity score (stashed by adapter) instead of re-embedding
         const similarity = (candidate.properties._similarity as number | undefined)
           ?? this.cosineSimilarity(nameEmbedding, candidate.embedding ?? [])
         if (similarity >= this.threshold) {
-          const merged = this.merge(candidate, { name, entityType, aliases, description })
+          const merged = await this.merge(candidate, { name, entityType, aliases, description })
+          this.cacheEntity(merged)
+          return { entity: merged, isNew: false }
+        }
+      }
+
+      // Phase 3.5: Description-confirmed near-miss matching
+      // Catches entities with different name forms but similar descriptions
+      // (e.g., "Chris Mullin" vs "Christopher Paul Mullin" — both NBA players)
+      if (description) {
+        const descMatch = await this.resolveByDescription(
+          name, entityType, description, similar, nameEmbedding,
+        )
+        if (descMatch) {
+          const merged = await this.merge(descMatch, { name, entityType, aliases, description })
           this.cacheEntity(merged)
           return { entity: merged, isNew: false }
         }
@@ -131,6 +157,9 @@ export class EntityResolver {
     if (!nameEmbedding) {
       nameEmbedding = await this.embedding.embed(name)
     }
+    const descriptionEmbedding = description
+      ? await this.embedding.embed(description)
+      : undefined
     const entity: SemanticEntity = {
       id: generateId('ent'),
       name,
@@ -138,6 +167,7 @@ export class EntityResolver {
       aliases,
       properties: description ? { description } : {},
       embedding: nameEmbedding,
+      descriptionEmbedding,
       scope,
       temporal: createTemporal(),
     }
@@ -176,10 +206,10 @@ export class EntityResolver {
    * Merge incoming data into an existing entity.
    * Adds new aliases, updates type if more specific.
    */
-  merge(
+  async merge(
     existing: SemanticEntity,
     incoming: { name: string; entityType: string; aliases: string[]; description?: string | undefined },
-  ): SemanticEntity {
+  ): Promise<SemanticEntity> {
     const existingAliases = new Set(existing.aliases.map(a => a.toLowerCase()))
     const newAliases = [...existing.aliases]
 
@@ -209,10 +239,18 @@ export class EntityResolver {
       }
     }
 
+    // Re-embed description if it changed (so stored description_embedding stays fresh)
+    const descriptionChanged = incoming.description
+      && (properties.description as string | undefined) !== (existing.properties.description as string | undefined)
+    const descriptionEmbedding = descriptionChanged
+      ? await this.embedding.embed(properties.description as string)
+      : existing.descriptionEmbedding
+
     return {
       ...existing,
       aliases: newAliases,
       properties,
+      descriptionEmbedding,
       // Keep existing type unless it's generic and incoming is more specific
       entityType: (existing.entityType === 'entity' || existing.entityType === 'other')
         ? incoming.entityType
@@ -231,7 +269,7 @@ export class EntityResolver {
     entityType: string,
     candidates: SemanticEntity[],
   ): SemanticEntity | undefined {
-    const FUZZY_THRESHOLD = 0.7
+    const FUZZY_THRESHOLD = 0.85
     const incomingNames = [name, ...aliases]
 
     for (const candidate of candidates) {
@@ -240,10 +278,50 @@ export class EntityResolver {
 
       for (const a of incomingNames) {
         for (const b of candidateNames) {
+          if (hasConflictingDistinguishers(a, b)) continue
           if (trigramJaccard(a, b) >= FUZZY_THRESHOLD) {
             return candidate
           }
         }
+      }
+    }
+
+    return undefined
+  }
+
+  /**
+   * Phase 3.5: Find a match among near-miss candidates by comparing description embeddings.
+   * Only considers candidates with name similarity in [NEAR_MISS_NAME_THRESHOLD, this.threshold).
+   */
+  private async resolveByDescription(
+    name: string,
+    entityType: string,
+    description: string,
+    candidates: SemanticEntity[],
+    nameEmbedding: number[],
+  ): Promise<SemanticEntity | undefined> {
+    // Filter to near-miss candidates that have descriptions and stored description embeddings
+    const nearMisses = candidates.filter(c => {
+      if (!typesCompatible(entityType, c.entityType)) return false
+      if (hasConflictingDistinguishers(name, c.name)) return false
+      if (!hasSharedNameToken(name, c.name)) return false
+      const nameSim = (c.properties._similarity as number | undefined)
+        ?? this.cosineSimilarity(nameEmbedding, c.embedding ?? [])
+      if (nameSim < NEAR_MISS_NAME_THRESHOLD || nameSim >= this.threshold) return false
+      const desc = c.properties.description as string | undefined
+      if (!desc || !c.descriptionEmbedding) return false
+      return true
+    })
+
+    if (nearMisses.length === 0) return undefined
+
+    // Embed the incoming description once, then compare against each candidate's stored embedding
+    const incomingDescEmbedding = await this.embedding.embed(description)
+
+    for (const candidate of nearMisses) {
+      const descSim = this.cosineSimilarity(incomingDescEmbedding, candidate.descriptionEmbedding!)
+      if (descSim >= DESC_SIMILARITY_THRESHOLD) {
+        return candidate
       }
     }
 
@@ -313,4 +391,83 @@ function trigramJaccard(a: string, b: string): number {
 function typesCompatible(a: string, b: string): boolean {
   const GENERIC_TYPES = new Set(['entity', 'other', ''])
   return a === b || GENERIC_TYPES.has(a) || GENERIC_TYPES.has(b)
+}
+
+/**
+ * Check if two entity names have conflicting distinguishing attributes.
+ * Returns true if both strings contain tokens in the same category (years, versions,
+ * ordinals) with zero intersection — meaning they refer to different instances of
+ * the same type of thing (e.g., "1992 team" vs "1988 team").
+ *
+ * Returns false if either string has no distinguishing tokens in a category,
+ * or if their token sets overlap (e.g., "1992 Dream Team" vs "1992 US team").
+ */
+/**
+ * Stop-words excluded from token overlap check.
+ * Includes common English function words plus frequently occurring but non-identifying
+ * tokens in entity names (e.g., "United", "National", "American").
+ */
+const STOP_WORDS = new Set([
+  'the', 'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'and', 'or',
+  'is', 'was', 'are', 'were', 'be', 'been',
+  'new', 'old', 'united', 'national', 'international', 'american',
+  'st', 'mr', 'mrs', 'dr', 'jr', 'sr',
+])
+
+/**
+ * Check if two entity names share at least one meaningful (non-stop-word) token.
+ * Primary deterministic defense against same-type-but-different-entity merges.
+ *
+ * Examples:
+ *   "Toronto Raptors" vs "Oklahoma City Thunder" → false (no shared tokens)
+ *   "Chris Mullin" vs "Christopher Paul Mullin" → true ("mullin" shared)
+ *   "United States" vs "United Kingdom" → false ("united" is stop-word)
+ */
+export function hasSharedNameToken(a: string, b: string): boolean {
+  const tokenize = (s: string): Set<string> => {
+    const tokens = new Set<string>()
+    for (const word of s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/)) {
+      if (word.length >= 2 && !STOP_WORDS.has(word)) tokens.add(word)
+    }
+    return tokens
+  }
+  const ta = tokenize(a)
+  const tb = tokenize(b)
+  for (const t of ta) {
+    if (tb.has(t)) return true
+  }
+  return false
+}
+
+export function hasConflictingDistinguishers(a: string, b: string): boolean {
+  const yearPattern = /\b(1[89]\d{2}|20\d{2})\b/g
+  const versionPattern = /\b(?:v|version)\s*(\d+(?:\.\d+)*)\b/gi
+  const ordinalPattern = /\b(\d+(?:st|nd|rd|th))\b/gi
+
+  const extract = (s: string, pattern: RegExp): Set<string> => {
+    const matches = new Set<string>()
+    for (const m of s.matchAll(pattern)) matches.add(m[1]!)
+    return matches
+  }
+
+  const categories: [RegExp, RegExp][] = [
+    [yearPattern, yearPattern],
+    [versionPattern, versionPattern],
+    [ordinalPattern, ordinalPattern],
+  ]
+
+  for (const [patA, patB] of categories) {
+    const setA = extract(a, patA)
+    const setB = extract(b, patB)
+    // Both must have tokens in this category for a conflict to exist
+    if (setA.size === 0 || setB.size === 0) continue
+    // Conflict if zero intersection (completely disjoint sets)
+    let hasOverlap = false
+    for (const token of setA) {
+      if (setB.has(token)) { hasOverlap = true; break }
+    }
+    if (!hasOverlap) return true
+  }
+
+  return false
 }

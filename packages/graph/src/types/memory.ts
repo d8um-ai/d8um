@@ -89,6 +89,8 @@ export interface SemanticEntity {
   properties: Record<string, unknown>
   /** Embedding of the entity name for similarity matching */
   embedding?: number[] | undefined
+  /** Embedding of the entity description for Phase 3.5 near-miss matching */
+  descriptionEmbedding?: number[] | undefined
   scope: typegraphIdentity
   /** Access visibility. Default: 'tenant' (entities are typically shared within org). */
   visibility?: Visibility | undefined

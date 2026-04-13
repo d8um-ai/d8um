@@ -8,7 +8,7 @@ export interface TripleExtractorConfig {
   /** LLM for relationship extraction (Pass 2 in two-pass mode). Falls back to llm. */
   relationshipLlm?: LLMProvider | undefined
   graph: GraphBridge
-  /** Use two separate LLM calls instead of one combined call. Default: false. */
+  /** Use two separate LLM calls (entities then relationships) instead of one combined call. Default: false. */
   twoPass?: boolean | undefined
 }
 
@@ -62,7 +62,7 @@ ${contextSection}
 For each entity, provide:
 - "name": The canonical name of the entity
 - "type": One of: ${ENTITY_TYPES_LIST}
-- "description": A one-sentence description of this entity based on the text
+- "description": A one-sentence description of what this entity IS — its defining attributes, NOT its relationships to other entities
 - "aliases": Other names or abbreviations used for THIS entity in the text (array of strings)
 
 Entity rules:
@@ -70,6 +70,12 @@ Entity rules:
 - If an entity is referred to by multiple names (e.g., "OpenAI" and "the company"), list all as aliases
 - Aliases must be alternative names for THIS entity only — do NOT include unrelated names, titles of works containing the entity name, or descriptions
 - Include entities even if they only appear once
+
+CRITICAL — Aliases vs. Relationships:
+- An ALIAS is a different name for THE SAME entity (e.g., "NYC" is an alias for "New York City")
+- A RELATIONSHIP connects TWO DIFFERENT entities (e.g., "NBA" and "Los Angeles Lakers" are connected by MEMBER_OF — "Lakers" is NOT an alias of "NBA")
+- NEVER list a related entity as an alias. If "Kevin Durant" appears in text about "Brooklyn Nets", they are SEPARATE entities connected by a relationship
+- Test: Could you replace one name with the other in any sentence and preserve meaning? If yes → alias. If no → separate entities with a relationship
 
 ## Step 2: Relationship Extraction
 
@@ -125,14 +131,19 @@ Text:
 ${content}`
 }
 
-// ── Two-pass prompts (legacy) ──
+// ── Two-pass prompts ──
 
-const ENTITY_EXTRACTION_PROMPT = `Extract all named entities from the following text.
+function buildEntityExtractionPrompt(content: string, entityContext?: EntityContext[]): string {
+  const contextSection = entityContext?.length
+    ? `\nPreviously identified entities in this document:\n${entityContext.map(e => `- ${e.name} (${e.type})`).join('\n')}\n\nUse these names when the text refers to these entities by pronoun, abbreviation, or epithet.\n`
+    : ''
 
+  return `Extract all named entities from the following text.
+${contextSection}
 For each entity, provide:
 - "name": The canonical name of the entity as it appears in the text
 - "type": One of: ${ENTITY_TYPES_LIST}
-- "description": A one-sentence description of this entity based on the text
+- "description": A one-sentence description of what this entity IS — its defining attributes, NOT its relationships to other entities
 - "aliases": Other names or abbreviations used for THIS entity in the text (array of strings)
 
 Rules:
@@ -142,12 +153,36 @@ Rules:
 - Include entities even if they only appear once
 - Return an empty array if no named entities exist
 
+CRITICAL — Aliases vs. Relationships:
+- An ALIAS is a different name for THE SAME entity (e.g., "NYC" is an alias for "New York City")
+- A RELATIONSHIP connects TWO DIFFERENT entities (e.g., "NBA" and "Los Angeles Lakers" are connected by MEMBER_OF — "Lakers" is NOT an alias of "NBA")
+- NEVER list a related entity as an alias. If "Kevin Durant" appears in text about "Brooklyn Nets", they are SEPARATE entities connected by a relationship
+- Test: Could you replace one name with the other in any sentence and preserve meaning? If yes → alias. If no → separate entities with a relationship
+
+## Example
+
+Text: "Margaret Ashworth had lived in Oxford since her marriage to Edmund, who served as president of The Geographical Society. It was through Edmund's influence that she first traveled to Cairo, where she met the renowned cartographer Helena Voss. The two women corresponded for years, and Helena's bold methods deeply influenced Margaret's own work. Margaret eventually wrote Principles of Navigation, which many regarded as a challenge to Edmund's more traditional views on the subject. Helena, who had once taught at Oxford before the Society forced her departure, remained Margaret's closest intellectual ally."
+
+Output:
+[{"name": "Margaret Ashworth", "type": "person", "description": "Author of Principles of Navigation, influenced by Helena Voss", "aliases": []},
+{"name": "Edmund Ashworth", "type": "person", "description": "President of The Geographical Society, married to Margaret", "aliases": ["Edmund"]},
+{"name": "The Geographical Society", "type": "organization", "description": "Academic society led by Edmund Ashworth", "aliases": ["the Society"]},
+{"name": "Cairo", "type": "location", "description": "City where Margaret met Helena Voss", "aliases": []},
+{"name": "Oxford", "type": "location", "description": "City where Margaret lived and Helena once taught", "aliases": []},
+{"name": "Helena Voss", "type": "person", "description": "Renowned cartographer and Margaret's intellectual ally", "aliases": ["Helena"]},
+{"name": "Principles of Navigation", "type": "work_of_art", "description": "Book written by Margaret Ashworth", "aliases": []}]
+
+## Self-review
+
+After your initial extraction, review: did you miss any entities that are explicitly stated or strongly implied? Include them.
+
 Return a JSON array: [{"name": "...", "type": "...", "description": "...", "aliases": ["..."]}, ...]
 
 Text:
-`
+${content}`
+}
 
-function buildRelationshipPrompt(entitiesJson: string): string {
+function buildRelationshipPrompt(entitiesJson: string, content: string): string {
   return `Given the following text and a list of known entities, extract all relationships between these entities.
 
 Entities found in this text:
@@ -169,7 +204,7 @@ Rules:
 - Extract relationships that are explicitly stated or strongly implied in the text
 - Return an empty array if no clear relationships exist between the listed entities
 
-Example:
+## Example
 
 Entities: [{"name": "Margaret Ashworth", "type": "person"}, {"name": "Edmund Ashworth", "type": "person"}, {"name": "The Geographical Society", "type": "organization"}, {"name": "Cairo", "type": "location"}, {"name": "Oxford", "type": "location"}, {"name": "Helena Voss", "type": "person"}, {"name": "Principles of Navigation", "type": "work_of_art"}]
 
@@ -188,10 +223,14 @@ Relationships:
 {"subject": "Helena Voss", "predicate": "TAUGHT", "object": "Oxford", "confidence": 0.85},
 {"subject": "Helena Voss", "predicate": "COLLABORATED_WITH", "object": "Margaret Ashworth", "confidence": 0.9}]
 
+## Self-review
+
+After your initial extraction, review: did you miss any relationships that are explicitly stated or strongly implied? Include them.
+
 Return a JSON array: [{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.9}, ...]
 
-Now extract relationships from the following text:
-`
+Text:
+${content}`
 }
 
 // ── Extractor ──
@@ -299,19 +338,14 @@ export class TripleExtractor {
     return { entities, relationships }
   }
 
-  /** Two separate LLM calls: entities first, then relationships (legacy). */
+  /** Two separate LLM calls: entities first, then relationships. */
   private async extractTwoPass(
     content: string,
     entityContext?: EntityContext[],
   ): Promise<ExtractionResult> {
-    // Build entity context prefix for the prompt
-    const contextPrefix = entityContext?.length
-      ? `Previously identified entities in this document:\n${entityContext.map(e => `- ${e.name} (${e.type})`).join('\n')}\n\nUse these names when the text refers to these entities by pronoun or abbreviation.\n\n`
-      : ''
-
     // Pass 1: Extract entities
     const rawEntities = await this.llm.generateJSON<ExtractedEntity[]>(
-      contextPrefix + ENTITY_EXTRACTION_PROMPT + content,
+      buildEntityExtractionPrompt(content, entityContext),
       'You are a precise named entity extractor. Return only valid JSON arrays.',
     )
 
@@ -329,7 +363,7 @@ export class TripleExtractor {
 
     // Pass 2: Extract relationships using known entities
     const entitiesJson = JSON.stringify(entities.map(e => ({ name: e.name, type: e.type })))
-    const prompt = buildRelationshipPrompt(entitiesJson) + content
+    const prompt = buildRelationshipPrompt(entitiesJson, content)
 
     const rawRelationships = await this.relationshipLlm.generateJSON<ExtractedRelationship[]>(
       prompt,

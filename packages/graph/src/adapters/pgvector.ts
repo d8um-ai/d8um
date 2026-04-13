@@ -127,6 +127,7 @@ const ENTITIES_DDL = (t: string, dims?: number) => {
     aliases     TEXT[] DEFAULT '{}',
     properties  JSONB NOT NULL DEFAULT '{}',
     embedding   VECTOR${dims ? `(${dims})` : ''},
+    description_embedding VECTOR${dims ? `(${dims})` : ''},
     scope       JSONB NOT NULL DEFAULT '{}',
     -- Identity columns
     tenant_id   TEXT,
@@ -527,16 +528,23 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
 
   async upsertEntity(entity: SemanticEntity): Promise<SemanticEntity> {
     const embeddingStr = entity.embedding ? `[${entity.embedding.join(',')}]` : null
+    const descEmbeddingStr = entity.descriptionEmbedding ? `[${entity.descriptionEmbedding.join(',')}]` : null
+    // Strip transient _similarity before persisting to JSONB — it's a per-query
+    // score stashed by mapRowToEntity from searchEntities results, not a stored property
+    const { _similarity, ...cleanProps } = entity.properties
+    const tbl = unqualified(this.entitiesTable)
     const rows = await this.sql(
       `INSERT INTO ${this.entitiesTable}
-        (id, name, entity_type, aliases, properties, embedding, scope,
+        (id, name, entity_type, aliases, properties, embedding, description_embedding, scope,
          tenant_id, group_id, user_id, agent_id, conversation_id, visibility,
          valid_at, invalid_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6::vector,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
+       VALUES ($1,$2,$3,$4,$5,$6::vector,$7::vector,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name, entity_type = EXCLUDED.entity_type,
          aliases = EXCLUDED.aliases, properties = EXCLUDED.properties,
-         embedding = COALESCE(EXCLUDED.embedding, ${unqualified(this.entitiesTable)}.embedding), scope = EXCLUDED.scope,
+         embedding = COALESCE(EXCLUDED.embedding, ${tbl}.embedding),
+         description_embedding = COALESCE(EXCLUDED.description_embedding, ${tbl}.description_embedding),
+         scope = EXCLUDED.scope,
          tenant_id = EXCLUDED.tenant_id, group_id = EXCLUDED.group_id,
          user_id = EXCLUDED.user_id, agent_id = EXCLUDED.agent_id,
          conversation_id = EXCLUDED.conversation_id, visibility = EXCLUDED.visibility,
@@ -544,8 +552,8 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
        RETURNING *`,
       [
         entity.id, entity.name, entity.entityType,
-        entity.aliases, JSON.stringify(entity.properties),
-        embeddingStr, JSON.stringify(entity.scope),
+        entity.aliases, JSON.stringify(cleanProps),
+        embeddingStr, descEmbeddingStr, JSON.stringify(entity.scope),
         entity.scope.tenantId ?? null,
         entity.scope.groupId ?? null,
         entity.scope.userId ?? null,
@@ -580,7 +588,8 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
     const scopeClause = where ? ` AND ${where}` : ''
     const rows = await this.sql(
       `SELECT * FROM ${this.entitiesTable}
-       WHERE (name ILIKE ${nameParam} OR ${nameParam} = ANY(aliases))
+       WHERE (name ILIKE ${nameParam}
+              OR EXISTS (SELECT 1 FROM unnest(aliases) AS a WHERE a ILIKE ${nameParam}))
          ${scopeClause}
          AND invalid_at IS NULL
        LIMIT ${limitParam}`,
@@ -835,6 +844,7 @@ function mapRowToEntity(row: Record<string, unknown>): SemanticEntity {
     aliases: row.aliases as string[] ?? [],
     properties: props,
     embedding: undefined,
+    descriptionEmbedding: parseVectorString(row.description_embedding),
     scope: rowToIdentity(row),
     visibility: (row.visibility as SemanticEntity['visibility']) ?? 'tenant',
     temporal: {
@@ -871,6 +881,17 @@ function mapRowToEdge(row: Record<string, unknown>): SemanticEdge {
 function parseJson(val: unknown): Record<string, unknown> {
   if (typeof val === 'string') return JSON.parse(val)
   return (val ?? {}) as Record<string, unknown>
+}
+
+/** Parse a pgvector string "[0.1,0.2,0.3]" into a number[], or return undefined if null/missing. */
+function parseVectorString(val: unknown): number[] | undefined {
+  if (val == null) return undefined
+  if (typeof val === 'string') {
+    const trimmed = val.replace(/^\[|\]$/g, '')
+    if (!trimmed) return undefined
+    return trimmed.split(',').map(Number)
+  }
+  return undefined
 }
 
 function buildMemoryWhere(
