@@ -87,7 +87,7 @@ export type { AISDKEmbeddingModel, AISDKEmbeddingInput } from './embedding/index
 
 // LLM
 export { aiSdkLlmProvider, isAISDKLLMInput } from './llm/index.js'
-export type { AISDKLanguageModel, AISDKLLMInput } from './llm/index.js'
+export type { AISDKLanguageModel, AISDKLLMInput, GenerateObjectFn } from './llm/index.js'
 
 // Governance
 export { PolicyEngine, PolicyViolationError } from './governance/index.js'

@@ -1,9 +1,26 @@
+import { z } from 'zod'
 import { generateId } from '@typegraph-ai/core'
 import type { EmbeddingProvider, LLMProvider } from '@typegraph-ai/core'
 import type { MemoryStoreAdapter } from '../types/adapter.js'
 import type { typegraphIdentity } from '@typegraph-ai/core'
 import type { EpisodicMemory, SemanticFact, ProceduralMemory } from '../types/index.js'
 import type { EmbeddedGraph } from '../graph/embedded-graph.js'
+
+// ── Zod schemas for structured output ──
+
+const episodicFactSchema = z.array(z.object({
+  content: z.string(),
+  subject: z.string(),
+  predicate: z.string(),
+  object: z.string(),
+  importance: z.number(),
+}))
+
+const proceduralSchema = z.array(z.object({
+  trigger: z.string(),
+  steps: z.array(z.string()),
+  confidence: z.number(),
+}))
 
 // ── Consolidation Types ──
 
@@ -138,7 +155,9 @@ export class ConsolidationEngine {
 Episodes:
 ${contents}
 
-Respond with only valid JSON: [{"content": "...", "subject": "...", "predicate": "...", "object": "...", "importance": 0.0}, ...]`
+Respond with only valid JSON: [{"content": "...", "subject": "...", "predicate": "...", "object": "...", "importance": 0.0}, ...]`,
+          undefined,
+          { schema: episodicFactSchema },
         )
 
         if (Array.isArray(facts)) {
@@ -218,7 +237,9 @@ Respond with only valid JSON: [{"content": "...", "subject": "...", "predicate":
 Actions:
 ${contents}
 
-Respond with only valid JSON: [{"trigger": "...", "steps": ["..."], "confidence": 0.0}, ...]`
+Respond with only valid JSON: [{"trigger": "...", "steps": ["..."], "confidence": 0.0}, ...]`,
+        undefined,
+        { schema: proceduralSchema },
       )
 
       let created = 0

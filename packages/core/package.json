@@ -1,12 +1,14 @@
 {
   "name": "@typegraph-ai/core",
-  "version": "0.1.27",
+  "version": "0.1.29",
   "description": "TypeScript SDK and open protocol for supplying context to LLMs",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "sideEffects": false,
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -21,12 +23,15 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "dependencies": {},
+  "peerDependencies": {
+    "zod": "^3.0.0 || ^4.0.0"
+  },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
-    "vitest": "^1.0.0"
+    "vitest": "^1.0.0",
+    "zod": "^4.3.6"
   }
 }

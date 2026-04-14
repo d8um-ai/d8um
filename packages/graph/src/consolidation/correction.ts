@@ -1,9 +1,20 @@
+import { z } from 'zod'
 import type { LLMProvider } from '@typegraph-ai/core'
 import type { MemoryStoreAdapter } from '../types/adapter.js'
 import type { typegraphIdentity } from '@typegraph-ai/core'
 import type { SemanticFact } from '../types/index.js'
 import { invalidateRecord, createTemporal } from '../temporal.js'
 import { generateId } from '@typegraph-ai/core'
+
+// ── Zod schema for structured output ──
+
+const correctionSchema = z.object({
+  targetContent: z.string().optional(),
+  newContent: z.string().optional(),
+  subject: z.string().optional(),
+  predicate: z.string().optional(),
+  object: z.string().optional(),
+})
 
 // ── Correction Types ──
 
@@ -125,7 +136,9 @@ Identify:
 - "object": The corrected value
 
 Respond with only valid JSON:
-{"targetContent": "...", "newContent": "...", "subject": "...", "predicate": "...", "object": "..."}`
+{"targetContent": "...", "newContent": "...", "subject": "...", "predicate": "...", "object": "..."}`,
+        undefined,
+        { schema: correctionSchema },
       )
     } catch (err) {
       console.error('[typegraph] Memory correction parse failed:', err instanceof Error ? err.message : err)

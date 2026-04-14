@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import type { LLMProvider } from '../types/llm-provider.js'
 import type { GraphBridge } from '../types/graph-bridge.js'
 import { getPredicatesForPrompt } from './ontology.js'
@@ -41,12 +42,35 @@ export interface EntityContext {
 
 // ── Entity types ──
 
-const VALID_ENTITY_TYPES = new Set([
+const ENTITY_TYPES = [
   'person', 'organization', 'location', 'product', 'concept', 'event',
   'work_of_art', 'technology', 'law_regulation', 'time_period',
-])
+] as const
 
-const ENTITY_TYPES_LIST = [...VALID_ENTITY_TYPES].join(', ')
+const VALID_ENTITY_TYPES = new Set<string>(ENTITY_TYPES)
+
+const ENTITY_TYPES_LIST = ENTITY_TYPES.join(', ')
+
+// ── Zod schemas for structured output ──
+
+const entitySchema = z.array(z.object({
+  name: z.string(),
+  type: z.enum(ENTITY_TYPES),
+  description: z.string(),
+  aliases: z.array(z.string()),
+}))
+
+const relationshipSchema = z.array(z.object({
+  subject: z.string(),
+  predicate: z.string(),
+  object: z.string(),
+  confidence: z.number(),
+}))
+
+const singlePassSchema = z.object({
+  entities: entitySchema,
+  relationships: relationshipSchema,
+})
 
 // ── Single-pass prompt (default) ──
 
@@ -382,6 +406,7 @@ export class TripleExtractor {
     const result = await this.llm.generateJSON<ExtractionResult>(
       prompt,
       'You are a precise knowledge graph extractor. Extract entities and relationships from text. Return only valid JSON.',
+      { schema: singlePassSchema },
     )
 
     if (!result || !Array.isArray(result.entities)) {
@@ -406,6 +431,7 @@ export class TripleExtractor {
     const rawEntities = await this.llm.generateJSON<ExtractedEntity[]>(
       buildEntityExtractionPrompt(content, entityContext, documentTitle),
       'You are a precise named entity extractor. Return only valid JSON arrays.',
+      { schema: entitySchema },
     )
 
     if (!Array.isArray(rawEntities)) {
@@ -427,6 +453,7 @@ export class TripleExtractor {
     const rawRelationships = await this.relationshipLlm.generateJSON<ExtractedRelationship[]>(
       prompt,
       'You are a precise relationship extractor. Return only valid JSON arrays.',
+      { schema: relationshipSchema },
     )
 
     const relationships = Array.isArray(rawRelationships) ? rawRelationships : []

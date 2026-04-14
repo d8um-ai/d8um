@@ -18,6 +18,14 @@ export interface LLMGenerateOptions {
    * as a default to prevent truncation of structured output.
    */
   maxOutputTokens?: number
+
+  /**
+   * Zod schema for structured output validation.
+   * When provided alongside a generateObject-capable adapter, enables
+   * model-level schema-constrained output with validation.
+   * When omitted, the adapter uses JSON mode without schema validation.
+   */
+  schema?: unknown
 }
 
 export interface LLMProvider {

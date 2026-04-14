@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import type { EmbeddingProvider, typegraphEventSink, typegraphEventType } from '@typegraph-ai/core'
 import type { MemoryStoreAdapter } from './types/adapter.js'
 import type { typegraphIdentity } from '@typegraph-ai/core'
@@ -15,6 +16,16 @@ import { InvalidationEngine } from './extraction/invalidation.js'
 import { WorkingMemory, type WorkingMemoryConfig } from './working-memory.js'
 import { createTemporal } from './temporal.js'
 import { generateId } from '@typegraph-ai/core'
+
+// ── Zod schema for structured output ──
+
+const correctionSchema = z.object({
+  targetContent: z.string().optional(),
+  newContent: z.string().optional(),
+  subject: z.string().optional(),
+  predicate: z.string().optional(),
+  object: z.string().optional(),
+})
 
 // ── Memory Health Report ──
 
@@ -154,7 +165,9 @@ export class TypegraphMemory {
       object?: string
     }>(
       `Parse this memory correction: "${naturalLanguageCorrection}"
-Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...", "predicate": "...", "object": "..."}`
+Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...", "predicate": "...", "object": "..."}`,
+      undefined,
+      { schema: correctionSchema },
     )
 
     if (!parsed.newContent) {

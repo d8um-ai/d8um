@@ -1,9 +1,18 @@
+import { z } from 'zod'
 import type { typegraphIdentity } from '@typegraph-ai/core'
 import type { SemanticFact } from '../types/memory.js'
 import type { MemoryStoreAdapter } from '../types/adapter.js'
 import type { LLMProvider } from './llm-provider.js'
 import { contradictionCheckPrompt } from './prompts.js'
 import { invalidateRecord } from '../temporal.js'
+
+// ── Zod schema for structured output ──
+
+const contradictionSchema = z.object({
+  contradicts: z.boolean(),
+  type: z.enum(['direct', 'temporal', 'superseded', 'compatible']),
+  reasoning: z.string(),
+})
 
 // ── Contradiction ──
 
@@ -59,7 +68,7 @@ export class InvalidationEngine {
           contradicts: boolean
           type: 'direct' | 'temporal' | 'superseded' | 'compatible'
           reasoning: string
-        }>(prompt)
+        }>(prompt, undefined, { schema: contradictionSchema })
 
         if (result.contradicts && result.type !== 'compatible') {
           contradictions.push({

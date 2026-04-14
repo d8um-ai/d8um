@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import type { EmbeddingProvider } from '@typegraph-ai/core'
 import type { typegraphIdentity } from '@typegraph-ai/core'
 import type { EpisodicMemory, SemanticFact } from '../types/memory.js'
@@ -5,6 +6,23 @@ import type { LLMProvider } from './llm-provider.js'
 import { factExtractionPrompt, conflictResolutionPrompt } from './prompts.js'
 import { createTemporal } from '../temporal.js'
 import { generateId } from '@typegraph-ai/core'
+
+// ── Zod schemas for structured output ──
+
+const candidateFactSchema = z.array(z.object({
+  content: z.string(),
+  subject: z.string(),
+  predicate: z.string(),
+  object: z.string(),
+  importance: z.number(),
+  confidence: z.number(),
+}))
+
+const conflictResolutionSchema = z.object({
+  operation: z.enum(['ADD', 'UPDATE', 'DELETE', 'NOOP']),
+  targetIndex: z.number().nullable(),
+  reasoning: z.string(),
+})
 
 // ── Extraction Types ──
 
@@ -76,7 +94,7 @@ export class MemoryExtractor {
       .join('\n')
 
     const prompt = factExtractionPrompt(conversation)
-    const result = await this.llm.generateJSON<CandidateFact[]>(prompt)
+    const result = await this.llm.generateJSON<CandidateFact[]>(prompt, undefined, { schema: candidateFactSchema })
 
     if (!Array.isArray(result)) return []
     return result.filter(f =>
@@ -121,7 +139,7 @@ export class MemoryExtractor {
           operation: MemoryOperationType
           targetIndex: number | null
           reasoning: string
-        }>(prompt)
+        }>(prompt, undefined, { schema: conflictResolutionSchema })
 
         const targetIndex = result.targetIndex
         const targetFact = targetIndex !== null ? existingFacts[targetIndex] : undefined
