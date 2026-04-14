@@ -48,12 +48,13 @@ export function createMockAISDKModel(opts?: {
 
   return {
     model: {
+      specificationVersion: 'v3' as const,
       provider,
       modelId,
       maxEmbeddingsPerCall,
       supportsParallelCalls: false,
-      async doEmbed(options: { values: string[] }): Promise<{ embeddings: number[][] }> {
-        return { embeddings: options.values.map(v => hashToVector(v)) }
+      async doEmbed(options: { values: string[] }): Promise<{ embeddings: number[][]; warnings: never[] }> {
+        return { embeddings: options.values.map(v => hashToVector(v)), warnings: [] }
       },
     },
     dimensions,

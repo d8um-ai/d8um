@@ -56,7 +56,7 @@ export type {
 
 export type { typegraphHooks } from './hooks.js'
 
-export type { LLMProvider, LLMGenerateOptions } from './llm-provider.js'
+export type { LLMProvider, LLMGenerateOptions, LLMConfig } from './llm-provider.js'
 
 export type { typegraphIdentity } from './identity.js'
 

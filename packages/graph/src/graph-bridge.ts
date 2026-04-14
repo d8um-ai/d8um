@@ -1,5 +1,6 @@
-import type { EmbeddingProvider, typegraphIdentity, LLMProvider, typegraphEventSink, MemoryRecord, ConversationTurnResult, MemoryHealthReport } from '@typegraph-ai/core'
+import type { EmbeddingProvider, typegraphIdentity, LLMProvider, typegraphEventSink, MemoryRecord, ConversationTurnResult, MemoryHealthReport, LLMConfig, EmbeddingConfig } from '@typegraph-ai/core'
 import type { GraphBridge, EntityDetail, EdgeResult, SubgraphOpts, SubgraphResult, GraphStats } from '@typegraph-ai/core'
+import { resolveEmbeddingProvider, resolveLLMProvider } from '@typegraph-ai/core'
 import type { MemoryStoreAdapter } from './types/adapter.js'
 import type { SemanticEdge } from './types/memory.js'
 import type { ConversationMessage } from './extraction/extractor.js'
@@ -15,8 +16,10 @@ import { generateId } from '@typegraph-ai/core'
 
 export interface CreateGraphBridgeConfig {
   memoryStore: MemoryStoreAdapter
-  embedding: EmbeddingProvider
-  llm: LLMProvider
+  /** Embedding provider — pass a resolved EmbeddingProvider or an AI SDK embedding input ({ model, dimensions }). */
+  embedding: EmbeddingConfig
+  /** LLM provider — pass a resolved LLMProvider, a bare AI SDK model, or { model } wrapper. */
+  llm: LLMConfig
   /** Default scope for addTriple (which has no per-call identity) */
   scope?: typegraphIdentity
   /** Optional event sink for observability. Passed through to TypegraphMemory instances. */
@@ -31,7 +34,9 @@ export interface CreateGraphBridgeConfig {
  * (PPR graph traversal via GraphRunner) works without silent fallback to hybrid.
  */
 export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge {
-  const { memoryStore, embedding, llm } = config
+  const { memoryStore } = config
+  const embedding: EmbeddingProvider = resolveEmbeddingProvider(config.embedding)
+  const llm: LLMProvider = resolveLLMProvider(config.llm)
   const defaultScope: typegraphIdentity = config.scope ?? { agentId: 'typegraph-graph' }
 
   const graph = new EmbeddedGraph(memoryStore)

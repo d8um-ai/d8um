@@ -28,7 +28,7 @@ describe('QueryPlanner', () => {
     await adapter.deploy()
     await adapter.connect()
     const engine = new IndexEngine(adapter, embedding)
-    const items = docs.map(doc => ({ doc, chunks: defaultChunker(doc, indexConfig) }))
+    const items = await Promise.all(docs.map(async doc => ({ doc, chunks: await defaultChunker(doc, indexConfig) })))
     await engine.ingestBatch(bucket.id, items, {}, indexConfig)
   })
 
@@ -51,7 +51,7 @@ describe('QueryPlanner', () => {
     bucketIds.push(bucket2.id)
     bucketEmbeddings.set(bucket2.id, embedding)
     const engine = new IndexEngine(adapter, embedding)
-    const items = docs2.map(doc => ({ doc, chunks: defaultChunker(doc, indexConfig2) }))
+    const items = await Promise.all(docs2.map(async doc => ({ doc, chunks: await defaultChunker(doc, indexConfig2) })))
     await engine.ingestBatch(bucket2.id, items, {}, indexConfig2)
 
     const planner = new QueryPlanner(adapter, bucketIds, bucketEmbeddings, bucketEmbeddings)

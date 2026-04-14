@@ -1,6 +1,10 @@
+import type { LanguageModelV3 } from '@ai-sdk/provider'
+
+/** Union type: pass a native LLMProvider, a bare AI SDK model, or { model } wrapper. */
+export type LLMConfig = LLMProvider | LanguageModelV3 | { model: LanguageModelV3 }
+
 /**
  * Structural type for an LLM provider.
- * No imports from `@ai-sdk/*` - pure structural typing.
  * Any object matching this shape works (AI SDK models, custom implementations, test mocks).
  *
  * The provider must support structured JSON output for memory extraction.

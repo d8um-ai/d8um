@@ -97,6 +97,8 @@ function mockEmbedding() {
   let counter = 0
   // Produce orthogonal-ish embeddings so cosine similarity is low between different entities
   return {
+    model: 'mock-embed',
+    dimensions: 10,
     embed: vi.fn().mockImplementation(async () => {
       counter++
       const vec = new Array(10).fill(0)

@@ -1,6 +1,6 @@
 // Main public API
 export { typegraphInit, typegraphDeploy, resolveEmbeddingProvider, resolveLLMProvider, DEFAULT_BUCKET_ID } from './typegraph.js'
-export type { typegraphConfig, typegraphInstance, BucketsApi, DocumentsApi, JobsApi, GraphApi, LLMConfig } from './typegraph.js'
+export type { typegraphConfig, typegraphInstance, BucketsApi, DocumentsApi, JobsApi, GraphApi } from './typegraph.js'
 /** @deprecated Use LLMConfig instead. */
 export type { LLMInput } from './typegraph.js'
 
@@ -41,6 +41,7 @@ export type {
   typegraphHooks,
   LLMProvider,
   LLMGenerateOptions,
+  LLMConfig,
   typegraphIdentity,
   GraphBridge,
   EntityResult,
@@ -83,11 +84,11 @@ export { TypegraphError, NotFoundError, NotInitializedError, ConfigError } from 
 // Embedding
 export type { EmbeddingProvider } from './embedding/index.js'
 export { aiSdkEmbeddingProvider, isAISDKEmbeddingInput, embeddingModelKey, parseEmbeddingModelKey } from './embedding/index.js'
-export type { AISDKEmbeddingModel, AISDKEmbeddingInput } from './embedding/index.js'
+export type { AISDKEmbeddingInput } from './embedding/index.js'
 
 // LLM
 export { aiSdkLlmProvider, isAISDKLLMInput } from './llm/index.js'
-export type { AISDKLanguageModel, AISDKLLMInput, GenerateObjectFn } from './llm/index.js'
+export type { AISDKLLMInput } from './llm/index.js'
 
 // Governance
 export { PolicyEngine, PolicyViolationError } from './governance/index.js'

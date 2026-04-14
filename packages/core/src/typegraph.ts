@@ -7,7 +7,7 @@ import { embeddingModelKey } from './embedding/provider.js'
 import type { RawDocument, Chunk } from './types/connector.js'
 import type { typegraphDocument, DocumentFilter, UpsertDocumentInput } from './types/typegraph-document.js'
 import type { typegraphHooks } from './types/hooks.js'
-import type { LLMProvider } from './types/llm-provider.js'
+import type { LLMProvider, LLMConfig } from './types/llm-provider.js'
 import type {
   GraphBridge, EntityResult, EntityDetail, EdgeResult,
   SubgraphOpts, SubgraphResult, GraphStats,
@@ -35,8 +35,6 @@ export const DEFAULT_BUCKET_ID = 'bkt_default'
 export const DEFAULT_BUCKET_NAME = 'Default'
 export const DEFAULT_BUCKET_DESCRIPTION = 'System default bucket. All ingested documents without an explicit bucket assignment are stored here. Cannot be deleted.'
 
-/** Union type: pass a native LLMProvider or an AI SDK model wrapped as { model }. */
-export type LLMConfig = LLMProvider | AISDKLLMInput
 /** @deprecated Use LLMConfig instead. */
 export type LLMInput = LLMConfig
 
@@ -95,9 +93,14 @@ function isLLMProvider(value: LLMConfig): value is LLMProvider {
 
 export function resolveLLMProvider(config: LLMConfig): LLMProvider {
   if (isLLMProvider(config)) return config
-  if (isAISDKLLMInput(config)) return aiSdkLlmProvider(config)
+  // { model } wrapper
+  if (isAISDKLLMInput(config)) return aiSdkLlmProvider(config as AISDKLLMInput)
+  // Bare AI SDK model (has doGenerate but not generateText)
+  if (typeof config === 'object' && config !== null && 'doGenerate' in config) {
+    return aiSdkLlmProvider({ model: config as any })
+  }
 
-  throw new ConfigError('Invalid LLM configuration. Pass an LLMProvider ({ generateText, generateJSON }) or an AI SDK language model ({ model }).')
+  throw new ConfigError('Invalid LLM configuration. Pass an LLMProvider ({ generateText, generateJSON }), a bare AI SDK language model, or { model }.')
 }
 
 /** Validate typegraph configuration. Throws ConfigError for invalid configs. */
@@ -709,7 +712,7 @@ class TypegraphImpl implements typegraphInstance {
     if (!bucket) throw new NotFoundError('Bucket', resolvedBucketId)
     const merged = this.mergeIndexConfig(indexConfig, bucket)
     const { defaultChunker: chunker } = await import('./index-engine/chunker.js')
-    const items = docs.map(doc => ({ doc, chunks: chunker(doc, merged) }))
+    const items = await Promise.all(docs.map(async doc => ({ doc, chunks: await chunker(doc, merged) })))
     const embedding = await this.resolveEmbeddingForBucket(resolvedBucketId)
     const engine = this.createIndexEngine(embedding)
     this.logger?.info('Ingesting documents', { bucketId: resolvedBucketId, count: docs.length })
@@ -881,8 +884,8 @@ class TypegraphImpl implements typegraphInstance {
       const mainLlm = resolveLLMProvider(this.config.llm)
       const ext = this.config.extraction
       engine.tripleExtractor = new TripleExtractor({
-        llm: ext?.entityLlm ?? mainLlm,
-        relationshipLlm: ext?.relationshipLlm,
+        llm: ext?.entityLlm ? resolveLLMProvider(ext.entityLlm) : mainLlm,
+        relationshipLlm: ext?.relationshipLlm ? resolveLLMProvider(ext.relationshipLlm) : undefined,
         graph: this.config.graph,
         twoPass: ext?.twoPass ?? false,
       })

@@ -1,4 +1,4 @@
-import type { LLMProvider } from './llm-provider.js'
+import type { LLMConfig } from './llm-provider.js'
 
 /**
  * Configuration for the triple extraction pipeline.
@@ -17,13 +17,15 @@ export interface ExtractionConfig {
 
   /**
    * LLM for entity extraction (Pass 1 in two-pass mode) or the single combined call.
+   * Accepts a bare AI SDK model, { model } wrapper, or a resolved LLMProvider.
    * Falls back to the main `typegraphConfig.llm` if not provided.
    */
-  entityLlm?: LLMProvider | undefined
+  entityLlm?: LLMConfig | undefined
 
   /**
    * LLM for relationship extraction (Pass 2 in two-pass mode).
+   * Accepts a bare AI SDK model, { model } wrapper, or a resolved LLMProvider.
    * Only used when `twoPass: true`. Falls back to `entityLlm`, then `typegraphConfig.llm`.
    */
-  relationshipLlm?: LLMProvider | undefined
+  relationshipLlm?: LLMConfig | undefined
 }

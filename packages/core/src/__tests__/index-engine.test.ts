@@ -24,7 +24,7 @@ describe('IndexEngine', () => {
     indexConfig: ReturnType<typeof createMockBucket>['indexConfig'],
     opts?: Parameters<IndexEngine['ingestBatch']>[2],
   ) {
-    const items = docs.map(doc => ({ doc, chunks: defaultChunker(doc, indexConfig) }))
+    const items = await Promise.all(docs.map(async doc => ({ doc, chunks: await defaultChunker(doc, indexConfig) })))
     return engine.ingestBatch(bucketId, items, opts, indexConfig)
   }
 
