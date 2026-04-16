@@ -1,4 +1,4 @@
-import type { TypegraphMemory, typegraphEventSink } from '@typegraph-ai/graph'
+import type { TypegraphMemory, typegraphEventSink } from '@typegraph-ai/memory'
 
 // ── MCP Tool Definitions ──
 // These define the tools that the MCP server exposes to AI agents.

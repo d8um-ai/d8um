@@ -1,9 +1,9 @@
-import type { GraphBridge } from '../../types/graph-bridge.js'
+import type { KnowledgeGraphBridge } from '../../types/graph-bridge.js'
 import type { typegraphIdentity } from '../../types/identity.js'
 import type { NormalizedResult } from '../merger.js'
 
 export class GraphRunner {
-  constructor(private graph: GraphBridge) {}
+  constructor(private graph: KnowledgeGraphBridge) {}
 
   /**
    * Graph-augmented retrieval via Personalized PageRank.

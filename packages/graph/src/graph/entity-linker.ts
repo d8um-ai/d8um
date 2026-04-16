@@ -1,7 +1,5 @@
-import type { typegraphIdentity } from '@typegraph-ai/core'
-import type { EmbeddingProvider } from '@typegraph-ai/core'
-import type { MemoryStoreAdapter } from '../types/adapter.js'
-import type { SemanticEntity, SemanticEdge } from '../types/memory.js'
+import type { typegraphIdentity, EmbeddingProvider } from '@typegraph-ai/core'
+import type { MemoryStoreAdapter, SemanticEntity, SemanticEdge } from '@typegraph-ai/memory'
 import { generateId } from '@typegraph-ai/core'
 
 export interface EntityLinkerConfig {

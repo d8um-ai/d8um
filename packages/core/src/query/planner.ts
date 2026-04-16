@@ -3,13 +3,13 @@ import type { QueryOpts, QueryResponse, QuerySignals, typegraphResult, RawScores
 import type { VectorStoreAdapter } from '../types/adapter.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
 import { embeddingModelKey } from '../embedding/provider.js'
-import type { GraphBridge } from '../types/graph-bridge.js'
+import type { MemoryBridge, KnowledgeGraphBridge } from '../types/graph-bridge.js'
 import type { typegraphEvent, typegraphEventSink } from '../types/events.js'
 import type { typegraphLogger } from '../types/logger.js'
 import { IndexedRunner } from './runners/indexed.js'
 import { MemoryRunner } from './runners/memory-runner.js'
 import { GraphRunner } from './runners/graph-runner.js'
-import { mergeAndRank, normalizeRRF, normalizePPR, type NormalizedResult } from './merger.js'
+import { mergeAndRank, normalizeRRF, normalizePPR, calibrateSemantic, calibrateKeyword, type NormalizedResult } from './merger.js'
 import { classifyQuery } from './classifier.js'
 
 /** Resolve user-provided signals (or defaults) into a fully-specified signal set. */
@@ -123,7 +123,8 @@ export class QueryPlanner {
     private bucketIds: string[],
     private bucketEmbeddings: Map<string, EmbeddingProvider>,
     private bucketQueryEmbeddings: Map<string, EmbeddingProvider>,
-    private graph?: GraphBridge,
+    private memory?: MemoryBridge,
+    private knowledgeGraph?: KnowledgeGraphBridge,
     private eventSink?: typegraphEventSink,
     private logger?: typegraphLogger,
   ) {}
@@ -174,8 +175,8 @@ export class QueryPlanner {
     }
 
     const needsIndexedSearch = signals.semantic || signals.keyword
-    const needsGraph = signals.graph && !!this.graph
-    const needsMemory = signals.memory && !!this.graph
+    const needsGraph = signals.graph && !!this.knowledgeGraph
+    const needsMemory = signals.memory && !!this.memory
     const identity = { tenantId: opts.tenantId, groupId: opts.groupId, userId: opts.userId, agentId: opts.agentId, conversationId: opts.conversationId }
 
     // Timeouts (user-configurable or defaults)
@@ -187,20 +188,11 @@ export class QueryPlanner {
 
     // Memory-only or graph-only (no indexed search)
     if (!needsIndexedSearch && (needsMemory || needsGraph)) {
-      if (!this.graph) {
-        return {
-          results: [],
-          buckets: {},
-          query: { text, tenantId, durationMs: Date.now() - startMs, mergeStrategy: 'rrf' },
-          warnings: ['Graph/memory signals require a graph bridge. Configure graph in typegraphConfig.'],
-        }
-      }
-
       const runnerArrays: NormalizedResult[][] = []
 
       // Memory runner
       if (needsMemory) {
-        const memoryRunner = new MemoryRunner(this.graph)
+        const memoryRunner = new MemoryRunner(this.memory!)
         const memResults = await withTimeout(
           memoryRunner.run(text, identity, count, { useKeyword: signals.keyword }),
           timeouts.memory,
@@ -211,7 +203,7 @@ export class QueryPlanner {
 
       // Graph runner
       if (needsGraph) {
-        const graphRunner = new GraphRunner(this.graph)
+        const graphRunner = new GraphRunner(this.knowledgeGraph!)
         const graphResults = await withTimeout(
           graphRunner.run(text, identity, count),
           timeouts.graph,
@@ -232,13 +224,11 @@ export class QueryPlanner {
 
         const modes: string[] = merged.modes ?? [r.mode]
         const isFromMemory = modes.includes('memory')
-        const isFromGraph = modes.includes('graph')
 
+        // Graph: sqrt normalization for stable absolute scores
         if (signals.graph) {
           rawScores.ppr = agg.graph
-          normalizedScores.graph = (isFromGraph || agg.graph != null)
-            ? normalizePPR(agg.graph ?? 0)
-            : undefined
+          normalizedScores.graph = Math.min(Math.sqrt(agg.graph ?? 0), 1)
         }
         if (signals.memory) {
           rawScores.importance = agg.memory
@@ -252,7 +242,7 @@ export class QueryPlanner {
         // Memory results have semantic similarity from embedding search
         if (signals.semantic && isFromMemory && agg.memorySimilarity != null) {
           rawScores.cosineSimilarity = agg.memorySimilarity
-          normalizedScores.semantic = agg.memorySimilarity
+          normalizedScores.semantic = calibrateSemantic(agg.memorySimilarity)
         }
 
         const topScore = computeCompositeScore(normalizedScores, signals, effectiveScoreWeights)
@@ -343,13 +333,13 @@ export class QueryPlanner {
 
     // Run graph + memory runners in parallel if signals request them
     const runnerArrays: NormalizedResult[][] = [allResults]
-    if ((needsGraph || needsMemory) && this.graph) {
+    if (needsGraph || needsMemory) {
       // Skip memory runner if store has no memories (avoids empty table query per query)
-      const skipMemory = !needsMemory || (this.graph.hasMemories ? !(await this.graph.hasMemories()) : false)
+      const skipMemory = !needsMemory || (this.memory?.hasMemories ? !(await this.memory.hasMemories()) : false)
       const memoryPromise = skipMemory
         ? Promise.resolve([] as NormalizedResult[])
         : withTimeout(
-            new MemoryRunner(this.graph).run(text, identity, count, {
+            new MemoryRunner(this.memory!).run(text, identity, count, {
               ...(opts.temporalAt ? { temporalAt: opts.temporalAt } : {}),
               ...(opts.includeInvalidated != null ? { includeInvalidated: opts.includeInvalidated } : {}),
               useKeyword: signals.keyword,
@@ -361,7 +351,7 @@ export class QueryPlanner {
       const graphPromise = !needsGraph
         ? Promise.resolve([] as NormalizedResult[])
         : withTimeout(
-            new GraphRunner(this.graph).run(text, identity, count),
+            new GraphRunner(this.knowledgeGraph!).run(text, identity, count),
             timeouts.graph,
             [] as NormalizedResult[]
           )
@@ -434,25 +424,21 @@ export class QueryPlanner {
       // Determine result origin for eligible/ineligible scoring
       const modes: string[] = merged.modes ?? [r.mode]
       const isFromMemory = modes.includes('memory')
-      const isFromGraph = modes.includes('graph')
       const isFromIndexed = modes.includes('indexed')
 
-      // Semantic: eligible for ALL results that were embedding-searched.
-      // Both indexed chunks and memories use cosine similarity — same algorithm, same 0-1 range.
-      // Memory results carry their similarity via rawScores.memorySimilarity.
+      // Semantic: calibrate raw cosine similarity to 0-1 relevance scale.
+      // Both indexed chunks and memories use cosine similarity — same algorithm.
       if (signals.semantic || signals.keyword) {
-        // For indexed/graph results, use the indexed embedding similarity
-        // For memory results, use the memory embedding similarity (same cosine algorithm)
         const semanticScore = agg.semantic ?? (isFromMemory ? agg.memorySimilarity : undefined)
         rawScores.cosineSimilarity = semanticScore
-        normalizedScores.semantic = semanticScore ?? 0
+        normalizedScores.semantic = calibrateSemantic(semanticScore ?? 0)
       }
 
-      // Keyword: eligible if keyword signal is on AND the result could have been keyword-searched
+      // Keyword: calibrate raw ts_rank() BM25 to 0-1 scale.
       if (signals.keyword) {
         rawScores.bm25 = agg.keyword
         rawScores.rrf = rawRrf
-        normalizedScores.keyword = agg.keyword ?? 0 // All results are eligible when keyword is active
+        normalizedScores.keyword = calibrateKeyword(agg.keyword ?? 0)
         const numListsForRRF = merged.compositeScore != null ? runnerArrays.length : 2
         const baseRRF = normalizeRRF(rawRrf, numListsForRRF)
         const matchedBothLists = (agg.keyword ?? 0) > 0
@@ -462,12 +448,11 @@ export class QueryPlanner {
         normalizedScores.rrf = normalizeRRF(rawRrf, runnerArrays.length)
       }
 
-      // Graph: eligible for results that came through graph runner, ineligible otherwise
+      // Graph: sqrt normalization for stable absolute scores.
+      // When graph signal is active, ALL results get a score — never undefined.
       if (signals.graph) {
         rawScores.ppr = agg.graph
-        normalizedScores.graph = (isFromGraph || agg.graph != null)
-          ? normalizePPR(agg.graph ?? 0)
-          : undefined // Non-graph results are ineligible
+        normalizedScores.graph = Math.min(Math.sqrt(agg.graph ?? 0), 1)
       }
 
       // Memory: eligible for memory results, ineligible for bucket documents
@@ -481,9 +466,7 @@ export class QueryPlanner {
           : undefined // Bucket documents are ineligible for memory scoring
       }
 
-      // Composite score: always recomputed with eligible/ineligible awareness.
-      // The merger's compositeScore used the old redistribution logic,
-      // so we recompute here with the correct undefined/0 distinction.
+      // Composite score with calibrated signals and eligible/ineligible awareness.
       const topScore = computeCompositeScore(normalizedScores, signals, effectiveScoreWeights)
 
       // Sources: which retrieval systems contributed (user-facing labels)

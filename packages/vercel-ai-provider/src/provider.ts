@@ -1,4 +1,4 @@
-import type { TypegraphMemory } from '@typegraph-ai/graph'
+import type { TypegraphMemory } from '@typegraph-ai/memory'
 
 // ── Tool Definition ──
 // Structural type matching Vercel AI SDK's tool definition pattern.

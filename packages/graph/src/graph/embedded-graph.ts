@@ -1,7 +1,6 @@
 import type { typegraphIdentity } from '@typegraph-ai/core'
-import type { SemanticEntity, SemanticEdge } from '../types/index.js'
-import { isActiveAt } from '../temporal.js'
-import type { MemoryStoreAdapter } from '../types/adapter.js'
+import type { SemanticEntity, SemanticEdge, MemoryStoreAdapter } from '@typegraph-ai/memory'
+import { isActiveAt } from '@typegraph-ai/memory'
 
 // ── Graph Types ──
 

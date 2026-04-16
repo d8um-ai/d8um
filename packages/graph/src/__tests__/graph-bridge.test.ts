@@ -1,8 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
-import { createGraphBridge } from '../graph-bridge.js'
-import type { MemoryStoreAdapter } from '../types/adapter.js'
-import type { SemanticEntity, SemanticEdge } from '../types/memory.js'
-import { buildScope } from '../types/scope.js'
+import { createKnowledgeGraphBridge } from '../graph-bridge.js'
+import type { MemoryStoreAdapter, SemanticEntity, SemanticEdge } from '@typegraph-ai/memory'
+import { buildScope } from '@typegraph-ai/memory'
 
 const testScope = buildScope({ userId: 'test-user' })
 
@@ -95,7 +94,6 @@ function mockStore(
 
 function mockEmbedding() {
   let counter = 0
-  // Produce orthogonal-ish embeddings so cosine similarity is low between different entities
   return {
     model: 'mock-embed',
     dimensions: 10,
@@ -116,23 +114,15 @@ function mockEmbedding() {
   }
 }
 
-function mockLLM() {
-  return {
-    generateText: vi.fn().mockResolvedValue('mock text'),
-    generateJSON: vi.fn().mockResolvedValue({}),
-  }
-}
-
-describe('createGraphBridge', () => {
+describe('createKnowledgeGraphBridge', () => {
   describe('addTriple', () => {
     it('creates entities and an edge from a triple', async () => {
       const entities = new Map<string, SemanticEntity>()
       const edges: SemanticEdge[] = []
       const store = mockStore(entities, edges)
-      const bridge = createGraphBridge({
+      const bridge = createKnowledgeGraphBridge({
         memoryStore: store,
         embedding: mockEmbedding(),
-        llm: mockLLM(),
         scope: testScope,
       })
 
@@ -163,10 +153,9 @@ describe('createGraphBridge', () => {
     it('normalizes predicate to SCREAMING_SNAKE_CASE', async () => {
       const edges: SemanticEdge[] = []
       const store = mockStore(new Map(), edges)
-      const bridge = createGraphBridge({
+      const bridge = createKnowledgeGraphBridge({
         memoryStore: store,
         embedding: mockEmbedding(),
-        llm: mockLLM(),
         scope: testScope,
       })
 
@@ -185,10 +174,9 @@ describe('createGraphBridge', () => {
       const entities = new Map<string, SemanticEntity>()
       const edges: SemanticEdge[] = []
       const store = mockStore(entities, edges)
-      const bridge = createGraphBridge({
+      const bridge = createKnowledgeGraphBridge({
         memoryStore: store,
         embedding: mockEmbedding(),
-        llm: mockLLM(),
         scope: testScope,
       })
 
@@ -228,10 +216,9 @@ describe('createGraphBridge', () => {
 
       const store = mockStore(entities)
       const emb = mockEmbedding()
-      const bridge = createGraphBridge({
+      const bridge = createKnowledgeGraphBridge({
         memoryStore: store,
         embedding: emb,
-        llm: mockLLM(),
         scope: testScope,
       })
 
@@ -249,10 +236,9 @@ describe('createGraphBridge', () => {
       const store = mockStore()
       delete (store as any).searchEntities
 
-      const bridge = createGraphBridge({
+      const bridge = createKnowledgeGraphBridge({
         memoryStore: store,
         embedding: mockEmbedding(),
-        llm: mockLLM(),
         scope: testScope,
       })
 
@@ -273,10 +259,9 @@ describe('createGraphBridge', () => {
         makeEdge('e2', 'b', 'c', 'WORKS_WITH'),
       ]
       const store = mockStore(entities, edges)
-      const bridge = createGraphBridge({
+      const bridge = createKnowledgeGraphBridge({
         memoryStore: store,
         embedding: mockEmbedding(),
-        llm: mockLLM(),
         scope: testScope,
       })
 
@@ -303,10 +288,9 @@ describe('createGraphBridge', () => {
 
     it('returns empty map for entities with no edges', async () => {
       const store = mockStore()
-      const bridge = createGraphBridge({
+      const bridge = createKnowledgeGraphBridge({
         memoryStore: store,
         embedding: mockEmbedding(),
-        llm: mockLLM(),
         scope: testScope,
       })
 
@@ -328,10 +312,9 @@ describe('createGraphBridge', () => {
         }),
       ]
       const store = mockStore(new Map(), edges)
-      const bridge = createGraphBridge({
+      const bridge = createKnowledgeGraphBridge({
         memoryStore: store,
         embedding: mockEmbedding(),
-        llm: mockLLM(),
         scope: testScope,
       })
 
@@ -354,10 +337,9 @@ describe('createGraphBridge', () => {
         makeEdge('e2', 'a', 'c', 'REL2', { content: 'Same content.', bucketId: 'doc-1' }),
       ]
       const store = mockStore(new Map(), edges)
-      const bridge = createGraphBridge({
+      const bridge = createKnowledgeGraphBridge({
         memoryStore: store,
         embedding: mockEmbedding(),
-        llm: mockLLM(),
         scope: testScope,
       })
 
@@ -373,10 +355,9 @@ describe('createGraphBridge', () => {
         }),
       )
       const store = mockStore(new Map(), edges)
-      const bridge = createGraphBridge({
+      const bridge = createKnowledgeGraphBridge({
         memoryStore: store,
         embedding: mockEmbedding(),
-        llm: mockLLM(),
         scope: testScope,
       })
 
@@ -390,59 +371,15 @@ describe('createGraphBridge', () => {
         makeEdge('e2', 'a', 'c', 'WORKS_AT', { content: 'Has content.', bucketId: 'doc-1' }),
       ]
       const store = mockStore(new Map(), edges)
-      const bridge = createGraphBridge({
+      const bridge = createKnowledgeGraphBridge({
         memoryStore: store,
         embedding: mockEmbedding(),
-        llm: mockLLM(),
         scope: testScope,
       })
 
       const chunks = await bridge.getChunksForEntities!(['a'], 10)
       expect(chunks).toHaveLength(1)
       expect(chunks[0]!.content).toBe('Has content.')
-    })
-  })
-
-  describe('required methods', () => {
-    it('remember delegates to TypegraphMemory', async () => {
-      const store = mockStore()
-      const bridge = createGraphBridge({
-        memoryStore: store,
-        embedding: mockEmbedding(),
-        llm: mockLLM(),
-        scope: testScope,
-      })
-
-      const result = await bridge.remember('test memory', testScope)
-      expect(result).toBeDefined()
-      expect(store.upsert).toHaveBeenCalled()
-    })
-
-    it('forget calls store.invalidate directly', async () => {
-      const store = mockStore()
-      const bridge = createGraphBridge({
-        memoryStore: store,
-        embedding: mockEmbedding(),
-        llm: mockLLM(),
-        scope: testScope,
-      })
-
-      await bridge.forget('some-id')
-      expect(store.invalidate).toHaveBeenCalledWith('some-id')
-    })
-
-    it('recall delegates to TypegraphMemory', async () => {
-      const store = mockStore()
-      const bridge = createGraphBridge({
-        memoryStore: store,
-        embedding: mockEmbedding(),
-        llm: mockLLM(),
-        scope: testScope,
-      })
-
-      const results = await bridge.recall('query', testScope)
-      expect(Array.isArray(results)).toBe(true)
-      expect(store.search).toHaveBeenCalled()
     })
   })
 })

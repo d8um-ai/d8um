@@ -42,6 +42,7 @@ export type {
   IndexOpts,
   IndexProgressEvent,
   IndexResult,
+  ExtractionFailure,
 } from './index-types.js'
 
 export { IndexError } from './index-types.js'
@@ -61,7 +62,8 @@ export type { LLMProvider, LLMGenerateOptions, LLMConfig } from './llm-provider.
 export type { typegraphIdentity } from './identity.js'
 
 export type {
-  GraphBridge,
+  MemoryBridge,
+  KnowledgeGraphBridge,
   EntityResult,
   EntityDetail,
   EdgeResult,

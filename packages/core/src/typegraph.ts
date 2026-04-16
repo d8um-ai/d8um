@@ -9,7 +9,8 @@ import type { typegraphDocument, DocumentFilter, UpsertDocumentInput } from './t
 import type { typegraphHooks } from './types/hooks.js'
 import type { LLMProvider, LLMConfig } from './types/llm-provider.js'
 import type {
-  GraphBridge, EntityResult, EntityDetail, EdgeResult,
+  MemoryBridge, KnowledgeGraphBridge,
+  EntityResult, EntityDetail, EdgeResult,
   SubgraphOpts, SubgraphResult, GraphStats,
 } from './types/graph-bridge.js'
 import type { ExtractionConfig } from './types/extraction-config.js'
@@ -62,8 +63,10 @@ export interface typegraphConfig {
   hooks?: typegraphHooks | undefined
   /** Optional LLM provider for triple extraction, query classification, and memory operations. */
   llm?: LLMConfig | undefined
-  /** Optional graph bridge for memory operations and neural query mode. */
-  graph?: GraphBridge | undefined
+  /** Memory bridge for conversational memory operations. */
+  memory?: MemoryBridge | undefined
+  /** Knowledge graph bridge for entity graph and neural retrieval. */
+  knowledgeGraph?: KnowledgeGraphBridge | undefined
   /** Configure triple extraction behavior (single-pass vs two-pass, per-pass models). */
   extraction?: ExtractionConfig | undefined
   /** Optional event sink for observability. Events are emitted fire-and-forget. */
@@ -116,8 +119,8 @@ function validateConfig(config: typegraphConfig): void {
       throw new ConfigError('Self-hosted mode requires an embedding provider. Pass embedding to typegraphConfig.')
     }
   }
-  if (config.graph && !config.llm) {
-    config.logger?.warn('Graph bridge configured without an LLM. Triple extraction during ingestion will be skipped. Pass llm to typegraphConfig for full graph functionality.')
+  if (config.knowledgeGraph && !config.llm) {
+    config.logger?.warn('Knowledge graph bridge configured without an LLM. Triple extraction during ingestion will be skipped. Pass llm to typegraphConfig for full graph functionality.')
   }
 }
 
@@ -445,9 +448,9 @@ class TypegraphImpl implements typegraphInstance {
       entityType?: string
       minConnections?: number
     }): Promise<EntityResult[]> => {
-      const graph = this.requireGraph()
-      if (!graph.searchEntities) throw new ConfigError('Graph bridge does not support entity search.')
-      const results = await graph.searchEntities(query, identity, opts?.limit)
+      const kg = this.requireKnowledgeGraph()
+      if (!kg.searchEntities) throw new ConfigError('Knowledge graph bridge does not support entity search.')
+      const results = await kg.searchEntities(query, identity, opts?.limit)
       // The bridge returns a simpler format; enrich it
       return results.map(r => ({
         ...r,
@@ -458,9 +461,9 @@ class TypegraphImpl implements typegraphInstance {
     },
 
     getEntity: async (id: string): Promise<EntityDetail | null> => {
-      const graph = this.requireGraph()
-      if (!graph.getEntity) throw new ConfigError('Graph bridge does not support entity lookup.')
-      return graph.getEntity(id)
+      const kg = this.requireKnowledgeGraph()
+      if (!kg.getEntity) throw new ConfigError('Knowledge graph bridge does not support entity lookup.')
+      return kg.getEntity(id)
     },
 
     getEdges: async (entityId: string, opts?: {
@@ -468,33 +471,33 @@ class TypegraphImpl implements typegraphInstance {
       relation?: string
       limit?: number
     }): Promise<EdgeResult[]> => {
-      const graph = this.requireGraph()
-      if (!graph.getEdges) throw new ConfigError('Graph bridge does not support edge queries.')
-      return graph.getEdges(entityId, opts)
+      const kg = this.requireKnowledgeGraph()
+      if (!kg.getEdges) throw new ConfigError('Knowledge graph bridge does not support edge queries.')
+      return kg.getEdges(entityId, opts)
     },
 
     getSubgraph: async (opts: SubgraphOpts): Promise<SubgraphResult> => {
-      const graph = this.requireGraph()
-      if (!graph.getSubgraph) throw new ConfigError('Graph bridge does not support subgraph extraction.')
-      return graph.getSubgraph(opts)
+      const kg = this.requireKnowledgeGraph()
+      if (!kg.getSubgraph) throw new ConfigError('Knowledge graph bridge does not support subgraph extraction.')
+      return kg.getSubgraph(opts)
     },
 
     stats: async (identity: typegraphIdentity): Promise<GraphStats> => {
-      const graph = this.requireGraph()
-      if (!graph.getGraphStats) throw new ConfigError('Graph bridge does not support stats.')
-      return graph.getGraphStats(identity)
+      const kg = this.requireKnowledgeGraph()
+      if (!kg.getGraphStats) throw new ConfigError('Knowledge graph bridge does not support stats.')
+      return kg.getGraphStats(identity)
     },
 
     getRelationTypes: async (identity: typegraphIdentity): Promise<Array<{ relation: string; count: number }>> => {
-      const graph = this.requireGraph()
-      if (!graph.getRelationTypes) throw new ConfigError('Graph bridge does not support relation type queries.')
-      return graph.getRelationTypes(identity)
+      const kg = this.requireKnowledgeGraph()
+      if (!kg.getRelationTypes) throw new ConfigError('Knowledge graph bridge does not support relation type queries.')
+      return kg.getRelationTypes(identity)
     },
 
     getEntityTypes: async (identity: typegraphIdentity): Promise<Array<{ entityType: string; count: number }>> => {
-      const graph = this.requireGraph()
-      if (!graph.getEntityTypes) throw new ConfigError('Graph bridge does not support entity type queries.')
-      return graph.getEntityTypes(identity)
+      const kg = this.requireKnowledgeGraph()
+      if (!kg.getEntityTypes) throw new ConfigError('Knowledge graph bridge does not support entity type queries.')
+      return kg.getEntityTypes(identity)
     },
   }
 
@@ -580,8 +583,11 @@ class TypegraphImpl implements typegraphInstance {
     validateConfig(config)
     this.applyConfig(config)
     await this.adapter.deploy()
-    if (config.graph?.deploy) {
-      await config.graph.deploy()
+    if (this.memoryBridge?.deploy) {
+      await this.memoryBridge.deploy()
+    }
+    if (this.graphBridge?.deploy) {
+      await this.graphBridge.deploy()
     }
     if (config.policyStore) {
       this.policyEngine = new PolicyEngine(config.policyStore, config.eventSink)
@@ -751,7 +757,8 @@ class TypegraphImpl implements typegraphInstance {
       [...this._buckets.keys()],
       this.bucketEmbeddings,
       this.bucketQueryEmbeddings,
-      this.config.graph,
+      this.memoryBridge,
+      this.graphBridge,
       this.config.eventSink,
       this.logger,
     )
@@ -777,11 +784,28 @@ class TypegraphImpl implements typegraphInstance {
 
   // ── Memory operations ──
 
-  private requireGraph(): GraphBridge {
-    if (!this.config.graph) {
-      throw new ConfigError('Graph not configured. Pass a graph bridge to typegraphConfig to enable memory and graph operations.')
+  private get memoryBridge(): MemoryBridge | undefined {
+    return this.config.memory
+  }
+
+  private get graphBridge(): KnowledgeGraphBridge | undefined {
+    return this.config.knowledgeGraph
+  }
+
+  private requireMemory(): MemoryBridge {
+    const bridge = this.memoryBridge
+    if (!bridge) {
+      throw new ConfigError('Memory not configured. Pass a MemoryBridge via typegraphConfig.memory to enable memory operations.')
     }
-    return this.config.graph
+    return bridge
+  }
+
+  private requireKnowledgeGraph(): KnowledgeGraphBridge {
+    const bridge = this.graphBridge
+    if (!bridge) {
+      throw new ConfigError('Knowledge graph not configured. Pass a KnowledgeGraphBridge via typegraphConfig.knowledgeGraph to enable graph operations.')
+    }
+    return bridge
   }
 
   async remember(content: string, identity: typegraphIdentity, category?: string, opts?: {
@@ -789,21 +813,21 @@ class TypegraphImpl implements typegraphInstance {
     metadata?: Record<string, unknown>
   }): Promise<MemoryRecord> {
     await this.enforcePolicy('memory.write', identity)
-    return this.requireGraph().remember(content, identity, category, opts)
+    return this.requireMemory().remember(content, identity, category, opts)
   }
 
   async forget(id: string, identity: typegraphIdentity): Promise<void> {
     await this.enforcePolicy('memory.delete', identity, id)
-    return this.requireGraph().forget(id, identity)
+    return this.requireMemory().forget(id, identity)
   }
 
   async correct(correction: string, identity: typegraphIdentity): Promise<{ invalidated: number; created: number; summary: string }> {
-    return this.requireGraph().correct(correction, identity)
+    return this.requireMemory().correct(correction, identity)
   }
 
   async recall(query: string, identity: typegraphIdentity, opts?: { limit?: number; types?: string[] }): Promise<MemoryRecord[]> {
     await this.enforcePolicy('memory.read', identity)
-    return this.requireGraph().recall(query, identity, opts)
+    return this.requireMemory().recall(query, identity, opts)
   }
 
   async buildMemoryContext(query: string, identity: typegraphIdentity, opts?: {
@@ -814,15 +838,15 @@ class TypegraphImpl implements typegraphInstance {
     maxMemoryTokens?: number
     format?: 'xml' | 'markdown' | 'plain'
   }): Promise<string> {
-    const graph = this.requireGraph()
-    if (!graph.buildMemoryContext) throw new ConfigError('buildMemoryContext not supported by this graph bridge.')
-    return graph.buildMemoryContext(query, identity, opts)
+    const mem = this.requireMemory()
+    if (!mem.buildMemoryContext) throw new ConfigError('buildMemoryContext not supported by this memory bridge.')
+    return mem.buildMemoryContext(query, identity, opts)
   }
 
   async healthCheck(identity: typegraphIdentity): Promise<MemoryHealthReport> {
-    const graph = this.requireGraph()
-    if (!graph.healthCheck) throw new ConfigError('healthCheck not supported by this graph bridge.')
-    return graph.healthCheck(identity)
+    const mem = this.requireMemory()
+    if (!mem.healthCheck) throw new ConfigError('healthCheck not supported by this memory bridge.')
+    return mem.healthCheck(identity)
   }
 
   async addConversationTurn(
@@ -830,7 +854,7 @@ class TypegraphImpl implements typegraphInstance {
     identity: typegraphIdentity,
     conversationId?: string,
   ): Promise<ConversationTurnResult> {
-    return this.requireGraph().addConversationTurn(messages, identity, conversationId)
+    return this.requireMemory().addConversationTurn(messages, identity, conversationId)
   }
 
   // ── Policy operations ──
@@ -880,13 +904,14 @@ class TypegraphImpl implements typegraphInstance {
 
   private createIndexEngine(embedding: EmbeddingProvider): IndexEngine {
     const engine = new IndexEngine(this.adapter, embedding, this.config.eventSink)
-    if (this.config.llm && this.config.graph) {
+    const kg = this.graphBridge
+    if (this.config.llm && kg) {
       const mainLlm = resolveLLMProvider(this.config.llm)
       const ext = this.config.extraction
       engine.tripleExtractor = new TripleExtractor({
         llm: ext?.entityLlm ? resolveLLMProvider(ext.entityLlm) : mainLlm,
         relationshipLlm: ext?.relationshipLlm ? resolveLLMProvider(ext.relationshipLlm) : undefined,
-        graph: this.config.graph,
+        graph: kg,
         twoPass: ext?.twoPass ?? false,
       })
     }

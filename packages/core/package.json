@@ -1,6 +1,6 @@
 {
   "name": "@typegraph-ai/core",
-  "version": "0.1.31",
+  "version": "0.1.35",
   "description": "TypeScript SDK and open protocol for supplying context to LLMs",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,8 +24,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@ai-sdk/provider": "^3.0.0",
-    "@chonkiejs/core": "^0.0.9"
+    "@ai-sdk/provider": "^3.0.0"
   },
   "peerDependencies": {
     "ai": "^6.0.0",

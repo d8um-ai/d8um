@@ -1,7 +1,7 @@
 {
-  "name": "@typegraph-ai/graph",
-  "version": "0.1.22",
-  "description": "Knowledge graph, cognitive memory, and neural retrieval for typegraph - entities, edges, PPR, extraction, consolidation",
+  "name": "@typegraph-ai/memory",
+  "version": "0.1.0",
+  "description": "Cognitive memory for typegraph - extraction, consolidation, temporal reasoning, working memory",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,8 +24,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@typegraph-ai/core": "workspace:*",
-    "@typegraph-ai/memory": "workspace:*"
+    "@typegraph-ai/core": "workspace:*"
   },
   "peerDependencies": {
     "zod": "^3.0.0 || ^4.0.0"

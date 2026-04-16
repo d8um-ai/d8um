@@ -1,4 +1,4 @@
-import type { GraphBridge } from '../../types/graph-bridge.js'
+import type { MemoryBridge } from '../../types/graph-bridge.js'
 import type { typegraphIdentity } from '../../types/identity.js'
 import type { NormalizedResult } from '../merger.js'
 
@@ -18,7 +18,7 @@ function computeRecency(lastAccessedAt: Date | undefined, createdAt: Date): numb
 }
 
 export class MemoryRunner {
-  constructor(private graph: GraphBridge) {}
+  constructor(private memory: MemoryBridge) {}
 
   async run(
     text: string,
@@ -27,7 +27,7 @@ export class MemoryRunner {
     opts?: { temporalAt?: Date | undefined; includeInvalidated?: boolean | undefined; useKeyword?: boolean | undefined },
   ): Promise<NormalizedResult[]> {
     // Use hybrid search when keyword signal is active and bridge supports it
-    const useHybrid = opts?.useKeyword && this.graph.recallHybrid
+    const useHybrid = opts?.useKeyword && this.memory.recallHybrid
     const recallOpts = {
       limit: count,
       ...(opts?.temporalAt ? { temporalAt: opts.temporalAt } : {}),
@@ -35,8 +35,8 @@ export class MemoryRunner {
     }
 
     const memories = useHybrid
-      ? await this.graph.recallHybrid!(text, identity, recallOpts)
-      : await this.graph.recall(text, identity, recallOpts)
+      ? await this.memory.recallHybrid!(text, identity, recallOpts)
+      : await this.memory.recall(text, identity, recallOpts)
 
     return memories.map((m, i) => {
       const similarity = (m.metadata?._similarity as number | undefined) ?? 0

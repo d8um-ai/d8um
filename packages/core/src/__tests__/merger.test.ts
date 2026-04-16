@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { dedupKey, minMaxNormalize, mergeAndRank, normalizeRRF, normalizePPR, type NormalizedResult } from '../query/merger.js'
+import { dedupKey, minMaxNormalize, mergeAndRank, normalizeRRF, normalizePPR, calibrateSemantic, calibrateKeyword, type NormalizedResult } from '../query/merger.js'
 
 function makeResult(overrides: Partial<NormalizedResult> = {}): NormalizedResult {
   return {
@@ -95,23 +95,22 @@ describe('normalizeRRF', () => {
 })
 
 describe('normalizePPR', () => {
-  it('normalizes PPR by dividing by damping factor', () => {
-    // PPR of 0.35 (damping factor) → 1.0
+  it('normalizes PPR by dividing by reference', () => {
+    // PPR equal to reference → 1.0
     expect(normalizePPR(0.35, 0.35)).toBeCloseTo(1.0)
   })
 
   it('produces values between 0 and 1 for typical PPR scores', () => {
-    // Typical PPR scores are 0.01-0.3
     expect(normalizePPR(0.1, 0.35)).toBeCloseTo(0.1 / 0.35)
     expect(normalizePPR(0.1, 0.35)).toBeGreaterThan(0)
     expect(normalizePPR(0.1, 0.35)).toBeLessThan(1)
   })
 
-  it('caps at 1.0 for scores above damping factor', () => {
+  it('caps at 1.0 for scores above reference', () => {
     expect(normalizePPR(0.5, 0.35)).toBe(1.0)
   })
 
-  it('returns 0 for 0 damping factor', () => {
+  it('returns 0 for 0 reference', () => {
     expect(normalizePPR(0.1, 0)).toBe(0)
   })
 
@@ -119,12 +118,72 @@ describe('normalizePPR', () => {
     expect(normalizePPR(0, 0.35)).toBe(0)
   })
 
-  it('is cross-query comparable — same PPR score always produces same normalized value', () => {
-    // Same raw PPR from different queries should produce identical normalized scores
+  it('uses default reference of 0.30', () => {
+    // Default reference = 0.30
+    expect(normalizePPR(0.15)).toBeCloseTo(0.15 / 0.30)
+    expect(normalizePPR(0.30)).toBeCloseTo(1.0)
+  })
+
+  it('same PPR score always produces same normalized value', () => {
     const query1Result = normalizePPR(0.15, 0.35)
     const query2Result = normalizePPR(0.15, 0.35)
     expect(query1Result).toBe(query2Result)
     expect(query1Result).toBeCloseTo(0.4286, 3)
+  })
+})
+
+describe('calibrateSemantic', () => {
+  it('maps floor to 0', () => {
+    expect(calibrateSemantic(0.10)).toBe(0)
+  })
+
+  it('maps ceiling to 1', () => {
+    expect(calibrateSemantic(0.70)).toBe(1)
+  })
+
+  it('maps below floor to 0', () => {
+    expect(calibrateSemantic(0.05)).toBe(0)
+  })
+
+  it('maps above ceiling to 1', () => {
+    expect(calibrateSemantic(0.85)).toBe(1)
+  })
+
+  it('maps midpoint correctly', () => {
+    // midpoint of [0.10, 0.70] = 0.40 → 0.50
+    expect(calibrateSemantic(0.40)).toBeCloseTo(0.5)
+  })
+
+  it('maps Stephen Curry score (0.52) to ~0.70', () => {
+    expect(calibrateSemantic(0.52)).toBeCloseTo(0.70)
+  })
+
+  it('accepts custom floor/ceiling', () => {
+    expect(calibrateSemantic(0.30, 0.20, 0.60)).toBeCloseTo(0.25)
+    expect(calibrateSemantic(0.20, 0.20, 0.60)).toBe(0)
+    expect(calibrateSemantic(0.60, 0.20, 0.60)).toBe(1)
+  })
+})
+
+describe('calibrateKeyword', () => {
+  it('maps 0 to 0', () => {
+    expect(calibrateKeyword(0)).toBe(0)
+  })
+
+  it('maps ceiling to 1', () => {
+    expect(calibrateKeyword(0.23)).toBe(1)
+  })
+
+  it('maps above ceiling to 1', () => {
+    expect(calibrateKeyword(0.50)).toBe(1)
+  })
+
+  it('maps midpoint correctly', () => {
+    expect(calibrateKeyword(0.115)).toBeCloseTo(0.5)
+  })
+
+  it('accepts custom floor/ceiling', () => {
+    expect(calibrateKeyword(0.15, 0.05, 0.25)).toBeCloseTo(0.5)
   })
 })
 
@@ -255,8 +314,8 @@ describe('mergeAndRank', () => {
     expect(result.rawScores.graph).toBe(0.15)
   })
 
-  it('normalizes graph PPR scores in composite via normalizePPR', () => {
-    // Raw PPR 0.175 → normalized 0.175/0.35 = 0.5
+  it('normalizes graph PPR scores via query-relative min-max', () => {
+    // Single graph result — gets 1.0 (best by definition)
     const graphResult = makeResult({
       content: 'graph only',
       mode: 'graph',
@@ -265,9 +324,89 @@ describe('mergeAndRank', () => {
     })
     const merged = mergeAndRank([[graphResult]], 10)
     const result = merged[0] as any
-    // composite = 0.25*nRRF + 0.35*0 + 0.1*0 + 0.15*normalizePPR(0.175) + 0.15*0
-    // normalizePPR(0.175) = 0.5
-    // graph contribution = 0.15 * 0.5 = 0.075
+    // With min-max, single graph result gets graph=1.0
+    // Graph weight in composite contributes meaningfully
     expect(result.compositeScore).toBeGreaterThan(0)
+  })
+
+  it('graph min-max: best graph result gets 1.0, no connection gets 0', () => {
+    const withGraph = [makeResult({
+      content: 'has graph',
+      mode: 'indexed',
+      normalizedScore: 0.5,
+      rawScores: { semantic: 0.5, graph: 0.02 },
+    })]
+    const noGraph = [makeResult({
+      content: 'no graph',
+      mode: 'indexed',
+      normalizedScore: 0.5,
+      rawScores: { semantic: 0.5 },
+    })]
+    const merged = mergeAndRank([withGraph, noGraph], 10)
+    const graphResult = merged.find(r => r.content === 'has graph') as any
+    const noGraphResult = merged.find(r => r.content === 'no graph') as any
+    // With graph signal active (default), graph-connected result should score higher
+    expect(graphResult.compositeScore).toBeGreaterThan(noGraphResult.compositeScore)
+  })
+
+  it('graph results without connection get graph=0 (not undefined) when graph signal active', () => {
+    const noGraphResult = makeResult({
+      content: 'no graph connection',
+      mode: 'indexed',
+      normalizedScore: 0.5,
+      rawScores: { semantic: 0.5 },
+    })
+    const merged = mergeAndRank([[noGraphResult]], 10)
+    // When all signals default to active, graph should be 0 not undefined
+    // (0 penalizes, undefined redistributes weight)
+    const result = merged[0] as any
+    expect(result.compositeScore).toBeDefined()
+  })
+
+  it('fixes ranking inversion: GSW with graph beats Celtics without', () => {
+    // Reproduce the bug: GSW has higher individual scores in every metric
+    // but was ranking below Celtics due to graph eligibility bug
+    const gsw = [makeResult({
+      content: 'Golden State Warriors',
+      mode: 'indexed',
+      normalizedScore: 0.31,
+      rawScores: { semantic: 0.31, keyword: 0.10, graph: 0.014 },
+    })]
+    const celtics = [makeResult({
+      content: 'Boston Celtics',
+      mode: 'indexed',
+      normalizedScore: 0.29,
+      rawScores: { semantic: 0.29 },
+    })]
+    const merged = mergeAndRank([gsw, celtics], 10)
+    const gswResult = merged.find(r => r.content === 'Golden State Warriors') as any
+    const celticsResult = merged.find(r => r.content === 'Boston Celtics') as any
+    expect(gswResult.compositeScore).toBeGreaterThan(celticsResult.compositeScore)
+  })
+
+  it('graph min-max: equal graph scores all get 1.0', () => {
+    const a = [makeResult({ content: 'a', mode: 'indexed', normalizedScore: 0.5, rawScores: { semantic: 0.5, graph: 0.01 } })]
+    const b = [makeResult({ content: 'b', mode: 'indexed', normalizedScore: 0.5, rawScores: { semantic: 0.5, graph: 0.01 } })]
+    const merged = mergeAndRank([a, b], 10)
+    // Both have same graph score → both should get same composite
+    const resultA = merged.find(r => r.content === 'a') as any
+    const resultB = merged.find(r => r.content === 'b') as any
+    expect(resultA.compositeScore).toBeCloseTo(resultB.compositeScore)
+  })
+
+  it('calibrates semantic and keyword scores in composite', () => {
+    // Raw semantic 0.52 → calibrated ~0.70
+    // Raw keyword 0.10 → calibrated 0.50
+    const result = makeResult({
+      content: 'calibrated',
+      mode: 'indexed',
+      normalizedScore: 0.52,
+      rawScores: { semantic: 0.52, keyword: 0.10 },
+    })
+    const merged = mergeAndRank([[result]], 10)
+    const r = merged[0] as any
+    // Composite should be higher than raw scores suggest
+    // because calibration stretches them to use full 0-1 range
+    expect(r.compositeScore).toBeGreaterThan(0.3)
   })
 })

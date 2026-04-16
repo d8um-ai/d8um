@@ -100,20 +100,20 @@ For local development or scripts, `TypeGraphCreate(config)` is a convenience tha
 TypeGraph includes a **cognitive memory system** inspired by human memory. Memory operations live directly on the TypeGraph singleton - identity is per-call, Segment-style:
 
 ```ts
-import { TypeGraphCreate, aiSdkLlmProvider } from '@typegraph-ai/core'
+import { TypeGraphCreate } from '@typegraph-ai/core'
 import { createGraphBridge } from '@typegraph-ai/graph'
 import { gateway } from '@ai-sdk/gateway'
 
-const llm = aiSdkLlmProvider({ model: gateway('openai/gpt-5.4-mini') })
+const embedding = {
+  model: gateway.embeddingModel('openai/text-embedding-3-small'),
+  dimensions: 1536,
+}
 
 const d = await TypeGraphCreate({
   vectorStore: adapter,
-  embedding: {
-    model: gateway.embeddingModel('openai/text-embedding-3-small'),
-    dimensions: 1536,
-  },
-  llm,
-  graph: createGraphBridge({ memoryStore, embedding: model, llm }),
+  embedding,
+  llm: gateway('openai/gpt-5.4-mini'),  // bare AI SDK models are auto-wrapped
+  graph: createGraphBridge({ memoryStore, embedding, llm: gateway('openai/gpt-5.4-mini') }),
 })
 
 // Remember facts - identity is per-call, not ambient

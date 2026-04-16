@@ -97,6 +97,10 @@ export interface QueryOpts {
    *  User-provided `scoreWeights` always override. Default: false. */
   autoWeights?: boolean | undefined
 
+  /** Override semantic score calibration. Default: { floor: 0.10, ceiling: 0.70 }
+   *  for text-embedding-3-small. Adjust for other embedding models. */
+  semanticCalibration?: { floor: number; ceiling: number } | undefined
+
   /** Controls how graph results interact with indexed results.
    *  - 'only': keep graph results only if they also appear in indexed results (default)
    *  - 'prefer': boost matching results, but keep novel graph results at lower weight

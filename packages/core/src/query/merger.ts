@@ -51,13 +51,31 @@ export function normalizeRRF(rrfScore: number, numLists: number, k = 60): number
   return theoreticalMax > 0 ? Math.min(rrfScore / theoreticalMax, 1) : 0
 }
 
-/** Normalize a raw PPR score to 0-1 by dividing by the damping factor.
- *  The damping factor (restart probability) is the approximate theoretical max
- *  PPR score for a strongly-connected seed node. This produces scores that are
- *  comparable across different queries and graph structures. */
-export function normalizePPR(pprScore: number, dampingFactor = 0.35): number {
-  if (dampingFactor <= 0) return 0
-  return Math.min(pprScore / dampingFactor, 1.0)
+/** Normalize a raw PPR score to 0-1 by dividing by a reference value.
+ *  Kept for backward compatibility — composite scoring now uses query-relative
+ *  min-max normalization instead. This function is still exported for tests
+ *  and any direct consumers. */
+export function normalizePPR(pprScore: number, reference = 0.30): number {
+  if (reference <= 0) return 0
+  return Math.min(pprScore / reference, 1.0)
+}
+
+/** Calibrate raw cosine similarity to a 0-1 relevance scale.
+ *  Rescales the practical range of the embedding model to use the full 0-1 range.
+ *  Default floor/ceiling tuned for text-embedding-3-small. */
+export function calibrateSemantic(cosine: number, floor = 0.10, ceiling = 0.70): number {
+  if (cosine <= floor) return 0
+  if (cosine >= ceiling) return 1
+  return (cosine - floor) / (ceiling - floor)
+}
+
+/** Calibrate raw ts_rank() BM25 score to 0-1.
+ *  ts_rank() produces values typically in [0, 0.5] range.
+ *  Static ceiling normalization ensures consistent 0-1 scale across queries. */
+export function calibrateKeyword(score: number, floor = 0, ceiling = 0.23): number {
+  if (score <= floor) return 0
+  if (score >= ceiling) return 1
+  return (score - floor) / (ceiling - floor)
 }
 
 /** Default RRF weights by internal runner mode. */
@@ -116,8 +134,8 @@ export function mergeAndRank(
   // Default signals if not provided (all active — preserves legacy behavior)
   const resolvedSignals: Required<QuerySignals> = signals ?? { semantic: true, keyword: true, graph: true, memory: true }
 
-  const merged = Array.from(groups.values()).map(group => {
-    // Weighted RRF across runners
+  // Pass 1: aggregate raw scores per dedup group
+  const groupEntries = Array.from(groups.values()).map(group => {
     const rrfScore = group.reduce((sum, r) => {
       const weight = rrfWeights[r.mode] ?? 0.5
       return sum + weight * (1 / (60 + r.runnerRank))
@@ -125,7 +143,6 @@ export function mergeAndRank(
 
     const best = group.sort((a, b) => b.normalizedScore - a.normalizedScore)[0]!
 
-    // Aggregate rawScores: take max of each score type across all entries in the group
     const aggregatedScores: Record<string, number> = {}
     const modes = new Set<string>()
     for (const r of group) {
@@ -136,23 +153,27 @@ export function mergeAndRank(
       }
     }
 
-    // Compute normalized composite score using shared function.
-    // Normalize RRF by the weight-corrected theoretical max (not numLists).
+    return { best, rrfScore, aggregatedScores, modes }
+  })
+
+  // Pass 2: calibrate all signals and compute composite scores
+  const merged = groupEntries.map(({ best, rrfScore, aggregatedScores, modes }) => {
     const nRRF = theoreticalMaxRRF > 0 ? Math.min(rrfScore / theoreticalMaxRRF, 1) : 0
     const hasMemory = modes.has('memory')
-    const hasGraph = modes.has('graph')
     const hasIndexed = modes.has('indexed')
 
     // Use undefined for ineligible categories (weight redistributes),
     // 0 for eligible-but-scored-poorly (penalizes).
     const normalizedScores: NormalizedScores = {
       rrf: nRRF,
-      semantic: aggregatedScores.semantic != null ? aggregatedScores.semantic
-        : (hasMemory && aggregatedScores.memorySimilarity != null) ? aggregatedScores.memorySimilarity
+      semantic: aggregatedScores.semantic != null ? calibrateSemantic(aggregatedScores.semantic)
+        : (hasMemory && aggregatedScores.memorySimilarity != null) ? calibrateSemantic(aggregatedScores.memorySimilarity)
         : (hasIndexed ? 0 : undefined),
-      keyword: aggregatedScores.keyword != null ? aggregatedScores.keyword : (resolvedSignals.keyword ? 0 : undefined),
-      graph: hasGraph || aggregatedScores.graph != null
-        ? normalizePPR(aggregatedScores.graph ?? 0)
+      keyword: aggregatedScores.keyword != null ? calibrateKeyword(aggregatedScores.keyword) : (resolvedSignals.keyword ? 0 : undefined),
+      // Graph: sqrt normalization for stable absolute scores across queries.
+      // When graph signal is active, ALL results get a score (0 if no connection), never undefined.
+      graph: resolvedSignals.graph
+        ? Math.min(Math.sqrt(aggregatedScores.graph ?? 0), 1)
         : undefined,
       memory: hasMemory
         ? Math.min(Math.max(aggregatedScores.memory ?? 0, 0), 1)

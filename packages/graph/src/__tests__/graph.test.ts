@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { EmbeddedGraph } from '../graph/embedded-graph.js'
 import type { typegraphIdentity } from '@typegraph-ai/core'
-import type { MemoryStoreAdapter, SemanticEntity, SemanticEdge } from '../index.js'
-import { buildScope } from '../index.js'
+import type { MemoryStoreAdapter, SemanticEntity, SemanticEdge } from '@typegraph-ai/memory'
+import { buildScope } from '@typegraph-ai/memory'
 
 const testScope = buildScope({ userId: 'alice' })
 

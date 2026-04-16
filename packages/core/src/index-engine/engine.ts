@@ -2,7 +2,7 @@ import type { IndexConfig } from '../types/bucket.js'
 import type { VectorStoreAdapter, HashRecord } from '../types/adapter.js'
 import type { EmbeddingProvider } from '../embedding/provider.js'
 import { embeddingModelKey } from '../embedding/provider.js'
-import type { IndexOpts, IndexResult } from '../types/index-types.js'
+import type { IndexOpts, IndexResult, ExtractionFailure } from '../types/index-types.js'
 import type { RawDocument, Chunk } from '../types/connector.js'
 import { generateId } from '../utils/id.js'
 import { IndexError } from '../types/index-types.js'
@@ -106,12 +106,13 @@ export class IndexEngine {
       }))
 
       // Extract triples for entity graph — first-chunk-then-parallel for entity context propagation
-      let extraction: { succeeded: number; failed: number } | undefined
+      let extraction: { succeeded: number; failed: number; failedChunks?: ExtractionFailure[] } | undefined
       if (this.tripleExtractor && !dryRun) {
         const documentTitle = (propagated.title as string | undefined) ?? undefined
         let entityContext: EntityContext[] = []
         let succeeded = 0
         let failed = 0
+        const failedChunks: ExtractionFailure[] = []
 
         // Phase A: Extract chunk 0 first to establish entity context for this document
         if (chunks.length > 0) {
@@ -133,10 +134,16 @@ export class IndexEngine {
                   entityContext.push(e)
                 }
               }
-            } else { failed++ }
+            } else {
+              failed++
+              failedChunks.push({ documentId, chunkIndex: chunks[0]!.chunkIndex, reason: 'timeout' })
+              console.warn('[typegraph] Triple extraction timed out', { documentId, chunkIndex: 0, bucketId })
+            }
           } catch (err) {
             failed++
-            console.error('[typegraph] Triple extraction failed for chunk 0:', err instanceof Error ? err.message : err)
+            const msg = err instanceof Error ? err.message : String(err)
+            failedChunks.push({ documentId, chunkIndex: chunks[0]!.chunkIndex, reason: 'error', message: msg })
+            console.error('[typegraph] Triple extraction failed', { documentId, chunkIndex: 0, bucketId, error: msg })
           }
         }
 
@@ -155,19 +162,26 @@ export class IndexEngine {
               )
             )
           )
-          for (const r of remainingResults) {
+          remainingResults.forEach((r, i) => {
+            const chunkIndex = chunks[i + 1]!.chunkIndex
             if (r.status === 'rejected') {
               failed++
-              console.error('[typegraph] Triple extraction failed:', r.reason instanceof Error ? r.reason.message : r.reason)
+              const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
+              failedChunks.push({ documentId, chunkIndex, reason: 'error', message: msg })
+              console.error('[typegraph] Triple extraction failed', { documentId, chunkIndex, bucketId, error: msg })
             } else if (r.value === undefined) {
               failed++
+              failedChunks.push({ documentId, chunkIndex, reason: 'timeout' })
+              console.warn('[typegraph] Triple extraction timed out', { documentId, chunkIndex, bucketId })
             } else {
               succeeded++
             }
-          }
+          })
         }
 
-        extraction = { succeeded, failed }
+        extraction = failedChunks.length > 0
+          ? { succeeded, failed, failedChunks }
+          : { succeeded, failed }
       }
 
       if (!dryRun) {
@@ -369,6 +383,7 @@ export class IndexEngine {
         let entityContext: EntityContext[] = []
         let succeeded = 0
         let failed = 0
+        const failedChunks: ExtractionFailure[] = []
 
         // Phase A: Extract chunk 0 first to establish entity context for this document
         if (chunks.length > 0) {
@@ -390,10 +405,16 @@ export class IndexEngine {
                   entityContext.push(e)
                 }
               }
-            } else { failed++ }
+            } else {
+              failed++
+              failedChunks.push({ documentId, chunkIndex: chunks[0]!.chunkIndex, reason: 'timeout' })
+              console.warn('[typegraph] Triple extraction timed out', { documentId, chunkIndex: 0, bucketId })
+            }
           } catch (err) {
             failed++
-            console.error('[typegraph] Triple extraction failed for chunk 0:', err instanceof Error ? err.message : err)
+            const msg = err instanceof Error ? err.message : String(err)
+            failedChunks.push({ documentId, chunkIndex: chunks[0]!.chunkIndex, reason: 'error', message: msg })
+            console.error('[typegraph] Triple extraction failed', { documentId, chunkIndex: 0, bucketId, error: msg })
           }
         }
 
@@ -412,21 +433,33 @@ export class IndexEngine {
               )
             )
           )
-          for (const r of remainingResults) {
+          remainingResults.forEach((r, i) => {
+            const chunkIndex = chunks[i + 1]!.chunkIndex
             if (r.status === 'rejected') {
               failed++
-              console.error('[typegraph] Triple extraction failed:', r.reason instanceof Error ? r.reason.message : r.reason)
+              const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
+              failedChunks.push({ documentId, chunkIndex, reason: 'error', message: msg })
+              console.error('[typegraph] Triple extraction failed', { documentId, chunkIndex, bucketId, error: msg })
             } else if (r.value === undefined) {
               failed++
+              failedChunks.push({ documentId, chunkIndex, reason: 'timeout' })
+              console.warn('[typegraph] Triple extraction timed out', { documentId, chunkIndex, bucketId })
             } else {
               succeeded++
             }
-          }
+          })
         }
 
         if (!result.extraction) result.extraction = { succeeded: 0, failed: 0 }
         result.extraction.succeeded += succeeded
         result.extraction.failed += failed
+        if (failedChunks.length > 0) {
+          if (!result.extraction.failedChunks) result.extraction.failedChunks = []
+          result.extraction.failedChunks.push(...failedChunks)
+          if (result.extraction.failedChunks.length > 100) {
+            result.extraction.failedChunks = result.extraction.failedChunks.slice(0, 100)
+          }
+        }
       }
 
       if (!dryRun) {
@@ -474,7 +507,7 @@ export class IndexEngine {
       // promises continue running after one fails.
       const safeProcessItem = (item: typeof prepared[number]) =>
         processItem(item).catch((err) => {
-          console.error('[typegraph] Document processing failed:', err instanceof Error ? err.message : err)
+          console.error('[typegraph] Document processing failed:', { documentId: item.documentId, idempotencyKey: item.ikey, error: err instanceof Error ? err.message : String(err) })
           this.eventSink?.emit({
             id: crypto.randomUUID(),
             eventType: 'index.document',

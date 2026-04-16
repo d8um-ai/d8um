@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { LLMProvider } from '../types/llm-provider.js'
-import type { GraphBridge } from '../types/graph-bridge.js'
+import type { KnowledgeGraphBridge } from '../types/graph-bridge.js'
 import { getPredicatesForPrompt } from './ontology.js'
 
 export interface TripleExtractorConfig {
@@ -8,7 +8,7 @@ export interface TripleExtractorConfig {
   llm: LLMProvider
   /** LLM for relationship extraction (Pass 2 in two-pass mode). Falls back to llm. */
   relationshipLlm?: LLMProvider | undefined
-  graph: GraphBridge
+  graph: KnowledgeGraphBridge
   /** Use two separate LLM calls (entities then relationships) instead of one combined call. Default: false. */
   twoPass?: boolean | undefined
 }
@@ -318,7 +318,7 @@ ${content}`
 export class TripleExtractor {
   private llm: LLMProvider
   private relationshipLlm: LLMProvider
-  private graph: GraphBridge
+  private graph: KnowledgeGraphBridge
   private twoPass: boolean
 
   constructor(config: TripleExtractorConfig) {

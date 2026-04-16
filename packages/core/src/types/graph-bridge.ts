@@ -3,21 +3,20 @@ import type { MemoryRecord, ConversationTurnResult, MemoryHealthReport } from '.
 import type { PaginationOpts } from './pagination.js'
 
 /**
- * Structural interface for the graph/memory bridge.
- * Core does NOT depend on @typegraph/graph — this interface uses pure structural typing.
- * The graph package provides a factory that returns an object matching this shape.
+ * Memory bridge — conversational memory operations (remember, recall, forget, correct).
+ * Independent of the knowledge graph. Use this when you only need memory without entity graphs.
  */
-export interface GraphBridge {
-  /** Deploy memory/graph tables. Called by typegraph.deploy() when graph is configured. */
+export interface MemoryBridge {
+  /** Deploy memory tables. Called by typegraph.deploy() when memory is configured. */
   deploy?(): Promise<void>
 
-  /** Store a memory. LLM extracts triples → entity graph + memory record. */
+  /** Store a memory. LLM extracts triples → memory record. */
   remember(content: string, identity: typegraphIdentity, category?: string, opts?: {
     importance?: number
     metadata?: Record<string, unknown>
   }): Promise<MemoryRecord>
 
-  /** Invalidate a memory and its associated graph edges. Caller must prove ownership via identity. */
+  /** Invalidate a memory. Caller must prove ownership via identity. */
   forget(id: string, identity: typegraphIdentity): Promise<void>
 
   /** Apply a natural language correction (e.g., "Actually, Alice works at Beta Inc now"). */
@@ -65,6 +64,16 @@ export interface GraphBridge {
 
   /** Check if the memory store has any active memories. Used to skip memory runner when empty. */
   hasMemories?(): Promise<boolean>
+}
+
+/**
+ * Knowledge graph bridge — entity-relationship graph for document retrieval.
+ * Stores entities and edges extracted during indexing, provides PPR-based retrieval.
+ * Independent of conversational memory.
+ */
+export interface KnowledgeGraphBridge {
+  /** Deploy graph tables (entities, edges). Called by typegraph.deploy() when graph is configured. */
+  deploy?(): Promise<void>
 
   /** Store an extracted triple in the entity graph. Used during document indexing. */
   addTriple?(triple: {

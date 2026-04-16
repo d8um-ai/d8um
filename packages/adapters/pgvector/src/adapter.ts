@@ -194,6 +194,27 @@ export class PgVectorAdapter implements VectorStoreAdapter {
     if (chunks.length === 0) return
     const table = this.getTable(model)
 
+    const params = this.buildUpsertParams(chunks)
+
+    try {
+      await this.executeChunkUpsert(table, params)
+    } catch (err: unknown) {
+      if ((err as any)?.code === '42P01') {
+        // Table was dropped externally — invalidate cache and recreate
+        const key = sanitizeModelKey(model)
+        this.modelTables.delete(key)
+        const dimensions = chunks[0]!.embedding.length
+        await this.ensureModel(model, dimensions)
+        const retryTable = this.getTable(model)
+        await this.executeChunkUpsert(retryTable, params)
+        console.warn(`[typegraph] Schema recovery: recreated table for model ${model}`)
+        return
+      }
+      throw err
+    }
+  }
+
+  private buildUpsertParams(chunks: EmbeddedChunk[]): unknown[][] {
     const chunkIds: string[] = []
     const sourceIds: string[] = []
     const tenantIds: (string | null)[] = []
@@ -230,6 +251,14 @@ export class PgVectorAdapter implements VectorStoreAdapter {
       indexedAts.push(chunk.indexedAt.toISOString())
     }
 
+    return [
+      chunkIds, sourceIds, tenantIds, groupIds, userIds, agentIds, conversationIds,
+      documentIds, idempotencyKeys, contents, embeddings,
+      embeddingModels, chunkIndices, totalChunks, metadatas, indexedAts,
+    ]
+  }
+
+  private async executeChunkUpsert(table: string, params: unknown[][]): Promise<void> {
     await this.sql(
       `INSERT INTO ${table}
         (id, bucket_id, tenant_id, group_id, user_id, agent_id, conversation_id,
@@ -247,11 +276,7 @@ export class PgVectorAdapter implements VectorStoreAdapter {
         total_chunks    = EXCLUDED.total_chunks,
         metadata        = EXCLUDED.metadata,
         indexed_at      = EXCLUDED.indexed_at`,
-      [
-        chunkIds, sourceIds, tenantIds, groupIds, userIds, agentIds, conversationIds,
-        documentIds, idempotencyKeys, contents, embeddings,
-        embeddingModels, chunkIndices, totalChunks, metadatas, indexedAts,
-      ]
+      params
     )
   }
 

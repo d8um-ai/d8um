@@ -1,176 +1,44 @@
-import type { EmbeddingProvider, typegraphIdentity, LLMProvider, typegraphEventSink, MemoryRecord, ConversationTurnResult, MemoryHealthReport, LLMConfig, EmbeddingConfig } from '@typegraph-ai/core'
-import type { GraphBridge, EntityDetail, EdgeResult, SubgraphOpts, SubgraphResult, GraphStats } from '@typegraph-ai/core'
-import { resolveEmbeddingProvider, resolveLLMProvider } from '@typegraph-ai/core'
-import type { MemoryStoreAdapter } from './types/adapter.js'
-import type { SemanticEdge } from './types/memory.js'
-import type { ConversationMessage } from './extraction/extractor.js'
-import { TypegraphMemory } from './typegraph-memory.js'
+import type { EmbeddingProvider, typegraphIdentity, EmbeddingConfig } from '@typegraph-ai/core'
+import type { KnowledgeGraphBridge, EntityDetail, EdgeResult, SubgraphOpts, SubgraphResult, GraphStats } from '@typegraph-ai/core'
+import { resolveEmbeddingProvider } from '@typegraph-ai/core'
+import type { MemoryStoreAdapter, SemanticEdge } from '@typegraph-ai/memory'
+import { EntityResolver, PredicateNormalizer, createTemporal } from '@typegraph-ai/memory'
 import { EmbeddedGraph } from './graph/embedded-graph.js'
-import { EntityResolver } from './extraction/entity-resolver.js'
-import { PredicateNormalizer } from './extraction/predicate-normalizer.js'
-import { createTemporal } from './temporal.js'
-import { scopeKey } from './types/scope.js'
 import { generateId } from '@typegraph-ai/core'
 
 // ── Config ──
 
-export interface CreateGraphBridgeConfig {
+export interface CreateKnowledgeGraphBridgeConfig {
   memoryStore: MemoryStoreAdapter
   /** Embedding provider — pass a resolved EmbeddingProvider or an AI SDK embedding input ({ model, dimensions }). */
   embedding: EmbeddingConfig
-  /** LLM provider — pass a resolved LLMProvider, a bare AI SDK model, or { model } wrapper. */
-  llm: LLMConfig
-  /** Default scope for addTriple (which has no per-call identity) */
+  /** Default scope for addTriple (which has no per-call identity). */
   scope?: typegraphIdentity
-  /** Optional event sink for observability. Passed through to TypegraphMemory instances. */
-  eventSink?: typegraphEventSink
 }
 
-// ── Factory ──
+// ── Knowledge Graph Bridge Factory ──
 
 /**
- * Create a unified GraphBridge that composes TypegraphMemory + EmbeddedGraph + EntityResolver.
- * Implements all required AND optional GraphBridge methods so that neural query mode
- * (PPR graph traversal via GraphRunner) works without silent fallback to hybrid.
+ * Create a KnowledgeGraphBridge for entity-relationship graph storage and PPR-based retrieval.
+ * Independent of conversational memory — does not create TypegraphMemory instances.
  */
-export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge {
+export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeConfig): KnowledgeGraphBridge {
   const { memoryStore } = config
   const embedding: EmbeddingProvider = resolveEmbeddingProvider(config.embedding)
-  const llm: LLMProvider = resolveLLMProvider(config.llm)
   const defaultScope: typegraphIdentity = config.scope ?? { agentId: 'typegraph-graph' }
 
   const graph = new EmbeddedGraph(memoryStore)
   const resolver = new EntityResolver({ store: memoryStore, embedding })
   const predicateNormalizer = new PredicateNormalizer(embedding)
 
-  // Cache TypegraphMemory instances per identity scope
-  const memoryCache = new Map<string, TypegraphMemory>()
-
-  function getMemory(identity: typegraphIdentity): TypegraphMemory {
-    const key = scopeKey(identity)
-    let mem = memoryCache.get(key)
-    if (!mem) {
-      mem = new TypegraphMemory({ memoryStore, embedding, llm, scope: identity, eventSink: config.eventSink })
-      memoryCache.set(key, mem)
-    }
-    return mem
-  }
-
-  // ── Required methods (delegate to TypegraphMemory) ──
-
-  async function remember(content: string, identity: typegraphIdentity, category?: string, opts?: {
-    importance?: number
-    metadata?: Record<string, unknown>
-  }): Promise<MemoryRecord> {
-    const mem = getMemory(identity)
-    // The graph package's internal MemoryRecord has extra fields (scope, embedding, etc.)
-    // that are a superset of core's public MemoryRecord — cast through unknown.
-    return mem.remember(content, (category as 'episodic' | 'semantic' | 'procedural') ?? 'semantic', opts) as unknown as Promise<MemoryRecord>
-  }
-
-  async function forget(id: string, _identity: typegraphIdentity): Promise<void> {
-    // TODO: verify memory belongs to identity before invalidating
-    await memoryStore.invalidate(id)
-  }
-
-  async function correct(correction: string, identity: typegraphIdentity) {
-    const mem = getMemory(identity)
-    return mem.correct(correction)
-  }
-
-  async function addConversationTurn(
-    messages: Array<{ role: string; content: string; timestamp?: Date }>,
-    identity: typegraphIdentity,
-    conversationId?: string,
-  ): Promise<ConversationTurnResult> {
-    const mem = getMemory(identity)
-    return mem.addConversationTurn(messages as ConversationMessage[], conversationId) as unknown as Promise<ConversationTurnResult>
-  }
-
-  async function recall(query: string, identity: typegraphIdentity, opts?: {
-    limit?: number
-    types?: string[]
-    temporalAt?: Date
-    includeInvalidated?: boolean
-  }): Promise<MemoryRecord[]> {
-    const mem = getMemory(identity)
-    const results = await mem.recall(query, {
-      limit: opts?.limit,
-      types: opts?.types as ('episodic' | 'semantic' | 'procedural')[] | undefined,
-      asOf: opts?.temporalAt,
-    })
-    return results as unknown as MemoryRecord[]
-  }
-
-  async function recallHybrid(query: string, identity: typegraphIdentity, opts?: {
-    limit?: number
-    types?: string[]
-    temporalAt?: Date
-    includeInvalidated?: boolean
-  }): Promise<MemoryRecord[]> {
-    const mem = getMemory(identity)
-    const results = await mem.recallHybrid(query, {
-      limit: opts?.limit,
-      types: opts?.types as ('episodic' | 'semantic' | 'procedural')[] | undefined,
-      asOf: opts?.temporalAt,
-    })
-    return results as unknown as MemoryRecord[]
-  }
-
-  // ── Assemble context & health ──
-
-  async function buildMemoryContext(query: string, identity: typegraphIdentity, opts?: {
-    includeWorking?: boolean
-    includeFacts?: boolean
-    includeEpisodes?: boolean
-    includeProcedures?: boolean
-    maxMemoryTokens?: number
-    format?: 'xml' | 'markdown' | 'plain'
-  }): Promise<string> {
-    const mem = getMemory(identity)
-    return mem.assembleContext(query, opts)
-  }
-
-  async function healthCheck(identity: typegraphIdentity): Promise<MemoryHealthReport> {
-    const mem = getMemory(identity)
-    return mem.healthCheck() as unknown as Promise<MemoryHealthReport>
-  }
-
-  // ── Memory check (cached) ──
-
-  let memoriesChecked = false
-  let memoriesExist = false
-
-  async function hasMemories(): Promise<boolean> {
-    if (memoriesChecked) return memoriesExist
-    try {
-      const results = await memoryStore.list({ status: 'active' }, 1)
-      memoriesExist = results.length > 0
-    } catch (err) {
-      console.error('[typegraph] Memory check failed:', err instanceof Error ? err.message : err)
-      memoriesExist = false
-    }
-    memoriesChecked = true
-    return memoriesExist
-  }
-
-  // ── Optional methods (graph-augmented retrieval) ──
-
-  /**
-   * Store an extracted triple in the entity graph.
-   * Called by TripleExtractor during document indexing.
-   * Resolves entities via EntityResolver, creates edge with chunk provenance.
-   */
   // Generic predicates that add noise without information — filter these out
   const GENERIC_PREDICATES = new Set([
     'IS', 'IS_A', 'IS_AN', 'HAS', 'HAS_A', 'RELATED_TO', 'INVOLVES',
     'MENTIONED', 'ASSOCIATED_WITH',
   ])
 
-  // Track entities per chunk for co-occurrence edge creation (Improvement 8)
-  // Key: chunk content hash, Value: set of entity IDs seen in that chunk
+  // Track entities per chunk for co-occurrence edge creation
   const chunkEntityMap = new Map<string, Set<string>>()
-  // Track direct edges to avoid redundant CO_OCCURS edges
   const directEdgePairs = new Set<string>()
 
   async function addTriple(triple: {
@@ -192,35 +60,28 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
   }): Promise<void> {
     const scope = defaultScope
 
-    // Normalize predicate to SCREAMING_SNAKE_CASE
     let relation = triple.predicate
       .trim()
       .toUpperCase()
       .replace(/[\s-]+/g, '_')
       .replace(/[^A-Z0-9_]/g, '')
 
-    // Filter out generic predicates that add noise
     if (GENERIC_PREDICATES.has(relation)) return
 
-    // Cluster semantically equivalent predicates (e.g., PLAYS_FOR ≈ IS_A_PLAYER_FOR)
     relation = await predicateNormalizer.normalize(relation)
 
-    // Resolve subject and object entities (dedup via alias + vector similarity)
     const [subjectResult, objectResult] = await Promise.all([
       resolver.resolve(triple.subject, triple.subjectType ?? 'entity', triple.subjectAliases ?? [], scope, triple.subjectDescription),
       resolver.resolve(triple.object, triple.objectType ?? 'entity', triple.objectAliases ?? [], scope, triple.objectDescription),
     ])
 
-    // Persist entities
     await Promise.all([
       graph.addEntity(subjectResult.entity),
       graph.addEntity(objectResult.entity),
     ])
 
-    // Use LLM confidence as edge weight (default 1.0 for backward compat)
     const weight = triple.confidence ?? 1.0
 
-    // Create edge with chunk provenance stored in properties
     const edge: SemanticEdge = {
       id: generateId('edge'),
       sourceEntityId: subjectResult.entity.id,
@@ -241,13 +102,10 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
 
     await graph.addEdge(edge)
 
-    // Track direct edge pair to avoid redundant CO_OCCURS
     const pairKey = [subjectResult.entity.id, objectResult.entity.id].sort().join(':')
     directEdgePairs.add(pairKey)
 
-    // CO_OCCURS edges: only for entities with NO direct edges (disconnected).
-    // Links each disconnected entity to ONE existing entity in the same chunk.
-    // This provides graph connectivity without drowning out explicit relationship signal.
+    // CO_OCCURS edges for disconnected entities
     const chunkKey = `${triple.bucketId}:${triple.chunkIndex ?? 0}`
     let chunkEntities = chunkEntityMap.get(chunkKey)
     if (!chunkEntities) {
@@ -283,10 +141,6 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
     }
   }
 
-  /**
-   * Search entities by embedding similarity.
-   * Used by GraphRunner to seed PPR with entities matching the query.
-   */
   async function searchEntities(
     query: string,
     identity: typegraphIdentity,
@@ -305,11 +159,6 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
     }))
   }
 
-  /**
-   * Build adjacency list for PPR from entity edges.
-   * Adds bidirectional edges since the PPR in graph-runner.ts only follows outgoing edges.
-   * Expands 1 hop beyond seed entities to give PPR a richer subgraph.
-   */
   async function getAdjacencyList(
     entityIds: string[],
   ): Promise<Map<string, Array<{ target: string; weight: number }>>> {
@@ -321,7 +170,6 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
         list = []
         adjacency.set(from, list)
       }
-      // Accumulate weights: more edges between same entities = stronger connection
       const existing = list.find(e => e.target === to)
       if (existing) {
         existing.weight += weight
@@ -330,11 +178,9 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
       }
     }
 
-    // Collect all entity IDs including 1-hop neighbors
     const allEntityIds = new Set(entityIds)
     const neighborEdges: SemanticEdge[] = []
 
-    // First pass: batch-load edges for seed entities, collect neighbor IDs
     const seedEdges = await graph.getEdgesBatch(entityIds, 'both')
     for (const edge of seedEdges) {
       neighborEdges.push(edge)
@@ -342,16 +188,12 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
       allEntityIds.add(edge.targetEntityId)
     }
 
-    // Second pass: batch-load edges for 1-hop neighbors (2-hop expansion)
-    // Cap at 30 neighbors to bound memory: hub entities can discover 100+ neighbors,
-    // leading to unbounded edge loading that causes OOM on repeated queries.
     const newNeighborIds = [...allEntityIds].filter(id => !entityIds.includes(id)).slice(0, 30)
     if (newNeighborIds.length > 0) {
       const hopEdges = await graph.getEdgesBatch(newNeighborIds, 'both')
       neighborEdges.push(...hopEdges)
     }
 
-    // Deduplicate edges by ID and build bidirectional adjacency
     const seenEdges = new Set<string>()
     for (const edge of neighborEdges) {
       if (seenEdges.has(edge.id)) continue
@@ -361,10 +203,6 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
       addEdgeToAdjacency(edge.targetEntityId, edge.sourceEntityId, edge.weight)
     }
 
-    // Log-scale accumulated weights to prevent extreme PPR concentration.
-    // Without this, an entity pair with 50 parallel edges (weight 50) dominates
-    // transition probabilities (50/52 = 96%), making PPR too narrow.
-    // Log2: 1→1.0, 2→1.58, 10→3.46, 50→5.67 — preserves ranking, reduces dominance.
     for (const [, edges] of adjacency) {
       for (const edge of edges) {
         edge.weight = Math.log2(1 + edge.weight)
@@ -374,10 +212,6 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
     return adjacency
   }
 
-  /**
-   * Get chunk content associated with entities by reading edge properties.
-   * Chunk provenance (content + bucketId) is stored during addTriple.
-   */
   async function getChunksForEntities(
     entityIds: string[],
     limit: number = 20,
@@ -386,30 +220,23 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
     const seen = new Set<string>()
     const chunks: Array<{ content: string; bucketId: string; score: number; documentId?: string; chunkIndex?: number; metadata?: Record<string, unknown> }> = []
 
-    // Batch-load all edges for the entity list
     const allEdges = await graph.getEdgesBatch(entityIds, 'both')
 
-    // Compute entity degree from loaded edges to penalize hub entities.
-    // Hub entities (high degree) get high PPR scores from graph structure alone,
-    // pulling in irrelevant chunks. Dividing by sqrt(degree) dampens their influence.
     const entityDegree = new Map<string, number>()
     for (const edge of allEdges) {
       entityDegree.set(edge.sourceEntityId, (entityDegree.get(edge.sourceEntityId) ?? 0) + 1)
       entityDegree.set(edge.targetEntityId, (entityDegree.get(edge.targetEntityId) ?? 0) + 1)
     }
 
-    // Build entity→edge mapping for PPR score lookup
     const entityIdSet = new Set(entityIds)
     for (const edge of allEdges) {
       const content = edge.properties.content as string | undefined
       const bucketId = edge.properties.bucketId as string | undefined
 
       if (content && bucketId) {
-        // Deduplicate by content hash (bucketId + content prefix)
         const key = `${bucketId}:${content.slice(0, 100)}`
         if (!seen.has(key)) {
           seen.add(key)
-          // Degree-penalized PPR score: hub (degree 100) → score/10, specific entity (degree 4) → score/2
           const linkedEntityId = entityIdSet.has(edge.sourceEntityId) ? edge.sourceEntityId : edge.targetEntityId
           const rawPPR = pprScores?.get(linkedEntityId) ?? edge.weight
           const degree = entityDegree.get(linkedEntityId) ?? 1
@@ -426,7 +253,6 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
       }
     }
 
-    // Sort by score descending, limit
     chunks.sort((a, b) => b.score - a.score)
     return chunks.slice(0, limit)
   }
@@ -438,7 +264,6 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
     if (!entity) return null
 
     const edges = await graph.getEdges(id, 'both')
-    // Build a name lookup for edge source/target
     const neighborIds = new Set<string>()
     for (const e of edges) {
       neighborIds.add(e.sourceEntityId)
@@ -490,7 +315,6 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
       edges = edges.filter(e => e.relation === opts.relation)
     }
 
-    // Build name lookup
     const entityIds = new Set<string>()
     for (const e of edges) {
       entityIds.add(e.sourceEntityId)
@@ -529,7 +353,6 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
     const depth = Math.min(opts.depth ?? 1, 3)
     const sub = await graph.getSubgraph(seedIds, depth)
 
-    // Apply filters
     let entities = sub.entities
     let edges = sub.edges
     if (opts.entityTypes?.length) {
@@ -544,13 +367,11 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
       edges = edges.filter(e => e.weight >= opts.minWeight!)
     }
 
-    // Limit entities
     const entityLimit = opts.limit ?? 100
     entities = entities.slice(0, entityLimit)
     const entitySet = new Set(entities.map(e => e.id))
     edges = edges.filter(e => entitySet.has(e.sourceEntityId) && entitySet.has(e.targetEntityId))
 
-    // Compute degree per entity
     const degree = new Map<string, number>()
     for (const e of edges) {
       degree.set(e.sourceEntityId, (degree.get(e.sourceEntityId) ?? 0) + 1)
@@ -559,11 +380,9 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
     const maxDegree = Math.max(1, ...degree.values())
     const maxWeight = Math.max(1, ...edges.map(e => e.weight))
 
-    // Build name lookup
     const nameMap = new Map<string, string>()
     for (const e of entities) nameMap.set(e.id, e.name)
 
-    // Count connected components via union-find
     const parent = new Map<string, string>()
     function find(x: string): string {
       if (!parent.has(x)) parent.set(x, x)
@@ -632,30 +451,16 @@ export function createGraphBridge(config: CreateGraphBridgeConfig): GraphBridge 
     return memoryStore.getEntityTypes ? memoryStore.getEntityTypes() : []
   }
 
-  // ── Deploy (create tables) ──
-
   async function deploy(): Promise<void> {
     await memoryStore.initialize()
   }
 
-  // ── Compose bridge ──
-
   return {
     deploy,
-    remember,
-    forget,
-    correct,
-    addConversationTurn,
-    recall,
-    recallHybrid,
-    buildMemoryContext,
-    healthCheck,
-    hasMemories,
     addTriple,
     searchEntities,
     getAdjacencyList,
     getChunksForEntities,
-    // Graph exploration
     getEntity,
     getEdges,
     getSubgraph,

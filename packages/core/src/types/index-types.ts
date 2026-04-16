@@ -61,7 +61,16 @@ export interface IndexResult {
     succeeded: number
     /** Number of chunks where extraction failed (errors swallowed). */
     failed: number
+    /** Details of failed chunks (capped at 100 entries). */
+    failedChunks?: ExtractionFailure[]
   } | undefined
+}
+
+export interface ExtractionFailure {
+  documentId: string
+  chunkIndex: number
+  reason: 'timeout' | 'error'
+  message?: string
 }
 
 export class IndexError extends Error {

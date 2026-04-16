@@ -33,6 +33,7 @@ export type {
   IndexOpts,
   IndexProgressEvent,
   IndexResult,
+  ExtractionFailure,
   typegraphDocument,
   DocumentStatus,
   Visibility,
@@ -43,7 +44,8 @@ export type {
   LLMGenerateOptions,
   LLMConfig,
   typegraphIdentity,
-  GraphBridge,
+  MemoryBridge,
+  KnowledgeGraphBridge,
   EntityResult,
   EntityDetail,
   EdgeResult,
@@ -97,7 +99,7 @@ export { PolicyEngine, PolicyViolationError } from './governance/index.js'
 export { IndexEngine, defaultChunker, sha256, stripMarkdown } from './index-engine/index.js'
 
 // Query engine (internal assemble removed from public exports — use opts.format on query())
-export { mergeAndRank, minMaxNormalize } from './query/index.js'
+export { mergeAndRank, minMaxNormalize, calibrateSemantic, calibrateKeyword } from './query/index.js'
 export { resolveSignals, signalLabel, computeCompositeScore, classifyQuery, type QueryClassification, type QueryType } from './query/index.js'
 export type { NormalizedResult } from './query/index.js'
 

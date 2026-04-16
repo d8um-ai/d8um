@@ -1,4 +1,4 @@
-import type { TypegraphMemory } from '@typegraph-ai/graph'
+import type { TypegraphMemory } from '@typegraph-ai/memory'
 
 // ── Middleware ──
 // Structural type matching Vercel AI SDK's middleware pattern.
