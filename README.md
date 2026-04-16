@@ -1,10 +1,20 @@
+<p align="center">
+  <img src="typegraph-logo-dark.png" alt="TypeGraph" width="100" />
+</p>
 
+<div align="center">
+  <h1>TypeGraph</h1>
+</div>
+<div align="center">
+  A TypeScript context layer for AI agents
+</div>
 
-# TypeGraph
-
-A context layer for AI agents
-
-
+<p align="center">
+  <img src="https://img.shields.io/badge/MIT%20License-3DA639?logo=opensourceinitiative&logoColor=white" alt="MIT License" />
+  <img src="https://img.shields.io/badge/TypeScript%20Native-3178C6?logo=typescript&logoColor=white" alt="TypeScript native" />
+  <img src="https://img.shields.io/badge/Vercel%20Native-000000?logo=vercel&logoColor=white" alt="Vercel native" />
+  <img src="https://img.shields.io/badge/PostgreSQL%20Native-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL native" />
+</p>
 
 [Quick Start](#quick-start)  •  [Cognitive Memory](#cognitive-memory)  •  [How It Works](#how-it-works)  •  [Benchmarks](#benchmarks)  •  [Packages](#packages)  •  [Guides](#guides)  •  [Contributing](#contributing)
 
