@@ -2,6 +2,7 @@ import type { VectorStoreAdapter } from '../../types/adapter.js'
 import type { EmbeddingProvider } from '../../embedding/provider.js'
 import type { DocumentFilter } from '../../types/typegraph-document.js'
 import type { typegraphIdentity } from '../../types/identity.js'
+import type { QuerySignals } from '../../types/query.js'
 import type { NormalizedResult } from '../merger.js'
 import type { typegraphEvent, typegraphEventSink } from '../../types/events.js'
 
@@ -21,13 +22,14 @@ export class IndexedRunner {
     count: number,
     identity?: typegraphIdentity,
     documentFilter?: DocumentFilter,
-    vectorOnly?: boolean,
+    signals?: Required<QuerySignals>,
     traceId?: string,
     spanId?: string,
     temporalAt?: Date,
   ): Promise<NormalizedResult[]> {
     const allResults: NormalizedResult[] = []
     const fetchCount = count * 3
+    const vectorOnly = !signals?.keyword
 
     for (const [, group] of sourcesByModel) {
       const modelId = group.ingestModelId
@@ -128,14 +130,13 @@ export class IndexedRunner {
       // Emit per-bucket events after this model group's search completes
       if (this.eventSink) {
         const bucketDurationMs = Date.now() - bucketStartMs
-        const mode = vectorOnly ? 'fast' : 'hybrid'
         for (const bucketId of group.bucketIds) {
           const bucketResultCount = allResults.filter(r => r.bucketId === bucketId).length
           const event: typegraphEvent = {
             id: crypto.randomUUID(),
             eventType: 'query.bucket_result',
             identity: identity ?? {},
-            payload: { bucketId, resultCount: bucketResultCount, mode },
+            payload: { bucketId, resultCount: bucketResultCount, signals },
             durationMs: bucketDurationMs,
             traceId,
             spanId,

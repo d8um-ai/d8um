@@ -9,6 +9,7 @@ import { sha256, resolveIdempotencyKey, buildHashStoreKey } from './hash.js'
 import { stripMarkdown } from './strip-markdown.js'
 import type { TripleExtractor, EntityContext } from './triple-extractor.js'
 import type { typegraphEventSink } from '../types/events.js'
+import type { typegraphLogger } from '../types/logger.js'
 
 /** Race a promise against a timeout. Resolves to undefined on timeout (never rejects). */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
@@ -23,13 +24,16 @@ const TRIPLE_EXTRACTION_TIMEOUT_MS = 120_000 // 2 minutes per chunk
 export class IndexEngine {
   tripleExtractor?: TripleExtractor
   eventSink: typegraphEventSink | undefined
+  logger: typegraphLogger | undefined
 
   constructor(
     private adapter: VectorStoreAdapter,
     private embedding: EmbeddingProvider,
-    eventSink?: typegraphEventSink
+    eventSink?: typegraphEventSink,
+    logger?: typegraphLogger,
   ) {
     this.eventSink = eventSink
+    this.logger = logger
   }
 
   /**
@@ -135,13 +139,13 @@ export class IndexEngine {
             } else {
               failed++
               failedChunks.push({ documentId, chunkIndex: chunks[0]!.chunkIndex, reason: 'timeout' })
-              console.warn('[typegraph] Triple extraction timed out', { documentId, chunkIndex: 0, bucketId })
+              this.logger?.warn?.('[typegraph] Triple extraction timed out', { documentId, chunkIndex: 0, bucketId })
             }
           } catch (err) {
             failed++
             const msg = err instanceof Error ? err.message : String(err)
             failedChunks.push({ documentId, chunkIndex: chunks[0]!.chunkIndex, reason: 'error', message: msg })
-            console.error('[typegraph] Triple extraction failed', { documentId, chunkIndex: 0, bucketId, error: msg })
+            this.logger?.error?.('[typegraph] Triple extraction failed', { documentId, chunkIndex: 0, bucketId, error: msg })
           }
         }
 
@@ -166,11 +170,11 @@ export class IndexEngine {
               failed++
               const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
               failedChunks.push({ documentId, chunkIndex, reason: 'error', message: msg })
-              console.error('[typegraph] Triple extraction failed', { documentId, chunkIndex, bucketId, error: msg })
+              this.logger?.error?.('[typegraph] Triple extraction failed', { documentId, chunkIndex, bucketId, error: msg })
             } else if (r.value === undefined) {
               failed++
               failedChunks.push({ documentId, chunkIndex, reason: 'timeout' })
-              console.warn('[typegraph] Triple extraction timed out', { documentId, chunkIndex, bucketId })
+              this.logger?.warn?.('[typegraph] Triple extraction timed out', { documentId, chunkIndex, bucketId })
             } else {
               succeeded++
             }
@@ -405,13 +409,13 @@ export class IndexEngine {
             } else {
               failed++
               failedChunks.push({ documentId, chunkIndex: chunks[0]!.chunkIndex, reason: 'timeout' })
-              console.warn('[typegraph] Triple extraction timed out', { documentId, chunkIndex: 0, bucketId })
+              this.logger?.warn?.('[typegraph] Triple extraction timed out', { documentId, chunkIndex: 0, bucketId })
             }
           } catch (err) {
             failed++
             const msg = err instanceof Error ? err.message : String(err)
             failedChunks.push({ documentId, chunkIndex: chunks[0]!.chunkIndex, reason: 'error', message: msg })
-            console.error('[typegraph] Triple extraction failed', { documentId, chunkIndex: 0, bucketId, error: msg })
+            this.logger?.error?.('[typegraph] Triple extraction failed', { documentId, chunkIndex: 0, bucketId, error: msg })
           }
         }
 
@@ -436,11 +440,11 @@ export class IndexEngine {
               failed++
               const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
               failedChunks.push({ documentId, chunkIndex, reason: 'error', message: msg })
-              console.error('[typegraph] Triple extraction failed', { documentId, chunkIndex, bucketId, error: msg })
+              this.logger?.error?.('[typegraph] Triple extraction failed', { documentId, chunkIndex, bucketId, error: msg })
             } else if (r.value === undefined) {
               failed++
               failedChunks.push({ documentId, chunkIndex, reason: 'timeout' })
-              console.warn('[typegraph] Triple extraction timed out', { documentId, chunkIndex, bucketId })
+              this.logger?.warn?.('[typegraph] Triple extraction timed out', { documentId, chunkIndex, bucketId })
             } else {
               succeeded++
             }
@@ -484,7 +488,7 @@ export class IndexEngine {
         id: crypto.randomUUID(),
         eventType: 'index.document',
         identity: { tenantId, groupId, userId, agentId, conversationId },
-        targetId: ikey,
+        targetId: documentId,
         targetType: 'document',
         payload: { bucketId, chunkCount: chunks.length, status: 'new' },
         traceId,
@@ -504,11 +508,13 @@ export class IndexEngine {
       // promises continue running after one fails.
       const safeProcessItem = (item: typeof prepared[number]) =>
         processItem(item).catch((err) => {
-          console.error('[typegraph] Document processing failed:', { documentId: item.documentId, idempotencyKey: item.ikey, error: err instanceof Error ? err.message : String(err) })
+          this.logger?.error?.('[typegraph] Document processing failed:', { documentId: item.documentId, idempotencyKey: item.ikey, error: err instanceof Error ? err.message : String(err) })
           this.eventSink?.emit({
             id: crypto.randomUUID(),
             eventType: 'index.document',
             identity: { tenantId, groupId, userId, agentId, conversationId },
+            targetId: item.documentId,
+            targetType: 'document',
             payload: { bucketId, status: 'failed', error: err instanceof Error ? err.message : String(err) },
             traceId,
             spanId,

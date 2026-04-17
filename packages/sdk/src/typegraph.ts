@@ -15,7 +15,7 @@ import type {
 } from './types/graph-bridge.js'
 import type { ExtractionConfig } from './types/extraction-config.js'
 import type { typegraphIdentity } from './types/identity.js'
-import type { typegraphEventSink, typegraphEventType } from './types/events.js'
+import type { typegraphEventSink, typegraphEventType, TelemetryOpts } from './types/events.js'
 import type { PolicyStoreAdapter, CreatePolicyInput, UpdatePolicyInput, Policy, PolicyType, PolicyAction } from './types/policy.js'
 import type { ConversationTurnResult, MemoryHealthReport } from './types/memory.js'
 import type { MemoryRecord } from './memory/types/memory.js'
@@ -128,18 +128,18 @@ function validateConfig(config: typegraphConfig): void {
 // ── Sub-API Interfaces ──
 
 export interface BucketsApi {
-  create(input: CreateBucketInput): Promise<Bucket>
+  create(input: CreateBucketInput, opts?: TelemetryOpts): Promise<Bucket>
   get(bucketId: string): Promise<Bucket | undefined>
   list(filter?: BucketListFilter, pagination?: PaginationOpts): Promise<Bucket[] | PaginatedResult<Bucket>>
-  update(bucketId: string, input: Partial<Pick<Bucket, 'name' | 'description' | 'status' | 'indexDefaults'>>): Promise<Bucket>
-  delete(bucketId: string): Promise<void>
+  update(bucketId: string, input: Partial<Pick<Bucket, 'name' | 'description' | 'status' | 'indexDefaults'>>, opts?: TelemetryOpts): Promise<Bucket>
+  delete(bucketId: string, opts?: TelemetryOpts): Promise<void>
 }
 
 export interface DocumentsApi {
   get(id: string): Promise<typegraphDocument | null>
   list(filter?: DocumentFilter, pagination?: PaginationOpts): Promise<typegraphDocument[] | PaginatedResult<typegraphDocument>>
-  update(id: string, input: Partial<Pick<typegraphDocument, 'title' | 'url' | 'visibility' | 'documentType' | 'sourceType' | 'metadata'>>): Promise<typegraphDocument>
-  delete(filter: DocumentFilter): Promise<number>
+  update(id: string, input: Partial<Pick<typegraphDocument, 'title' | 'url' | 'visibility' | 'documentType' | 'sourceType' | 'metadata'>>, opts?: TelemetryOpts): Promise<typegraphDocument>
+  delete(filter: DocumentFilter, opts?: TelemetryOpts): Promise<number>
 }
 
 export interface JobsApi {
@@ -152,7 +152,7 @@ export interface GraphApi {
     limit?: number
     entityType?: string
     minConnections?: number
-  }): Promise<EntityResult[]>
+  } & TelemetryOpts): Promise<EntityResult[]>
   getEntity(id: string): Promise<EntityDetail | null>
   getEdges(entityId: string, opts?: {
     direction?: 'in' | 'out' | 'both'
@@ -160,9 +160,9 @@ export interface GraphApi {
     limit?: number
   }): Promise<EdgeResult[]>
   getSubgraph(opts: SubgraphOpts): Promise<SubgraphResult>
-  stats(identity: typegraphIdentity): Promise<GraphStats>
-  getRelationTypes(identity: typegraphIdentity): Promise<Array<{ relation: string; count: number }>>
-  getEntityTypes(identity: typegraphIdentity): Promise<Array<{ entityType: string; count: number }>>
+  stats(identity: typegraphIdentity, opts?: TelemetryOpts): Promise<GraphStats>
+  getRelationTypes(identity: typegraphIdentity, opts?: TelemetryOpts): Promise<Array<{ relation: string; count: number }>>
+  getEntityTypes(identity: typegraphIdentity, opts?: TelemetryOpts): Promise<Array<{ entityType: string; count: number }>>
 }
 
 /** The typegraph instance interface — all public methods. */
@@ -203,13 +203,13 @@ export interface typegraphInstance {
   remember(content: string, identity: typegraphIdentity, category?: string, opts?: {
     importance?: number
     metadata?: Record<string, unknown>
-  }): Promise<MemoryRecord>
+  } & TelemetryOpts): Promise<MemoryRecord>
   /** Invalidate a memory and its associated graph edges. Identity must match the memory owner. */
-  forget(id: string, identity: typegraphIdentity): Promise<void>
+  forget(id: string, identity: typegraphIdentity, opts?: TelemetryOpts): Promise<void>
   /** Apply a natural language correction. */
-  correct(correction: string, identity: typegraphIdentity): Promise<{ invalidated: number; created: number; summary: string }>
+  correct(correction: string, identity: typegraphIdentity, opts?: TelemetryOpts): Promise<{ invalidated: number; created: number; summary: string }>
   /** Search memories by semantic similarity. */
-  recall(query: string, identity: typegraphIdentity, opts?: { limit?: number; types?: string[] }): Promise<MemoryRecord[]>
+  recall(query: string, identity: typegraphIdentity, opts?: { limit?: number; types?: string[] } & TelemetryOpts): Promise<MemoryRecord[]>
   /** Build a formatted memory context block for LLM system prompts. */
   buildMemoryContext(query: string, identity: typegraphIdentity, opts?: {
     includeWorking?: boolean
@@ -218,24 +218,25 @@ export interface typegraphInstance {
     includeProcedures?: boolean
     maxMemoryTokens?: number
     format?: 'xml' | 'markdown' | 'plain'
-  }): Promise<string>
+  } & TelemetryOpts): Promise<string>
   /** Check memory system health — returns stats about stored memories, entities, and edges. */
-  healthCheck(identity: typegraphIdentity): Promise<MemoryHealthReport>
+  healthCheck(identity: typegraphIdentity, opts?: TelemetryOpts): Promise<MemoryHealthReport>
   /** Ingest a conversation turn with extraction. */
   addConversationTurn(
     messages: Array<{ role: string; content: string; timestamp?: Date }>,
     identity: typegraphIdentity,
     conversationId?: string,
+    opts?: TelemetryOpts,
   ): Promise<ConversationTurnResult>
 
   // ── Policy operations (require policyStore) ──
 
   policies: {
-    create(input: CreatePolicyInput): Promise<Policy>
+    create(input: CreatePolicyInput, opts?: TelemetryOpts): Promise<Policy>
     get(id: string): Promise<Policy | null>
     list(filter?: { tenantId?: string; policyType?: PolicyType; enabled?: boolean }): Promise<Policy[]>
-    update(id: string, input: UpdatePolicyInput): Promise<Policy>
-    delete(id: string): Promise<void>
+    update(id: string, input: UpdatePolicyInput, opts?: TelemetryOpts): Promise<Policy>
+    delete(id: string, opts?: TelemetryOpts): Promise<void>
   }
 
   destroy(): Promise<void>
@@ -257,7 +258,12 @@ class TypegraphImpl implements typegraphInstance {
 
   private get logger() { return this.config?.logger }
 
-  private emitEvent(eventType: typegraphEventType, targetId?: string, payload: Record<string, unknown> = {}): void {
+  private emitEvent(
+    eventType: typegraphEventType,
+    targetId?: string,
+    payload: Record<string, unknown> = {},
+    telemetry?: TelemetryOpts,
+  ): void {
     if (!this.config?.eventSink) return
     this.config.eventSink.emit({
       id: crypto.randomUUID(),
@@ -265,6 +271,8 @@ class TypegraphImpl implements typegraphInstance {
       identity: { tenantId: this.config.tenantId },
       targetId,
       payload,
+      traceId: telemetry?.traceId,
+      spanId: telemetry?.spanId,
       timestamp: new Date(),
     })
   }
@@ -272,7 +280,7 @@ class TypegraphImpl implements typegraphInstance {
   // ── Buckets ──
 
   buckets: BucketsApi = {
-    create: async (input: CreateBucketInput): Promise<Bucket> => {
+    create: async (input: CreateBucketInput, opts?: TelemetryOpts): Promise<Bucket> => {
       this.assertConfigured()
       const embeddingModel = input.embeddingModel ?? embeddingModelKey(this.defaultEmbedding)
       const queryEmbeddingModel = input.queryEmbeddingModel ?? (this.defaultQueryEmbedding ? embeddingModelKey(this.defaultQueryEmbedding) : undefined)
@@ -299,12 +307,12 @@ class TypegraphImpl implements typegraphInstance {
         const persisted = await this.adapter.upsertBucket(bucket)
         this._buckets.set(persisted.id, persisted)
         this.resolveBucketEmbeddings(persisted)
-        this.emitEvent('bucket.create', persisted.id, { name: persisted.name })
+        this.emitEvent('bucket.create', persisted.id, { name: persisted.name }, opts)
         return persisted
       }
       this._buckets.set(bucket.id, bucket)
       this.resolveBucketEmbeddings(bucket)
-      this.emitEvent('bucket.create', bucket.id, { name: bucket.name })
+      this.emitEvent('bucket.create', bucket.id, { name: bucket.name }, opts)
       return bucket
     },
 
@@ -350,7 +358,7 @@ class TypegraphImpl implements typegraphInstance {
       return all
     },
 
-    update: async (bucketId: string, input: Partial<Pick<Bucket, 'name' | 'description' | 'status' | 'indexDefaults'>>): Promise<Bucket> => {
+    update: async (bucketId: string, input: Partial<Pick<Bucket, 'name' | 'description' | 'status' | 'indexDefaults'>>, opts?: TelemetryOpts): Promise<Bucket> => {
       const bucket = await this.buckets.get(bucketId)
       if (!bucket) throw new NotFoundError('Bucket', bucketId)
       if (input.name !== undefined) bucket.name = input.name
@@ -364,11 +372,11 @@ class TypegraphImpl implements typegraphInstance {
         this._buckets.set(bucket.id, bucket)
         result = bucket
       }
-      this.emitEvent('bucket.update', result.id, { name: result.name })
+      this.emitEvent('bucket.update', result.id, { name: result.name }, opts)
       return result
     },
 
-    delete: async (bucketId: string): Promise<void> => {
+    delete: async (bucketId: string, opts?: TelemetryOpts): Promise<void> => {
       if (bucketId === DEFAULT_BUCKET_ID) {
         throw new ConfigError('Cannot delete the default bucket.')
       }
@@ -380,7 +388,7 @@ class TypegraphImpl implements typegraphInstance {
       }
       this.bucketEmbeddings.delete(bucketId)
       this.bucketQueryEmbeddings.delete(bucketId)
-      this.emitEvent('bucket.delete', bucketId)
+      this.emitEvent('bucket.delete', bucketId, {}, opts)
     },
   }
 
@@ -403,17 +411,17 @@ class TypegraphImpl implements typegraphInstance {
       return this.adapter.listDocuments(filter ?? {}, pagination)
     },
 
-    update: async (id: string, input: Partial<Pick<typegraphDocument, 'title' | 'url' | 'visibility' | 'documentType' | 'sourceType' | 'metadata'>>): Promise<typegraphDocument> => {
+    update: async (id: string, input: Partial<Pick<typegraphDocument, 'title' | 'url' | 'visibility' | 'documentType' | 'sourceType' | 'metadata'>>, opts?: TelemetryOpts): Promise<typegraphDocument> => {
       this.assertConfigured()
       if (!this.adapter.updateDocument) {
         throw new ConfigError('Adapter does not support document update operations.')
       }
       const updated = await this.adapter.updateDocument(id, input)
-      this.emitEvent('document.update', id, { fields: Object.keys(input) })
+      this.emitEvent('document.update', id, { fields: Object.keys(input) }, opts)
       return updated
     },
 
-    delete: async (filter: DocumentFilter): Promise<number> => {
+    delete: async (filter: DocumentFilter, opts?: TelemetryOpts): Promise<number> => {
       this.assertConfigured()
       if (!this.adapter.deleteDocuments) {
         throw new ConfigError('Adapter does not support document operations.')
@@ -421,7 +429,7 @@ class TypegraphImpl implements typegraphInstance {
       await this.enforcePolicy('document.delete', { tenantId: filter.tenantId ?? this.config.tenantId })
       const count = await this.adapter.deleteDocuments(filter)
       if (count > 0) {
-        this.emitEvent('document.delete', undefined, { count, filter })
+        this.emitEvent('document.delete', undefined, { count, filter }, opts)
       }
       return count
     },
@@ -448,7 +456,7 @@ class TypegraphImpl implements typegraphInstance {
       limit?: number
       entityType?: string
       minConnections?: number
-    }): Promise<EntityResult[]> => {
+    } & TelemetryOpts): Promise<EntityResult[]> => {
       const kg = this.requireKnowledgeGraph()
       if (!kg.searchEntities) throw new ConfigError('Knowledge graph bridge does not support entity search.')
       const results = await kg.searchEntities(query, identity, opts?.limit)
@@ -483,19 +491,19 @@ class TypegraphImpl implements typegraphInstance {
       return kg.getSubgraph(opts)
     },
 
-    stats: async (identity: typegraphIdentity): Promise<GraphStats> => {
+    stats: async (identity: typegraphIdentity, _opts?: TelemetryOpts): Promise<GraphStats> => {
       const kg = this.requireKnowledgeGraph()
       if (!kg.getGraphStats) throw new ConfigError('Knowledge graph bridge does not support stats.')
       return kg.getGraphStats(identity)
     },
 
-    getRelationTypes: async (identity: typegraphIdentity): Promise<Array<{ relation: string; count: number }>> => {
+    getRelationTypes: async (identity: typegraphIdentity, _opts?: TelemetryOpts): Promise<Array<{ relation: string; count: number }>> => {
       const kg = this.requireKnowledgeGraph()
       if (!kg.getRelationTypes) throw new ConfigError('Knowledge graph bridge does not support relation type queries.')
       return kg.getRelationTypes(identity)
     },
 
-    getEntityTypes: async (identity: typegraphIdentity): Promise<Array<{ entityType: string; count: number }>> => {
+    getEntityTypes: async (identity: typegraphIdentity, _opts?: TelemetryOpts): Promise<Array<{ entityType: string; count: number }>> => {
       const kg = this.requireKnowledgeGraph()
       if (!kg.getEntityTypes) throw new ConfigError('Knowledge graph bridge does not support entity type queries.')
       return kg.getEntityTypes(identity)
@@ -843,21 +851,21 @@ class TypegraphImpl implements typegraphInstance {
   async remember(content: string, identity: typegraphIdentity, category?: string, opts?: {
     importance?: number
     metadata?: Record<string, unknown>
-  }): Promise<MemoryRecord> {
+  } & TelemetryOpts): Promise<MemoryRecord> {
     await this.enforcePolicy('memory.write', identity)
     return this.requireMemory().remember(content, identity, category, opts)
   }
 
-  async forget(id: string, identity: typegraphIdentity): Promise<void> {
+  async forget(id: string, identity: typegraphIdentity, opts?: TelemetryOpts): Promise<void> {
     await this.enforcePolicy('memory.delete', identity, id)
-    return this.requireMemory().forget(id, identity)
+    return this.requireMemory().forget(id, identity, opts)
   }
 
-  async correct(correction: string, identity: typegraphIdentity): Promise<{ invalidated: number; created: number; summary: string }> {
-    return this.requireMemory().correct(correction, identity)
+  async correct(correction: string, identity: typegraphIdentity, opts?: TelemetryOpts): Promise<{ invalidated: number; created: number; summary: string }> {
+    return this.requireMemory().correct(correction, identity, opts)
   }
 
-  async recall(query: string, identity: typegraphIdentity, opts?: { limit?: number; types?: string[] }): Promise<MemoryRecord[]> {
+  async recall(query: string, identity: typegraphIdentity, opts?: { limit?: number; types?: string[] } & TelemetryOpts): Promise<MemoryRecord[]> {
     await this.enforcePolicy('memory.read', identity)
     return this.requireMemory().recall(query, identity, opts)
   }
@@ -869,24 +877,56 @@ class TypegraphImpl implements typegraphInstance {
     includeProcedures?: boolean
     maxMemoryTokens?: number
     format?: 'xml' | 'markdown' | 'plain'
-  }): Promise<string> {
+  } & TelemetryOpts): Promise<string> {
     const mem = this.requireMemory()
     if (!mem.buildMemoryContext) throw new ConfigError('buildMemoryContext not supported by this memory bridge.')
     return mem.buildMemoryContext(query, identity, opts)
   }
 
-  async healthCheck(identity: typegraphIdentity): Promise<MemoryHealthReport> {
+  async healthCheck(identity: typegraphIdentity, opts?: TelemetryOpts): Promise<MemoryHealthReport> {
     const mem = this.requireMemory()
     if (!mem.healthCheck) throw new ConfigError('healthCheck not supported by this memory bridge.')
-    return mem.healthCheck(identity)
+    return mem.healthCheck(identity, opts)
   }
 
   async addConversationTurn(
     messages: Array<{ role: string; content: string; timestamp?: Date }>,
     identity: typegraphIdentity,
     conversationId?: string,
+    opts?: TelemetryOpts,
   ): Promise<ConversationTurnResult> {
-    return this.requireMemory().addConversationTurn(messages, identity, conversationId)
+    const result = await this.requireMemory().addConversationTurn(messages, identity, conversationId, opts)
+
+    // The bridge returns the underlying ExtractionResult cast to ConversationTurnResult;
+    // read the real shape here for hook dispatch (Fix 10).
+    const internal = result as unknown as {
+      episodic?: unknown[]
+      facts?: unknown[]
+      operations?: unknown[]
+      _contradictions?: Array<{ existingId: string; newId: string; conflictType: string; reasoning: string }>
+    }
+
+    const hooks = this.config?.hooks
+    if (hooks?.onMemoryExtracted) {
+      try {
+        await hooks.onMemoryExtracted({
+          episodicCount: internal.episodic?.length ?? 0,
+          factsExtracted: internal.facts?.length ?? 0,
+          operationsCount: internal.operations?.length ?? 0,
+        })
+      } catch (err) {
+        this.logger?.error?.('[typegraph] onMemoryExtracted hook failed', { error: err instanceof Error ? err.message : String(err) })
+      }
+    }
+    if (hooks?.onContradictionDetected && internal._contradictions && internal._contradictions.length > 0) {
+      try {
+        await hooks.onContradictionDetected(internal._contradictions)
+      } catch (err) {
+        this.logger?.error?.('[typegraph] onContradictionDetected hook failed', { error: err instanceof Error ? err.message : String(err) })
+      }
+    }
+
+    return result
   }
 
   // ── Policy operations ──
@@ -899,10 +939,10 @@ class TypegraphImpl implements typegraphInstance {
   }
 
   policies = {
-    create: async (input: CreatePolicyInput): Promise<Policy> => {
+    create: async (input: CreatePolicyInput, opts?: TelemetryOpts): Promise<Policy> => {
       const store = this.requirePolicyStore()
       const policy = await store.createPolicy(input)
-      this.emitEvent('policy.create', policy.id, { name: policy.name, policyType: policy.policyType })
+      this.emitEvent('policy.create', policy.id, { name: policy.name, policyType: policy.policyType }, opts)
       return policy
     },
 
@@ -916,17 +956,17 @@ class TypegraphImpl implements typegraphInstance {
       return store.listPolicies(filter)
     },
 
-    update: async (id: string, input: UpdatePolicyInput): Promise<Policy> => {
+    update: async (id: string, input: UpdatePolicyInput, opts?: TelemetryOpts): Promise<Policy> => {
       const store = this.requirePolicyStore()
       const policy = await store.updatePolicy(id, input)
-      this.emitEvent('policy.update', policy.id, { name: policy.name })
+      this.emitEvent('policy.update', policy.id, { name: policy.name }, opts)
       return policy
     },
 
-    delete: async (id: string): Promise<void> => {
+    delete: async (id: string, opts?: TelemetryOpts): Promise<void> => {
       const store = this.requirePolicyStore()
       await store.deletePolicy(id)
-      this.emitEvent('policy.delete', id)
+      this.emitEvent('policy.delete', id, {}, opts)
     },
   }
 
@@ -935,7 +975,7 @@ class TypegraphImpl implements typegraphInstance {
   }
 
   private createIndexEngine(embedding: EmbeddingProvider): IndexEngine {
-    const engine = new IndexEngine(this.adapter, embedding, this.config.eventSink)
+    const engine = new IndexEngine(this.adapter, embedding, this.config.eventSink, this.logger)
     const kg = this.graphBridge
     if (this.config.llm && kg) {
       const mainLlm = resolveLLMProvider(this.config.llm)

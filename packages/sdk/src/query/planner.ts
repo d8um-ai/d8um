@@ -299,11 +299,10 @@ export class QueryPlanner {
     if (modelGroups.size > 0) {
       const runnerStart = Date.now()
       const runner = new IndexedRunner(this.adapter, this.eventSink)
-      const vectorOnly = !signals.keyword
 
       try {
         const results = await withTimeout(
-          runner.run(text, modelGroups, count, identity, opts.documentFilter, vectorOnly, opts.traceId, opts.spanId, opts.temporalAt),
+          runner.run(text, modelGroups, count, identity, opts.documentFilter, signals, opts.traceId, opts.spanId, opts.temporalAt),
           timeouts.indexed,
           [] as NormalizedResult[]
         )

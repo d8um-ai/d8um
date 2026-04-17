@@ -150,9 +150,7 @@ function buildAttributes(
     case 'memory.write':
     case 'memory.read':
     case 'memory.invalidate':
-    case 'memory.correct':
-    case 'memory.consolidate':
-    case 'memory.decay': {
+    case 'memory.correct': {
       if (typeof payload['category'] === 'string') {
         attrs[ATTR.TYPEGRAPH_MEMORY_CATEGORY] = payload['category']
       }

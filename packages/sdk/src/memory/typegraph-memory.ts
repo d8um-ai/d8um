@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { EmbeddingProvider } from '../embedding/provider.js'
-import type { typegraphEventSink, typegraphEventType } from '../types/events.js'
+import type { typegraphEventSink, typegraphEventType, TelemetryOpts } from '../types/events.js'
 import type { MemoryStoreAdapter } from './types/adapter.js'
 import type { typegraphIdentity } from '../types/identity.js'
 import type {
@@ -95,7 +95,13 @@ export class TypegraphMemory {
 
   // ── Internal ──
 
-  private emit(eventType: typegraphEventType, targetId: string | undefined, payload: Record<string, unknown>, durationMs?: number): void {
+  private emit(
+    eventType: typegraphEventType,
+    targetId: string | undefined,
+    payload: Record<string, unknown>,
+    durationMs?: number,
+    telemetry?: TelemetryOpts,
+  ): void {
     if (!this.eventSink) return
     this.eventSink.emit({
       id: crypto.randomUUID(),
@@ -104,6 +110,8 @@ export class TypegraphMemory {
       targetId,
       payload,
       durationMs,
+      traceId: telemetry?.traceId,
+      spanId: telemetry?.spanId,
       timestamp: new Date(),
     })
   }
@@ -117,7 +125,7 @@ export class TypegraphMemory {
   async remember(content: string, category: MemoryCategory = 'semantic', opts?: {
     importance?: number
     metadata?: Record<string, unknown>
-  }): Promise<MemoryRecord> {
+  } & TelemetryOpts): Promise<MemoryRecord> {
     const embedding = await this.embedding.embed(content)
     const temporal = createTemporal()
 
@@ -136,23 +144,23 @@ export class TypegraphMemory {
     }
 
     const result = await this.store.upsert(record)
-    this.emit('memory.write', result.id, { category, contentLength: content.length })
+    this.emit('memory.write', result.id, { category, contentLength: content.length }, undefined, opts)
     return result
   }
 
   /**
    * Forget (invalidate) a memory by ID. Preserves the record with invalidAt set.
    */
-  async forget(id: string): Promise<void> {
+  async forget(id: string, telemetry?: TelemetryOpts): Promise<void> {
     await this.store.invalidate(id)
-    this.emit('memory.invalidate', id, {})
+    this.emit('memory.invalidate', id, {}, undefined, telemetry)
   }
 
   /**
    * Apply a natural language correction to memories.
    * Example: "Actually, John works at Acme Corp, not Beta Inc"
    */
-  async correct(naturalLanguageCorrection: string): Promise<{
+  async correct(naturalLanguageCorrection: string, telemetry?: TelemetryOpts): Promise<{
     invalidated: number
     created: number
     summary: string
@@ -214,7 +222,7 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
     await this.store.upsert(newFact)
 
     const summary = `Invalidated ${invalidated} fact(s), created 1 corrected fact`
-    this.emit('memory.correct', undefined, { correction: naturalLanguageCorrection.slice(0, 100) })
+    this.emit('memory.correct', undefined, { correction: naturalLanguageCorrection.slice(0, 100) }, undefined, telemetry)
     return { invalidated, created: 1, summary }
   }
 
@@ -227,7 +235,7 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
     types?: MemoryCategory[] | undefined
     limit?: number | undefined
     asOf?: Date | undefined
-  }): Promise<MemoryRecord[]> {
+  } & TelemetryOpts): Promise<MemoryRecord[]> {
     const embedding = await this.embedding.embed(query)
     const results = await this.store.search(embedding, {
       count: opts?.limit ?? 10,
@@ -249,7 +257,7 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
       query: query.slice(0, 100),
       resultCount: results.length,
       types: opts?.types,
-    })
+    }, undefined, opts)
     return results
   }
 
@@ -257,7 +265,7 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
     types?: MemoryCategory[] | undefined
     limit?: number | undefined
     asOf?: Date | undefined
-  }): Promise<MemoryRecord[]> {
+  } & TelemetryOpts): Promise<MemoryRecord[]> {
     const embedding = await this.embedding.embed(query)
     const searchOpts = {
       count: opts?.limit ?? 10,
@@ -285,33 +293,33 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
       resultCount: results.length,
       types: opts?.types,
       hybrid: true,
-    })
+    }, undefined, opts)
     return results
   }
 
   /**
    * Recall only semantic facts.
    */
-  async recallFacts(query: string, limit: number = 10): Promise<SemanticFact[]> {
-    const results = await this.recall(query, { types: ['semantic'], limit })
+  async recallFacts(query: string, limit: number = 10, telemetry?: TelemetryOpts): Promise<SemanticFact[]> {
+    const results = await this.recall(query, { types: ['semantic'], limit, ...telemetry })
     const facts = results.filter((r): r is SemanticFact => r.category === 'semantic')
-    this.emit('memory.read', undefined, { query: query.slice(0, 100), resultCount: facts.length, source: 'facts' })
+    this.emit('memory.read', undefined, { query: query.slice(0, 100), resultCount: facts.length, source: 'facts' }, undefined, telemetry)
     return facts
   }
 
   /**
    * Recall only episodic memories.
    */
-  async recallEpisodes(query: string, limit: number = 10): Promise<EpisodicMemory[]> {
-    const results = await this.recall(query, { types: ['episodic'], limit })
+  async recallEpisodes(query: string, limit: number = 10, telemetry?: TelemetryOpts): Promise<EpisodicMemory[]> {
+    const results = await this.recall(query, { types: ['episodic'], limit, ...telemetry })
     return results.filter((r): r is EpisodicMemory => r.category === 'episodic')
   }
 
   /**
    * Recall procedural memories matching a trigger.
    */
-  async recallProcedures(trigger: string, limit: number = 5): Promise<ProceduralMemory[]> {
-    const results = await this.recall(trigger, { types: ['procedural'], limit })
+  async recallProcedures(trigger: string, limit: number = 5, telemetry?: TelemetryOpts): Promise<ProceduralMemory[]> {
+    const results = await this.recall(trigger, { types: ['procedural'], limit, ...telemetry })
     return results.filter((r): r is ProceduralMemory => r.category === 'procedural')
   }
 
@@ -323,11 +331,13 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
   async addConversationTurn(
     messages: ConversationMessage[],
     conversationId?: string,
+    telemetry?: TelemetryOpts,
   ): Promise<ExtractionResult> {
     // Get existing facts for conflict resolution
     const existingFacts = await this.recallFacts(
       messages.map(m => m.content).join(' '),
       20,
+      telemetry,
     )
 
     const result = await this.extractor.processConversation(
@@ -340,11 +350,12 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
     for (const episode of result.episodic) {
       episode.embedding = await this.embedding.embed(episode.content)
       const stored = await this.store.upsert(episode)
-      this.emit('memory.write', stored.id, { category: 'episodic', source: 'conversation' })
+      this.emit('memory.write', stored.id, { category: 'episodic', source: 'conversation' }, undefined, telemetry)
     }
 
     // Store new facts and check for contradictions
     let contradictionCount = 0
+    const allContradictions: Array<{ existingId: string; newId: string; conflictType: string; reasoning: string }> = []
     for (const fact of result.facts) {
       fact.embedding = await this.embedding.embed(fact.content)
 
@@ -352,15 +363,23 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
       const contradictions = await this.invalidation.checkContradictions(fact, this.scope)
       if (contradictions.length > 0) {
         contradictionCount += contradictions.length
+        for (const c of contradictions) {
+          allContradictions.push({
+            existingId: c.existingFact.id,
+            newId: fact.id,
+            conflictType: c.conflictType,
+            reasoning: c.reasoning,
+          })
+        }
         this.emit('extraction.contradiction', undefined, {
           factContent: fact.content.slice(0, 100),
           contradictionCount: contradictions.length,
-        })
+        }, undefined, telemetry)
         await this.invalidation.resolveContradictions(contradictions)
       }
 
       const stored = await this.store.upsert(fact)
-      this.emit('memory.write', stored.id, { category: 'semantic', source: 'conversation' })
+      this.emit('memory.write', stored.id, { category: 'semantic', source: 'conversation' }, undefined, telemetry)
     }
 
     this.emit('extraction.facts', undefined, {
@@ -368,7 +387,10 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
       factCount: result.facts.length,
       contradictionCount,
       conversationId,
-    })
+    }, undefined, telemetry)
+
+    // Expose contradictions on the result so callers (typegraph.ts) can fire the onContradictionDetected hook
+    ;(result as ExtractionResult & { _contradictions?: typeof allContradictions })._contradictions = allContradictions
 
     return result
   }
@@ -385,7 +407,7 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
     includeProcedures?: boolean | undefined
     maxMemoryTokens?: number | undefined
     format?: 'xml' | 'markdown' | 'plain' | undefined
-  }): Promise<string> {
+  } & TelemetryOpts): Promise<string> {
     const sections: string[] = []
     const format = opts?.format ?? 'xml'
 
@@ -399,9 +421,11 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
       }
     }
 
+    const tele: TelemetryOpts | undefined = opts?.traceId || opts?.spanId ? { traceId: opts.traceId, spanId: opts.spanId } : undefined
+
     // Semantic facts
     if (opts?.includeFacts !== false) {
-      const facts = await this.recallFacts(query, 10)
+      const facts = await this.recallFacts(query, 10, tele)
       if (facts.length > 0) {
         const factLines = facts.map(f => `- ${f.content}`).join('\n')
         if (format === 'xml') {
@@ -414,7 +438,7 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
 
     // Episodic memories
     if (opts?.includeEpisodes) {
-      const episodes = await this.recallEpisodes(query, 5)
+      const episodes = await this.recallEpisodes(query, 5, tele)
       if (episodes.length > 0) {
         const epLines = episodes.map(e => `- ${e.content}`).join('\n')
         if (format === 'xml') {
@@ -427,7 +451,7 @@ Respond with JSON: {"targetContent": "...", "newContent": "...", "subject": "...
 
     // Procedural memories
     if (opts?.includeProcedures) {
-      const procedures = await this.recallProcedures(query, 3)
+      const procedures = await this.recallProcedures(query, 3, tele)
       if (procedures.length > 0) {
         const procLines = procedures.map(p =>
           `- When: ${p.trigger}\n  Steps: ${p.steps.join(' → ')}`

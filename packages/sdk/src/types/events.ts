@@ -8,8 +8,6 @@ export type typegraphEventType =
   | 'memory.read'
   | 'memory.invalidate'
   | 'memory.correct'
-  | 'memory.consolidate'
-  | 'memory.decay'
   // Query pipeline
   | 'query.execute'
   | 'query.bucket_result'
@@ -17,11 +15,6 @@ export type typegraphEventType =
   | 'index.start'
   | 'index.complete'
   | 'index.document'
-  // Knowledge graph
-  | 'graph.entity_created'
-  | 'graph.entity_merged'
-  | 'graph.edge_created'
-  | 'graph.edge_invalidated'
   // Extraction
   | 'extraction.facts'
   | 'extraction.contradiction'
@@ -73,6 +66,16 @@ export interface TokenUsage {
   outputTokens?: number | undefined
   model?: string | undefined
   estimatedCost?: number | undefined
+}
+
+/**
+ * Optional OpenTelemetry correlation fields that SDK methods accept so callers
+ * can link emitted `typegraph_events` rows to their parent trace/span. Spread
+ * into any per-call options interface to keep the API consistent.
+ */
+export interface TelemetryOpts {
+  traceId?: string | undefined
+  spanId?: string | undefined
 }
 
 /**
