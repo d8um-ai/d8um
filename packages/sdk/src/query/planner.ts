@@ -212,7 +212,7 @@ export class QueryPlanner {
         try {
           const graphRunner = new GraphRunner(this.knowledgeGraph!)
           const graphResults = await withTimeout(
-            graphRunner.run(text, identity, count),
+            graphRunner.run(text, identity, count, activeBucketIds),
             timeouts.graph,
             [] as NormalizedResult[]
           )
@@ -362,7 +362,7 @@ export class QueryPlanner {
       const graphPromise = !needsGraph
         ? Promise.resolve([] as NormalizedResult[])
         : withTimeout(
-            new GraphRunner(this.knowledgeGraph!).run(text, identity, count)
+            new GraphRunner(this.knowledgeGraph!).run(text, identity, count, activeBucketIds)
               .catch((err) => { this.logger?.warn(`GraphRunner failed: ${err instanceof Error ? err.message : err}`); warnings.push(`Graph search failed: ${err instanceof Error ? err.message : String(err)}`); return [] as NormalizedResult[] }),
             timeouts.graph,
             [] as NormalizedResult[]

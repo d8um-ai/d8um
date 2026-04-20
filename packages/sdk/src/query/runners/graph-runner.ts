@@ -17,7 +17,8 @@ export class GraphRunner {
   async run(
     text: string,
     identity: typegraphIdentity,
-    count: number
+    count: number,
+    bucketIds?: string[],
   ): Promise<NormalizedResult[]> {
     // Requires graph bridge methods for entity search and PPR
     if (!this.graph.searchEntities || !this.graph.getAdjacencyList || !this.graph.getChunksForEntities) {
@@ -46,7 +47,7 @@ export class GraphRunner {
       .map(([id]) => id)
 
     // Step 5: Get chunks associated with high-PPR entities, passing PPR scores for ranking
-    const chunks = await this.graph.getChunksForEntities(rankedEntities, count, pprScores)
+    const chunks = await this.graph.getChunksForEntities(rankedEntities, count, pprScores, bucketIds)
 
     // Store raw PPR scores — normalization happens at the planner level
     // via normalizePPR(rawScore, dampingFactor) for cross-query comparability
