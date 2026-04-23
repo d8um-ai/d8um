@@ -11,6 +11,8 @@ export type typegraphEventType =
   // Query pipeline
   | 'query.execute'
   | 'query.bucket_result'
+  // Graph exploration
+  | 'graph.explore'
   // Indexing
   | 'index.start'
   | 'index.complete'

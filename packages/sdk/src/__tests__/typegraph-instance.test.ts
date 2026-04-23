@@ -176,9 +176,9 @@ describe('typegraphInit', () => {
         intent: {
           rawQuery: 'plotline employees',
           anchorText: 'Plotline',
-          relationFamilies: [{
-            name: 'employment',
-            predicates: ['WORKS_FOR', 'WORKED_FOR', 'MEMBER_OF'],
+          mode: 'relationship',
+          predicates: [{
+            name: 'WORKS_FOR',
             confidence: 0.95,
           }],
           targetEntityTypes: ['person'],

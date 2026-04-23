@@ -1,114 +1,165 @@
 import { z } from 'zod'
 import type { LLMProvider } from '../types/llm-provider.js'
-import type { GraphExploreIntent, GraphExploreIntentFamily } from '../types/graph-bridge.js'
+import type { GraphExploreIntent, GraphExploreIntentPredicate } from '../types/graph-bridge.js'
+import { ALL_PREDICATES, getPredicatesForPrompt } from '../index-engine/ontology.js'
 
-export interface RelationFamilyDefinition {
-  name: string
+type GraphExploreMode = GraphExploreIntent['mode']
+type AnchorSide = 'source' | 'target' | 'either'
+
+interface PredicateQueryDefinition {
+  key: string
+  mode: GraphExploreMode
   predicates: string[]
   synonyms: string[]
   anchorEntityTypes: string[]
-  resultEntityTypes: string[]
-  anchorSide: 'source' | 'target' | 'either'
+  targetEntityTypes: string[]
+  anchorSide: AnchorSide
 }
 
 export interface ParsedGraphExploreIntent {
   parser: 'llm' | 'fallback'
+  fallbackUsed: boolean
+  anchorEntityTypes: string[]
+  anchorSide: AnchorSide
   intent: GraphExploreIntent
 }
 
-export const RELATION_FAMILY_REGISTRY: RelationFamilyDefinition[] = [
+const ENTITY_TYPES = [
+  'person', 'organization', 'location', 'product', 'concept', 'event',
+  'work_of_art', 'technology', 'law_regulation', 'time_period',
+] as const
+
+const VALID_ENTITY_TYPES = new Set<string>(ENTITY_TYPES)
+const VALID_PREDICATES = new Set<string>([...ALL_PREDICATES])
+
+const QUERY_PREDICATE_DEFINITIONS: PredicateQueryDefinition[] = [
   {
-    name: 'employment',
+    key: 'profession',
+    mode: 'attribute',
+    predicates: ['WORKS_AS', 'WORKED_AS', 'HELD_ROLE', 'PRACTICED_AS'],
+    synonyms: [
+      'profession', 'occupation', 'job', 'career', 'role', 'title', 'position',
+      'worked as', 'works as', 'served as', 'serves as', 'practiced as', 'practises as',
+      'by profession',
+    ],
+    anchorEntityTypes: ['person', 'organization'],
+    targetEntityTypes: ['concept'],
+    anchorSide: 'source',
+  },
+  {
+    key: 'employment',
+    mode: 'relationship',
     predicates: ['WORKS_FOR', 'WORKED_FOR', 'MEMBER_OF'],
-    synonyms: ['employees at', 'employees of', 'employee at', 'employee of', 'employees', 'employee', 'works at', 'works for', 'worked at', 'worked for', 'employed by', 'staff at', 'staff of', 'team at', 'team members'],
+    synonyms: [
+      'employees at', 'employees of', 'employee at', 'employee of', 'employees', 'employee',
+      'works at', 'works for', 'worked at', 'worked for', 'employed by',
+      'staff at', 'staff of', 'team at', 'team members',
+    ],
     anchorEntityTypes: ['organization'],
-    resultEntityTypes: ['person'],
+    targetEntityTypes: ['person'],
     anchorSide: 'target',
   },
   {
-    name: 'leadership',
+    key: 'leadership',
+    mode: 'relationship',
     predicates: ['LEADS', 'LED', 'FOUNDED', 'CO_FOUNDED'],
-    synonyms: ['leaders at', 'leaders of', 'leadership', 'leader', 'leaders', 'founder', 'founders', 'cofounder', 'co-founder', 'runs', 'run by', 'headed by', 'heads'],
+    synonyms: [
+      'leaders at', 'leaders of', 'leadership', 'leader', 'leaders', 'founder', 'founders',
+      'cofounder', 'co-founder', 'runs', 'run by', 'headed by', 'heads',
+    ],
     anchorEntityTypes: ['organization'],
-    resultEntityTypes: ['person'],
+    targetEntityTypes: ['person'],
     anchorSide: 'target',
   },
   {
-    name: 'advisory',
+    key: 'advisory',
+    mode: 'relationship',
     predicates: ['ADVISES', 'ADVISED'],
     synonyms: ['advisor', 'advisors', 'advised', 'advises', 'advisory'],
     anchorEntityTypes: ['organization', 'person', 'concept'],
-    resultEntityTypes: ['person', 'organization', 'concept'],
+    targetEntityTypes: ['person', 'organization', 'concept'],
     anchorSide: 'either',
   },
   {
-    name: 'creation',
+    key: 'creation',
+    mode: 'relationship',
     predicates: ['CREATED', 'WROTE', 'AUTHORED', 'DESIGNED', 'INVENTED', 'DEVELOPED'],
-    synonyms: ['created', 'creator', 'creators', 'built', 'wrote', 'written by', 'authored', 'author', 'designed', 'invented', 'developed'],
+    synonyms: [
+      'created', 'creator', 'creators', 'built', 'wrote', 'written by', 'authored', 'author',
+      'designed', 'invented', 'developed',
+    ],
     anchorEntityTypes: ['organization', 'person', 'concept'],
-    resultEntityTypes: ['person', 'organization', 'concept', 'document'],
+    targetEntityTypes: ['person', 'organization', 'concept', 'work_of_art', 'product', 'technology'],
     anchorSide: 'either',
   },
   {
-    name: 'ownership',
+    key: 'ownership',
+    mode: 'relationship',
     predicates: ['OWNS', 'OWNED_BY'],
     synonyms: ['owner', 'owners', 'owned by', 'owns', 'owning'],
-    anchorEntityTypes: ['organization', 'person', 'asset'],
-    resultEntityTypes: ['person', 'organization', 'asset'],
+    anchorEntityTypes: ['organization', 'person', 'product', 'concept'],
+    targetEntityTypes: ['person', 'organization', 'product', 'concept'],
     anchorSide: 'either',
   },
   {
-    name: 'location',
+    key: 'location',
+    mode: 'attribute',
     predicates: ['HEADQUARTERED_IN', 'LOCATED_IN', 'OPERATES_IN', 'BORN_IN', 'LIVES_IN', 'LIVED_IN'],
-    synonyms: ['located in', 'based in', 'headquartered in', 'operates in', 'born in', 'lives in', 'lived in', 'where is', 'where are'],
-    anchorEntityTypes: ['organization', 'person', 'place'],
-    resultEntityTypes: ['location', 'place'],
-    anchorSide: 'either',
-  },
-  {
-    name: 'collaboration',
-    predicates: ['COLLABORATED_WITH', 'PARTNERED_WITH', 'ALLIED_WITH'],
-    synonyms: ['collaborated with', 'collaborators', 'collaboration', 'partnered with', 'partners', 'worked with', 'allied with'],
+    synonyms: [
+      'located in', 'based in', 'headquartered in', 'operates in', 'born in',
+      'lives in', 'lived in', 'where is', 'where was', 'where are', 'where were',
+      'where did', 'where does', 'where do', 'live', 'lived',
+    ],
     anchorEntityTypes: ['organization', 'person'],
-    resultEntityTypes: ['organization', 'person'],
+    targetEntityTypes: ['location'],
+    anchorSide: 'source',
+  },
+  {
+    key: 'collaboration',
+    mode: 'relationship',
+    predicates: ['COLLABORATED_WITH', 'PARTNERED_WITH', 'ALLIED_WITH', 'CORRESPONDS_WITH'],
+    synonyms: [
+      'collaborated with', 'collaborators', 'collaboration', 'partnered with',
+      'partners', 'worked with', 'allied with', 'corresponded with',
+    ],
+    anchorEntityTypes: ['organization', 'person'],
+    targetEntityTypes: ['organization', 'person'],
     anchorSide: 'either',
   },
   {
-    name: 'proposal',
+    key: 'support',
+    mode: 'relationship',
+    predicates: ['SUPPORTED'],
+    synonyms: ['supported', 'support', 'supports', 'backed', 'endorsed', 'helped'],
+    anchorEntityTypes: ['organization', 'person', 'concept'],
+    targetEntityTypes: ['organization', 'person', 'concept'],
+    anchorSide: 'either',
+  },
+  {
+    key: 'proposal',
+    mode: 'relationship',
     predicates: ['PROPOSED', 'ADVOCATED_FOR', 'CHAMPIONED'],
     synonyms: ['proposed', 'proposal', 'proposals', 'advocated for', 'championed', 'recommended'],
     anchorEntityTypes: ['person', 'organization', 'concept'],
-    resultEntityTypes: ['concept', 'initiative', 'project', 'organization'],
+    targetEntityTypes: ['concept', 'organization', 'event'],
     anchorSide: 'source',
   },
 ]
 
-const RELATION_FAMILY_BY_NAME = new Map(RELATION_FAMILY_REGISTRY.map(family => [family.name, family]))
-
-const relationFamilyNameSchema = z.enum([
-  'employment',
-  'leadership',
-  'advisory',
-  'creation',
-  'ownership',
-  'location',
-  'collaboration',
-  'proposal',
-])
-
 const intentSchema = z.object({
-  anchorText: z.string().default(''),
-  relationFamilies: z.array(z.object({
-    name: relationFamilyNameSchema,
+  anchorText: z.string().optional(),
+  mode: z.enum(['attribute', 'relationship']).optional(),
+  predicates: z.array(z.object({
+    name: z.string(),
     confidence: z.number().min(0).max(1).optional(),
   })).default([]),
   targetEntityTypes: z.array(z.string()).max(8).default([]),
 })
 
 const FILLER_WORDS = new Set([
-  'a', 'an', 'all', 'and', 'are', 'at', 'find', 'for', 'from', 'in', 'list',
-  'me', 'of', 'on', 'show', 'the', 'their', 'these', 'those', 'what', 'who',
-  'with',
+  'a', 'an', 'all', 'and', 'are', 'at', 'did', 'do', 'does', 'find', 'for', 'from',
+  'in', 'is', 'list', 'me', 'of', 'on', 'show', 'tell', 'the', 'their', 'these',
+  'those', 'was', 'were', 'what', 'where', 'who', 'with',
 ])
 
 function escapeRegExp(value: string): string {
@@ -119,20 +170,33 @@ function unique<T>(items: T[]): T[] {
   return [...new Set(items)]
 }
 
-export function getRelationFamily(name: string): RelationFamilyDefinition | undefined {
-  return RELATION_FAMILY_BY_NAME.get(name)
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
 }
 
-export function resolveRelationFamilies(names?: string[] | undefined): RelationFamilyDefinition[] {
-  if (!names || names.length === 0) return []
-  return unique(names)
-    .map(name => RELATION_FAMILY_BY_NAME.get(name))
-    .filter((family): family is RelationFamilyDefinition => Boolean(family))
+function sanitizeTargetEntityTypes(entityTypes: string[]): string[] {
+  return unique(entityTypes
+    .map(type => normalizeWhitespace(type).toLowerCase())
+    .filter(type => VALID_ENTITY_TYPES.has(type)))
 }
 
-function stripFamilyPhrases(query: string, families: RelationFamilyDefinition[]): string {
+function normalizeAnchorText(value: string): string {
+  const normalized = normalizeWhitespace(
+    value
+      .replace(/[?]/g, ' ')
+      .split(/\s+/)
+      .map(token => token.replace(/^[("'“”]+|[),.:;!?]+$/g, ''))
+      .filter(token => token.length > 0)
+      .filter(token => !FILLER_WORDS.has(token.toLowerCase()))
+      .join(' '),
+  )
+
+  return normalized.replace(/(?:['’]s|['’])$/u, '').trim()
+}
+
+function stripPredicatePhrases(query: string, definitions: PredicateQueryDefinition[]): string {
   let text = query
-  const phrases = unique(families.flatMap(family => family.synonyms))
+  const phrases = unique(definitions.flatMap(definition => definition.synonyms))
     .sort((a, b) => b.length - a.length)
 
   for (const phrase of phrases) {
@@ -140,141 +204,207 @@ function stripFamilyPhrases(query: string, families: RelationFamilyDefinition[])
     text = text.replace(pattern, ' ')
   }
 
-  return text
-    .split(/\s+/)
-    .map(token => token.trim())
-    .filter(token => token.length > 0)
-    .filter(token => !FILLER_WORDS.has(token.toLowerCase()))
-    .join(' ')
-    .trim()
+  return normalizeAnchorText(text)
+}
+
+function combineAnchorSide(sides: AnchorSide[]): AnchorSide {
+  const uniqueSides = unique(sides)
+  if (uniqueSides.length === 0) return 'either'
+  if (uniqueSides.length === 1) return uniqueSides[0]!
+  return 'either'
+}
+
+function resolveDefinitionsForPredicates(predicates: string[], query: string): PredicateQueryDefinition[] {
+  const definitions = QUERY_PREDICATE_DEFINITIONS
+    .filter(definition => definition.predicates.some(predicate => predicates.includes(predicate)))
+  if (definitions.length > 0) return definitions
+  return matchDefinitions(query)
+}
+
+function inferMode(query: string, definitions: PredicateQueryDefinition[]): GraphExploreMode {
+  const lowered = query.toLowerCase()
+  if (definitions.some(definition => definition.mode === 'attribute')) {
+    if (
+      /(?:\bwhat\b|\bwhere\b)/i.test(lowered)
+      || /['’]s\b/.test(query)
+      || lowered.includes('profession')
+      || lowered.includes('occupation')
+      || lowered.includes('career')
+      || lowered.includes('role')
+      || lowered.includes('title')
+      || lowered.includes('position')
+    ) {
+      return 'attribute'
+    }
+  }
+
+  return definitions[0]?.mode ?? 'relationship'
 }
 
 function buildIntent(
   rawQuery: string,
-  families: Array<RelationFamilyDefinition & { confidence: number }>,
+  mode: GraphExploreMode,
+  predicates: GraphExploreIntentPredicate[],
   anchorText: string,
+  targetEntityTypes: string[],
 ): GraphExploreIntent {
-  const targetEntityTypes = unique(families.flatMap(family => family.resultEntityTypes))
-  const relationFamilies: GraphExploreIntentFamily[] = families.map(family => ({
-    name: family.name,
-    predicates: family.predicates,
-    confidence: family.confidence,
-  }))
-
   return {
     rawQuery,
     anchorText: anchorText.trim(),
-    relationFamilies,
-    targetEntityTypes,
+    mode,
+    predicates,
+    targetEntityTypes: sanitizeTargetEntityTypes(targetEntityTypes),
   }
 }
 
-function fallbackFamilies(query: string): Array<RelationFamilyDefinition & { confidence: number }> {
-  const lowered = query.toLowerCase()
-  const matches: Array<RelationFamilyDefinition & { confidence: number; score: number }> = []
+function deriveIntentMetadata(
+  query: string,
+  predicates: GraphExploreIntentPredicate[],
+  modeHint?: GraphExploreMode | undefined,
+  targetEntityTypeHint?: string[] | undefined,
+): {
+  anchorEntityTypes: string[]
+  anchorSide: AnchorSide
+  mode: GraphExploreMode
+  targetEntityTypes: string[]
+} {
+  const predicateNames = predicates.map(predicate => predicate.name)
+  const definitions = resolveDefinitionsForPredicates(predicateNames, query)
+  const mode = modeHint ?? inferMode(query, definitions)
 
-  for (const family of RELATION_FAMILY_REGISTRY) {
+  return {
+    anchorEntityTypes: unique(definitions.flatMap(definition => definition.anchorEntityTypes)),
+    anchorSide: mode === 'attribute'
+      ? (combineAnchorSide(definitions.map(definition => definition.anchorSide)) === 'either' ? 'source' : combineAnchorSide(definitions.map(definition => definition.anchorSide)))
+      : combineAnchorSide(definitions.map(definition => definition.anchorSide)),
+    mode,
+    targetEntityTypes: sanitizeTargetEntityTypes(
+      (targetEntityTypeHint && targetEntityTypeHint.length > 0)
+        ? targetEntityTypeHint
+        : definitions.flatMap(definition => definition.targetEntityTypes),
+    ),
+  }
+}
+
+function matchDefinitions(query: string): Array<PredicateQueryDefinition & { score: number }> {
+  const lowered = normalizeWhitespace(query).toLowerCase()
+  const matches: Array<PredicateQueryDefinition & { score: number }> = []
+
+  for (const definition of QUERY_PREDICATE_DEFINITIONS) {
     let bestScore = 0
-    for (const synonym of family.synonyms) {
-      const index = lowered.indexOf(synonym.toLowerCase())
-      if (index === -1) continue
+    for (const synonym of definition.synonyms) {
+      const pattern = new RegExp(`\\b${escapeRegExp(synonym.toLowerCase())}\\b`, 'i')
+      if (!pattern.test(lowered)) continue
       bestScore = Math.max(bestScore, synonym.length)
     }
-    if (bestScore > 0) {
-      matches.push({
-        ...family,
-        confidence: Math.min(0.98, 0.65 + (bestScore / Math.max(lowered.length, 1)) * 0.5),
-        score: bestScore,
-      })
+    if (bestScore > 0) matches.push({ ...definition, score: bestScore })
+  }
+
+  return matches.sort((a, b) => b.score - a.score)
+}
+
+function buildFallbackIntent(query: string): ParsedGraphExploreIntent {
+  const matches = matchDefinitions(query)
+  if (matches.length === 0) {
+    return {
+      parser: 'fallback',
+      fallbackUsed: true,
+      anchorEntityTypes: [],
+      anchorSide: 'either',
+      intent: buildIntent(query, 'relationship', [], normalizeAnchorText(query), []),
     }
   }
 
-  return matches
-    .sort((a, b) => b.score - a.score)
-    .map(({ score: _score, ...family }) => family)
+  const topScore = matches[0]!.score
+  const selected = matches.filter(match => match.score >= Math.max(3, topScore * 0.7))
+  const predicateNames = unique(selected.flatMap(match => match.predicates))
+  const predicates = predicateNames.map((name): GraphExploreIntentPredicate => ({
+    name,
+    confidence: Math.min(0.98, 0.65 + (selected.find(match => match.predicates.includes(name))!.score / Math.max(query.length, 1)) * 0.5),
+  }))
+  const metadata = deriveIntentMetadata(query, predicates)
+  const anchorText = stripPredicatePhrases(query, selected) || normalizeAnchorText(query)
+
+  return {
+    parser: 'fallback',
+    fallbackUsed: true,
+    anchorEntityTypes: metadata.anchorEntityTypes,
+    anchorSide: metadata.anchorSide,
+    intent: buildIntent(query, metadata.mode, predicates, anchorText || query, metadata.targetEntityTypes),
+  }
 }
 
-async function parseWithLlm(query: string, llm: LLMProvider): Promise<GraphExploreIntent | null> {
+async function parseWithLlm(query: string, llm: LLMProvider): Promise<ParsedGraphExploreIntent | null> {
   const prompt = [
-    'Parse this graph exploration query into anchor text and relation families.',
+    'Parse this graph exploration query into anchor text, query mode, concrete graph predicates, and target entity types.',
     '',
     `Query: ${query}`,
     '',
-    'Allowed relation families:',
-    ...RELATION_FAMILY_REGISTRY.map(family =>
-      `- ${family.name}: predicates=${family.predicates.join(', ')}; anchorEntityTypes=${family.anchorEntityTypes.join(', ')}; targetEntityTypes=${family.resultEntityTypes.join(', ')}; synonyms=${family.synonyms.join(', ')}`,
+    'Return JSON only with this shape:',
+    '{ "anchorText": string, "mode": "attribute" | "relationship", "predicates": [{ "name": string, "confidence": number }], "targetEntityTypes": string[] }',
+    '',
+    'Best-effort mapping rules:',
+    '- Map indirect wording to the closest supported predicates.',
+    '- Prefer the nearest supported predicate over returning an empty predicate list.',
+    '- Use mode="attribute" for self-attribute questions about a named entity, such as profession or location.',
+    '- Use only these real entity types: person, organization, location, product, concept, event, work_of_art, technology, law_regulation, time_period.',
+    '- Keep anchorText concise and literal.',
+    '',
+    'Concrete examples:',
+    '- "What is Elsie Inglis\' profession?" -> anchorText="Elsie Inglis", mode="attribute", predicates=["WORKS_AS","WORKED_AS","HELD_ROLE","PRACTICED_AS"], targetEntityTypes=["concept"]',
+    '- "Where did Augustus Le Plongeon live?" -> anchorText="Augustus Le Plongeon", mode="attribute", predicates=["LIVES_IN","LIVED_IN"], targetEntityTypes=["location"]',
+    '- "Who worked with Elsie Inglis?" -> anchorText="Elsie Inglis", mode="relationship", predicates=["COLLABORATED_WITH","PARTNERED_WITH","ALLIED_WITH","CORRESPONDS_WITH"], targetEntityTypes=["person","organization"]',
+    '- "Who supported the Scottish Women\'s Hospitals?" -> anchorText="Scottish Women\'s Hospitals", mode="relationship", predicates=["SUPPORTED"], targetEntityTypes=["person","organization","concept"]',
+    '',
+    'Common query bundles and hints:',
+    ...QUERY_PREDICATE_DEFINITIONS.map(definition =>
+      `- ${definition.key}: mode=${definition.mode}; predicates=${definition.predicates.join(', ')}; anchorEntityTypes=${definition.anchorEntityTypes.join(', ')}; targetEntityTypes=${definition.targetEntityTypes.join(', ')}; synonyms=${definition.synonyms.join(', ')}`,
     ),
     '',
-    'Return JSON only with this shape:',
-    '{ "anchorText": string, "relationFamilies": [{ "name": string, "confidence": number }], "targetEntityTypes": string[] }',
-    '',
-    'Rules:',
-    '- Only use the allowed relation family names.',
-    '- Do not invent predicates.',
-    '- Keep anchorText concise and literal.',
-    '- If no relation family clearly applies, return relationFamilies as an empty array.',
+    getPredicatesForPrompt(),
   ].join('\n')
 
   const raw = await llm.generateJSON<z.infer<typeof intentSchema>>(prompt, undefined, {
     schema: intentSchema,
-    maxOutputTokens: 512,
+    maxOutputTokens: 768,
   })
   const parsed = intentSchema.parse(raw)
-  const families = parsed.relationFamilies
-    .map(item => {
-      const family = getRelationFamily(item.name)
-      return family ? { ...family, confidence: item.confidence ?? 0.8 } : null
-    })
-    .filter((family): family is RelationFamilyDefinition & { confidence: number } => Boolean(family))
+  const predicates = unique(parsed.predicates
+    .map(predicate => normalizeWhitespace(predicate.name).toUpperCase())
+    .filter(predicate => VALID_PREDICATES.has(predicate)))
+    .map((name): GraphExploreIntentPredicate => ({
+      name,
+      confidence: parsed.predicates.find(predicate => normalizeWhitespace(predicate.name).toUpperCase() === name)?.confidence ?? 0.8,
+    }))
 
-  const anchorText = parsed.anchorText.trim() || stripFamilyPhrases(query, families)
+  if (predicates.length === 0) return null
+
+  const metadata = deriveIntentMetadata(query, predicates, parsed.mode, parsed.targetEntityTypes)
+  const anchorText = normalizeAnchorText(parsed.anchorText ?? '')
+    || stripPredicatePhrases(query, resolveDefinitionsForPredicates(predicates.map(predicate => predicate.name), query))
+    || normalizeAnchorText(query)
+
   return {
-    rawQuery: query,
-    anchorText: anchorText.trim() || query.trim(),
-    relationFamilies: families.map(family => ({
-      name: family.name,
-      predicates: family.predicates,
-      confidence: family.confidence,
-    })),
-    targetEntityTypes: parsed.targetEntityTypes.length > 0
-      ? unique(parsed.targetEntityTypes)
-      : unique(families.flatMap(family => family.resultEntityTypes)),
+    parser: 'llm',
+    fallbackUsed: false,
+    anchorEntityTypes: metadata.anchorEntityTypes,
+    anchorSide: metadata.anchorSide,
+    intent: buildIntent(query, metadata.mode, predicates, anchorText || query, metadata.targetEntityTypes),
   }
 }
 
 export async function parseGraphExploreIntent(input: {
   query: string
   llm?: LLMProvider | undefined
-  relationFamilies?: string[] | undefined
 }): Promise<ParsedGraphExploreIntent> {
-  const explicitFamilies = resolveRelationFamilies(input.relationFamilies)
-  if (explicitFamilies.length > 0) {
-    const families = explicitFamilies.map(family => ({ ...family, confidence: 1 }))
-    const anchorText = stripFamilyPhrases(input.query, explicitFamilies)
-    return {
-      parser: 'fallback',
-      intent: buildIntent(input.query, families, anchorText || input.query),
-    }
-  }
-
   if (input.llm) {
     try {
       const llmIntent = await parseWithLlm(input.query, input.llm)
-      if (llmIntent) {
-        return { parser: 'llm', intent: llmIntent }
-      }
+      if (llmIntent) return llmIntent
     } catch {
       // Fall through to deterministic parsing.
     }
   }
 
-  const families = fallbackFamilies(input.query)
-  const anchorText = families.length > 0
-    ? stripFamilyPhrases(input.query, families)
-    : input.query.trim()
-
-  return {
-    parser: 'fallback',
-    intent: buildIntent(input.query, families, anchorText || input.query),
-  }
+  return buildFallbackIntent(input.query)
 }

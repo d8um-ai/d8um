@@ -150,6 +150,40 @@ function isDisplayAliasSafe(alias: string, entityType: string): boolean {
   return true
 }
 
+function stripPersonTitles(tokens: string[]): string[] {
+  return tokens.filter(token => !PERSON_TITLE_PREFIXES.has(token))
+}
+
+function aliasInitialsMatchOwner(alias: string, ownerName: string): boolean {
+  const aliasInitials = [...alias.matchAll(/\b([A-Z])\.?/g)].map(match => match[1]!.toLowerCase())
+  if (aliasInitials.length < 2) return false
+  const ownerInitials = stripPersonTitles(nameTokens(ownerName)).map(token => token[0]!)
+  return aliasInitials.length <= ownerInitials.length
+    && aliasInitials.every((initial, index) => ownerInitials[index] === initial)
+}
+
+function hasCompatibleGivenNameTokens(aliasTokens: string[], ownerTokens: string[]): boolean {
+  if (aliasTokens.length === 0 || ownerTokens.length === 0) return false
+
+  return aliasTokens.every((token, index) => {
+    const ownerToken = ownerTokens[index]
+    if (!ownerToken) return false
+    if (token === ownerToken) return true
+    return token.length === 1 ? ownerToken.startsWith(token) : token.startsWith(ownerToken) || ownerToken.startsWith(token)
+  })
+}
+
+function hasSurnameBridgeAlias(alias: string, ownerAliases: string[]): boolean {
+  const aliasTokens = nameTokens(alias)
+  const aliasLast = aliasTokens[aliasTokens.length - 1]
+  if (!aliasLast) return false
+
+  return ownerAliases.some(otherAlias => {
+    const otherTokens = nameTokens(otherAlias)
+    return otherTokens.length === 1 && otherTokens[0] === aliasLast
+  })
+}
+
 function isStrongAliasForMerge(
   alias: string,
   entityType: string,
@@ -164,23 +198,40 @@ function isStrongAliasForMerge(
   if (aliasTokens.length === 0) return false
   if (ownerTokens.length <= 1) return true
 
+  const ownerLast = ownerTokens[ownerTokens.length - 1]!
+  const ownerGivenTokens = stripPersonTitles(ownerTokens.slice(0, -1))
+
+  if (aliasInitialsMatchOwner(alias, ownerName)) return true
+
   if (aliasTokens.length === 1) {
     const token = aliasTokens[0]!
-    const ownerLast = ownerTokens[ownerTokens.length - 1]!
-    const ownerHasTitlePrefix = PERSON_TITLE_PREFIXES.has(ownerTokens[0]!)
-    if (token === ownerLast) return ownerHasTitlePrefix
     if (PERSON_COMMON_GIVEN_NAMES.has(token)) return false
-    if (ownerTokens.includes(token)) return true
+    if (token !== ownerLast) {
+      return ownerAliases.some(otherAlias => {
+        const otherTokens = nameTokens(otherAlias)
+        return otherTokens.length >= 2 && otherTokens[otherTokens.length - 1] === token
+      })
+    }
     return ownerAliases.some(otherAlias => {
       const otherTokens = nameTokens(otherAlias)
-      return otherTokens.length >= 2
-        && otherTokens[otherTokens.length - 1] === token
-        && otherTokens[otherTokens.length - 1] !== ownerLast
-        && !isWeakSurnameOnlyPersonNamePair(otherAlias, ownerName)
+      return otherTokens.length >= 2 && otherTokens[otherTokens.length - 1] === token
     })
   }
 
-  return !isWeakSurnameOnlyPersonNamePair(alias, ownerName)
+  const aliasLast = aliasTokens[aliasTokens.length - 1]!
+  const aliasGivenTokens = stripPersonTitles(aliasTokens.slice(0, -1))
+
+  if (aliasLast !== ownerLast) {
+    if (aliasTokens.length === 2 && PERSON_TITLE_PREFIXES.has(aliasTokens[0]!) && ownerGivenTokens.includes(aliasLast)) {
+      return true
+    }
+    return hasSurnameBridgeAlias(alias, ownerAliases)
+  }
+
+  if (aliasGivenTokens.length === 0) return false
+  if (aliasTokens.length === 2 && PERSON_TITLE_PREFIXES.has(aliasTokens[0]!)) return false
+  if (isWeakSurnameOnlyPersonNamePair(alias, ownerName)) return false
+  return hasCompatibleGivenNameTokens(aliasGivenTokens, ownerGivenTokens)
 }
 
 /** Common adjectives that appear in generic references but not proper names */
@@ -443,7 +494,7 @@ export class EntityResolver {
     }
 
     // Merge descriptions at fact/sentence boundaries, capped to prevent runaway growth.
-    const MAX_DESCRIPTION_LENGTH = 1200
+    const MAX_DESCRIPTION_LENGTH = 320
     const properties = { ...existing.properties }
     const existingDesc = (properties.description as string | undefined) ?? ''
     const incomingDescription = incoming.description
@@ -655,10 +706,40 @@ function hasWeakPersonNameMergeEvidence(a: string, b: string): boolean {
   return isWeakSurnameOnlyPersonNamePair(a, b) || isWeakSingleTokenPersonNamePair(a, b)
 }
 
+function protectDescriptionAbbreviations(text: string): { value: string; replacements: Array<{ placeholder: string; original: string }> } {
+  const replacements: Array<{ placeholder: string; original: string }> = []
+  let value = text
+  const patterns = [
+    /(?:\b[A-Z]\.\s*){2,}/g,
+    /\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St)\./g,
+  ]
+
+  for (const pattern of patterns) {
+    value = value.replace(pattern, match => {
+      const placeholder = `__ABBR_${replacements.length}__`
+      replacements.push({ placeholder, original: match })
+      return placeholder
+    })
+  }
+
+  return { value, replacements }
+}
+
+function restoreDescriptionAbbreviations(text: string, replacements: Array<{ placeholder: string; original: string }>): string {
+  let restored = text
+  for (const replacement of replacements) {
+    restored = restored.replaceAll(replacement.placeholder, replacement.original)
+  }
+  return restored
+}
+
 function splitDescriptionSentences(text: string): string[] {
   const clean = text.replace(/\s+/g, ' ').trim()
   if (!clean) return []
-  return (clean.match(/[^.!?]+[.!?]?/g) ?? [clean])
+  const protectedText = protectDescriptionAbbreviations(clean)
+  return protectedText.value
+    .split(/(?<=[.!?])\s+(?=[A-Z"'])/)
+    .map(sentence => restoreDescriptionAbbreviations(sentence, protectedText.replacements))
     .map(s => s.trim())
     .filter(Boolean)
 }
@@ -681,21 +762,45 @@ function trimAtWordBoundary(text: string, maxLength: number): string {
   return (lastSpace > 40 ? truncated.slice(0, lastSpace) : truncated).trim()
 }
 
+function descriptionSentenceSimilarity(a: string, b: string): number {
+  const aTokens = new Set(normalizeDescriptionSentence(a).split(/\s+/).filter(Boolean))
+  const bTokens = new Set(normalizeDescriptionSentence(b).split(/\s+/).filter(Boolean))
+  if (aTokens.size === 0 || bTokens.size === 0) return 0
+
+  let intersection = 0
+  for (const token of aTokens) {
+    if (bTokens.has(token)) intersection++
+  }
+  return intersection / Math.min(aTokens.size, bTokens.size)
+}
+
+function isNearDuplicateDescriptionSentence(sentence: string, existingSentences: string[]): boolean {
+  const normalizedSentence = normalizeDescriptionSentence(sentence)
+  if (!normalizedSentence) return true
+
+  return existingSentences.some(existingSentence => {
+    const normalizedExisting = normalizeDescriptionSentence(existingSentence)
+    if (!normalizedExisting) return false
+    if (normalizedExisting.includes(normalizedSentence) || normalizedSentence.includes(normalizedExisting)) return true
+    return descriptionSentenceSimilarity(sentence, existingSentence) >= 0.8
+  })
+}
+
 function mergeDescriptions(existingDescription: string, incomingDescription: string | undefined, maxLength: number): string {
-  const sentences = [
-    ...splitDescriptionSentences(existingDescription).filter(sentence => !isLowValueEntityDescription(sentence)),
-    ...(incomingDescription ? splitDescriptionSentences(incomingDescription) : []),
-  ]
-  const seen = new Set<string>()
+  const existingSentences = isLowValueEntityDescription(existingDescription)
+    ? []
+    : splitDescriptionSentences(existingDescription).filter(sentence => !isLowValueEntityDescription(sentence))
+  const incomingSentences = incomingDescription
+    ? splitDescriptionSentences(incomingDescription).filter(sentence => !isLowValueEntityDescription(sentence))
+    : []
+  const sentences = [...existingSentences, ...incomingSentences]
   const merged: string[] = []
 
   for (const sentence of sentences) {
-    const key = normalizeDescriptionSentence(sentence)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
+    if (isNearDuplicateDescriptionSentence(sentence, merged)) continue
 
     const next = [...merged, sentence].join(' ')
-    if (next.length <= maxLength) {
+    if (merged.length < 2 && next.length <= maxLength) {
       merged.push(sentence)
       continue
     }
@@ -710,9 +815,17 @@ function mergeDescriptions(existingDescription: string, incomingDescription: str
 }
 
 function isLowValueEntityDescription(text: string): boolean {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  if (!clean) return true
+  if (!/[.!?]$/.test(clean) && /\b[A-Z]\.?$/.test(clean)) return true
+  if (/\b[A-Z]\.$/.test(clean) && !/(?:\b[A-Z]\.\s*){2,}$/.test(clean)) return true
   const normalized = normalizeDescriptionSentence(text)
   if (!normalized) return true
   const boilerplatePhrases = [
+    'is connected to',
+    'connected to',
+    'through traveled to',
+    'through supported',
     'creator of the task',
     'creator of the record',
     'creator of the document',

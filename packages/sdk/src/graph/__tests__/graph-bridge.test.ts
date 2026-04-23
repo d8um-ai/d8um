@@ -592,7 +592,13 @@ describe('createKnowledgeGraphBridge', () => {
 
       const result = await bridge.explore!(query, { userId: 'test-user', explain: true })
 
-      expect(result.intent.relationFamilies.map(family => family.name)).toContain('employment')
+      expect(result.intent.mode).toBe('relationship')
+      expect(result.intent.predicates.map(predicate => predicate.name)).toEqual(expect.arrayContaining([
+        'WORKS_FOR',
+        'WORKED_FOR',
+        'MEMBER_OF',
+      ]))
+      expect(result.intent.targetEntityTypes).toEqual(['person'])
       expect(result.anchors[0]).toEqual(expect.objectContaining({ name: 'Plotline', entityType: 'organization' }))
       expect(result.entities.map(entity => entity.name)).toEqual(expect.arrayContaining(['Adarsh Tadimari', 'Rajat']))
       expect(result.entities.map(entity => entity.name)).not.toContain('Plotline')
@@ -601,7 +607,11 @@ describe('createKnowledgeGraphBridge', () => {
       expect(result.facts.every(fact => fact.similarity === undefined)).toBe(true)
       expect(result.trace).toEqual(expect.objectContaining({
         parser: 'fallback',
+        fallbackUsed: true,
+        mode: 'relationship',
         selectedAnchorIds: ['plotline'],
+        selectedPredicates: expect.arrayContaining(['WORKS_FOR', 'WORKED_FOR', 'MEMBER_OF']),
+        targetEntityTypes: ['person'],
       }))
     })
 
@@ -616,7 +626,8 @@ describe('createKnowledgeGraphBridge', () => {
         generateText: vi.fn().mockResolvedValue(''),
         generateJSON: vi.fn().mockResolvedValue({
           anchorText: 'Plotline',
-          relationFamilies: [{ name: 'employment', confidence: 0.95 }],
+          mode: 'relationship',
+          predicates: [{ name: 'WORKS_FOR', confidence: 0.95 }],
           targetEntityTypes: ['person'],
         }),
       }
@@ -631,11 +642,14 @@ describe('createKnowledgeGraphBridge', () => {
 
       expect(explorationLlm.generateJSON).toHaveBeenCalled()
       expect(result.trace?.parser).toBe('llm')
+      expect(result.trace?.fallbackUsed).toBe(false)
       expect(result.intent.anchorText).toBe('Plotline')
-      expect(result.intent.relationFamilies[0]).toEqual(expect.objectContaining({
-        name: 'employment',
+      expect(result.intent.mode).toBe('relationship')
+      expect(result.intent.predicates[0]).toEqual(expect.objectContaining({
+        name: 'WORKS_FOR',
         confidence: 0.95,
       }))
+      expect(result.trace?.selectedPredicates).toEqual(['WORKS_FOR'])
     })
 
     it('falls back to deterministic parsing when the exploration LLM returns invalid output and can include passages', async () => {
@@ -670,7 +684,8 @@ describe('createKnowledgeGraphBridge', () => {
         generateText: vi.fn().mockResolvedValue(''),
         generateJSON: vi.fn().mockResolvedValue({
           anchorText: 'Plotline',
-          relationFamilies: [{ name: 'not-a-family', confidence: 1 }],
+          mode: 'relationship',
+          predicates: [{ name: 'not-a-predicate', confidence: 1 }],
           targetEntityTypes: [],
         }),
       }
@@ -689,7 +704,13 @@ describe('createKnowledgeGraphBridge', () => {
       })
 
       expect(result.trace?.parser).toBe('fallback')
-      expect(result.intent.relationFamilies.map(family => family.name)).toContain('employment')
+      expect(result.trace?.fallbackUsed).toBe(true)
+      expect(result.intent.mode).toBe('relationship')
+      expect(result.intent.predicates.map(predicate => predicate.name)).toEqual(expect.arrayContaining([
+        'WORKS_FOR',
+        'WORKED_FOR',
+        'MEMBER_OF',
+      ]))
       expect(result.passages).toEqual([
         expect.objectContaining({
           passageId: 'passage_plotline_adarsh',
@@ -698,6 +719,114 @@ describe('createKnowledgeGraphBridge', () => {
         }),
       ])
       expect(result.passages?.[0]?.score).toBeGreaterThan(0)
+    })
+
+    it('returns attribute-mode profession results from anchor-adjacent edges', async () => {
+      const entities = new Map<string, SemanticEntity>([
+        ['elsie', makeEntity('elsie', 'Elsie Inglis', 'person')],
+        ['doctor', makeEntity('doctor', 'doctor', 'concept')],
+        ['serbia', makeEntity('serbia', 'Serbia', 'location')],
+      ])
+      const edges = [
+        makeEdge('edge-role', 'elsie', 'doctor', 'WORKS_AS'),
+        makeEdge('edge-travel', 'elsie', 'serbia', 'TRAVELED_TO'),
+      ]
+      const store = mockStore(entities, edges)
+      const bridge = createKnowledgeGraphBridge({
+        memoryStore: store,
+        embedding: mockEmbedding(),
+        scope: testScope,
+      })
+
+      const result = await bridge.explore!("What is Elsie Inglis' profession?", {
+        userId: 'test-user',
+        explain: true,
+      })
+
+      expect(result.intent).toEqual(expect.objectContaining({
+        anchorText: 'Elsie Inglis',
+        mode: 'attribute',
+        targetEntityTypes: ['concept'],
+      }))
+      expect(result.intent.predicates.map(predicate => predicate.name)).toEqual(expect.arrayContaining([
+        'WORKS_AS',
+        'WORKED_AS',
+        'HELD_ROLE',
+        'PRACTICED_AS',
+      ]))
+      expect(result.anchors).toEqual([
+        expect.objectContaining({ id: 'elsie', name: 'Elsie Inglis', entityType: 'person' }),
+      ])
+      expect(result.entities).toEqual([
+        expect.objectContaining({ id: 'doctor', name: 'doctor', entityType: 'concept' }),
+      ])
+      expect(result.facts).toEqual([
+        expect.objectContaining({ edgeId: 'edge-role', relation: 'WORKS_AS' }),
+      ])
+      expect(result.entities.map(entity => entity.name)).not.toContain('Serbia')
+      expect(result.trace).toEqual(expect.objectContaining({
+        mode: 'attribute',
+        selectedPredicates: expect.arrayContaining(['WORKS_AS', 'WORKED_AS', 'HELD_ROLE', 'PRACTICED_AS']),
+        targetEntityTypes: ['concept'],
+      }))
+    })
+
+    it('keeps relationship traversal working beyond the anchor while enforcing target types', async () => {
+      const entities = new Map<string, SemanticEntity>([
+        ['plotline', makeEntity('plotline', 'Plotline', 'organization')],
+        ['adarsh', makeEntity('adarsh', 'Adarsh Tadimari', 'person')],
+        ['rajat', makeEntity('rajat', 'Rajat', 'person')],
+        ['committee', makeEntity('committee', 'Research Committee', 'organization')],
+      ])
+      const edges = [
+        makeEdge('edge-employment', 'adarsh', 'plotline', 'WORKS_FOR'),
+        makeEdge('edge-person-collab', 'adarsh', 'rajat', 'COLLABORATED_WITH'),
+        makeEdge('edge-mixed-collab', 'adarsh', 'committee', 'COLLABORATED_WITH'),
+        makeEdge('edge-anchor-org-collab', 'plotline', 'committee', 'COLLABORATED_WITH'),
+      ]
+      const store = mockStore(entities, edges)
+      const explorationLlm = {
+        generateText: vi.fn().mockResolvedValue(''),
+        generateJSON: vi.fn().mockResolvedValue({
+          anchorText: 'Plotline',
+          mode: 'relationship',
+          predicates: [{ name: 'COLLABORATED_WITH', confidence: 0.9 }],
+          targetEntityTypes: ['person'],
+        }),
+      }
+      const bridge = createKnowledgeGraphBridge({
+        memoryStore: store,
+        embedding: mockEmbedding(),
+        scope: testScope,
+        explorationLlm,
+      })
+
+      const result = await bridge.explore!('Who worked with Plotline?', {
+        userId: 'test-user',
+        depth: 2,
+        explain: true,
+      })
+
+      expect(result.intent).toEqual(expect.objectContaining({
+        anchorText: 'Plotline',
+        mode: 'relationship',
+        targetEntityTypes: ['person'],
+      }))
+      expect(result.entities.map(entity => entity.name)).toEqual(expect.arrayContaining([
+        'Adarsh Tadimari',
+        'Rajat',
+      ]))
+      expect(result.entities.map(entity => entity.name)).not.toContain('Research Committee')
+      expect(result.facts.map(fact => fact.relation)).toEqual([
+        'COLLABORATED_WITH',
+        'COLLABORATED_WITH',
+      ])
+      expect(result.trace).toEqual(expect.objectContaining({
+        parser: 'llm',
+        mode: 'relationship',
+        selectedPredicates: ['COLLABORATED_WITH'],
+      }))
+      expect(result.trace?.droppedByType).toBeGreaterThanOrEqual(1)
     })
   })
 })

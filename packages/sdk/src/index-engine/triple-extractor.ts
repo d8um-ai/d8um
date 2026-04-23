@@ -115,6 +115,10 @@ function normalizeName(value: string): string {
     .replace(/\s+/g, ' ')
 }
 
+function nameTokens(value: string): string[] {
+  return normalizeName(value).split(/\s+/).filter(Boolean)
+}
+
 function wordCount(value: string): number {
   const normalized = normalizeName(value)
   return normalized ? normalized.split(/\s+/).length : 0
@@ -147,6 +151,10 @@ const ALIAS_LEADING_FRAGMENT_WORDS = new Set([
 const ALIAS_GREETING_WORDS = new Set(['hi', 'hello', 'hey', 'dear'])
 const ALIAS_IMPERATIVE_WORDS = new Set(['inform', 'ask', 'tell', 'cc', 'tag', 'notify', 'ping'])
 const ALIAS_QUANTIFIER_WORDS = new Set(['both', 'all', 'either', 'neither'])
+const PERSON_TITLE_TOKENS = new Set([
+  'captain', 'cousin', 'doctor', 'dr', 'judge', 'lady', 'lord', 'miss',
+  'mr', 'mrs', 'ms', 'queen', 'saint', 'sir', 'st',
+])
 
 function isBadAliasFragment(value: string): boolean {
   const tokens = normalizeName(value).split(/\s+/).filter(Boolean)
@@ -176,17 +184,6 @@ function isModeratePersonAlias(alias: string): boolean {
   return true
 }
 
-function extractCapitalizedSurfaceForms(content: string): string[] {
-  const forms = new Set<string>()
-  const token = String.raw`(?:[A-Z]\.|[A-Z][\p{L}'’]*(?:-[A-Z][\p{L}'’]*)?)`
-  const re = new RegExp(String.raw`(?<![\p{L}])${token}(?:[ \t]+${token}){0,4}(?![\p{L}])`, 'gu')
-  for (const match of content.matchAll(re)) {
-    const value = sanitizeField(match[0])
-    if (value.length > 2 && value.length <= 80) forms.add(value)
-  }
-  return [...forms]
-}
-
 function extractLocationSurfaceForms(content: string): string[] {
   const forms = new Set<string>()
   const re = /\b([A-Z][\p{L}'’.-]+(?:\s+[A-Z][\p{L}'’.-]+){0,2},\s+[A-Z][\p{L}'’.-]+(?:\s+[A-Z][\p{L}'’.-]+){0,2})\b/gu
@@ -205,16 +202,203 @@ function addUniqueAlias(aliases: string[], alias: string, canonicalName: string)
   aliases.push(cleaned)
 }
 
-function augmentPersonAliases(entity: ExtractedEntity, content: string): void {
-  const knownLastTokens = new Set([entity.name, ...entity.aliases].map(lastToken).filter(Boolean))
-  if (knownLastTokens.size === 0) return
+function initialsForName(value: string): string[] {
+  return nameTokens(value)
+    .filter(token => !PERSON_TITLE_TOKENS.has(token))
+    .map(token => token[0]!)
+    .filter(Boolean)
+}
 
-  for (const form of extractCapitalizedSurfaceForms(content)) {
-    const formLast = lastToken(form)
-    if (!formLast || !knownLastTokens.has(formLast)) continue
-    if (!isModeratePersonAlias(form)) continue
-    addUniqueAlias(entity.aliases, form, entity.name)
+function looksLikeInitialism(value: string): boolean {
+  const matches = [...value.matchAll(/\b([A-Z])\.?/g)]
+  return matches.length >= 2
+}
+
+function aliasInitialsMatchOwner(alias: string, ownerName: string): boolean {
+  if (!looksLikeInitialism(alias)) return false
+  const aliasInitials = [...alias.matchAll(/\b([A-Z])\.?/g)].map(match => match[1]!.toLowerCase())
+  const ownerInitials = initialsForName(ownerName)
+  return aliasInitials.length > 0
+    && aliasInitials.length <= ownerInitials.length
+    && aliasInitials.every((initial, index) => ownerInitials[index] === initial)
+}
+
+function isHeadingLikeAlias(alias: string): boolean {
+  const cleaned = sanitizeField(alias)
+  if (!cleaned) return true
+  if (/^(?:chapter|book|part|section)\b/i.test(cleaned)) return true
+  const letters = cleaned.replace(/[^A-Za-z]/g, '')
+  return letters.length >= 6 && cleaned === cleaned.toUpperCase()
+}
+
+function aliasSentenceCandidates(content: string): string[] {
+  return content
+    .split(/(?<=[.!?;])\s+/)
+    .map(part => sanitizeField(part))
+    .filter(Boolean)
+}
+
+function extractExplicitPersonAliases(entity: ExtractedEntity, content: string): string[] {
+  const cuePattern = /\b(?:known as|called|calling himself|calling herself|calling themselves|aka|alias|under the name|went by|styled himself|styled herself)\b/i
+  const aliasPattern = /\b(?:known as|called|calling himself|calling herself|calling themselves|aka|alias|under the name|went by|styled himself|styled herself)\s+((?:[A-Z][\p{L}'’.-]*\.?)(?:\s+(?:[A-Z][\p{L}'’.-]*\.?)){0,4})/gu
+  const references = [
+    normalizeName(entity.name),
+    ...entity.aliases.map(normalizeName),
+    normalizeName(lastToken(entity.name)),
+  ].filter(Boolean)
+
+  const aliases: string[] = []
+  for (const sentence of aliasSentenceCandidates(content)) {
+    const normalizedSentence = normalizeName(sentence)
+    if (!cuePattern.test(sentence)) continue
+    if (!references.some(reference => normalizedSentence.includes(reference))) continue
+    for (const match of sentence.matchAll(aliasPattern)) {
+      addUniqueAlias(aliases, match[1]!, entity.name)
+    }
   }
+  return aliases
+}
+
+interface PersonAliasContext {
+  name: string
+  normalizedName: string
+  tokens: string[]
+  givenTokens: string[]
+  surname: string
+}
+
+function buildPersonAliasContexts(entities: ExtractedEntity[]): PersonAliasContext[] {
+  return entities
+    .filter(entity => entity.type === 'person')
+    .map(entity => {
+      const tokens = nameTokens(entity.name)
+      return {
+        name: entity.name,
+        normalizedName: normalizeName(entity.name),
+        tokens,
+        givenTokens: tokens.slice(0, -1).filter(token => !PERSON_TITLE_TOKENS.has(token)),
+        surname: tokens[tokens.length - 1] ?? '',
+      }
+    })
+}
+
+function hasCompatibleGivenNameEvidence(aliasTokens: string[], ownerTokens: string[]): boolean {
+  const filteredAliasTokens = aliasTokens.filter(token => !PERSON_TITLE_TOKENS.has(token))
+  const filteredOwnerTokens = ownerTokens.filter(token => !PERSON_TITLE_TOKENS.has(token))
+  if (filteredAliasTokens.length === 0 || filteredOwnerTokens.length === 0) return false
+
+  return filteredAliasTokens.every((token, index) => {
+    const ownerToken = filteredOwnerTokens[index]
+    if (!ownerToken) return false
+    if (token === ownerToken) return true
+    return token.length === 1 ? ownerToken.startsWith(token) : token.startsWith(ownerToken) || ownerToken.startsWith(token)
+  })
+}
+
+function titleCompatibleWithOwner(aliasTokens: string[], owner: PersonAliasContext): boolean {
+  const aliasTitle = aliasTokens.find(token => PERSON_TITLE_TOKENS.has(token))
+  if (!aliasTitle) return false
+  const ownerTitle = owner.tokens.find(token => PERSON_TITLE_TOKENS.has(token))
+  if (!ownerTitle) return aliasTitle === 'cousin' || aliasTitle === 'doctor' || aliasTitle === 'dr'
+  return aliasTitle === ownerTitle
+}
+
+function isEntityAwarePersonAlias(
+  alias: string,
+  owner: PersonAliasContext,
+  people: PersonAliasContext[],
+  explicitAliasKeys: Set<string>,
+  candidateAliases: string[],
+): boolean {
+  if (!isModeratePersonAlias(alias)) return false
+  if (isHeadingLikeAlias(alias)) return false
+
+  const aliasKey = normalizeName(alias)
+  if (!aliasKey || aliasKey === owner.normalizedName) return false
+
+  const aliasTokens = nameTokens(alias)
+  if (aliasTokens.length === 0) return false
+
+  const explicitCue = explicitAliasKeys.has(aliasKey)
+
+  if (!explicitCue) {
+    const collidesWithOtherPerson = people.some(person =>
+      person.normalizedName === aliasKey && person.normalizedName !== owner.normalizedName
+    )
+    if (collidesWithOtherPerson) return false
+  }
+
+  if (aliasInitialsMatchOwner(alias, owner.name)) return true
+
+  const surnameCounts = new Map<string, number>()
+  for (const person of people) {
+    if (!person.surname) continue
+    surnameCounts.set(person.surname, (surnameCounts.get(person.surname) ?? 0) + 1)
+  }
+
+  if (aliasTokens.length === 1) {
+    const aliasToken = aliasTokens[0]!
+    if (aliasToken === owner.surname) {
+      return (surnameCounts.get(owner.surname) ?? 0) === 1
+    }
+
+    const bridgesFullAlias = candidateAliases.some(otherAlias => {
+      if (normalizeName(otherAlias) === aliasKey) return false
+      const otherTokens = nameTokens(otherAlias)
+      return otherTokens.length >= 2 && otherTokens[otherTokens.length - 1] === aliasToken
+    })
+    if (bridgesFullAlias) return true
+
+    const collidesWithOtherGivenName = people.some(person =>
+      person.normalizedName !== owner.normalizedName
+      && hasCompatibleGivenNameEvidence([aliasToken], person.givenTokens)
+    )
+    if (collidesWithOtherGivenName) return false
+
+    return !COMMON_FIRST_NAMES.has(aliasToken) && hasCompatibleGivenNameEvidence([aliasToken], owner.givenTokens)
+  }
+
+  const aliasSurname = aliasTokens[aliasTokens.length - 1]!
+  const aliasGivenTokens = aliasTokens.slice(0, -1)
+
+  if (aliasSurname === owner.surname) {
+    if (aliasGivenTokens.length === 0) {
+      return (surnameCounts.get(owner.surname) ?? 0) === 1
+    }
+    if (aliasGivenTokens.length === 1 && PERSON_TITLE_TOKENS.has(aliasGivenTokens[0]!)) {
+      return titleCompatibleWithOwner(aliasTokens, owner) && (surnameCounts.get(owner.surname) ?? 0) === 1
+    }
+    return hasCompatibleGivenNameEvidence(aliasGivenTokens, owner.givenTokens)
+  }
+
+  if (
+    aliasTokens.length === 2
+    && PERSON_TITLE_TOKENS.has(aliasTokens[0]!)
+    && hasCompatibleGivenNameEvidence([aliasTokens[1]!], owner.givenTokens)
+  ) {
+    return titleCompatibleWithOwner(aliasTokens, owner)
+  }
+
+  return explicitCue
+}
+
+function refinePersonAliases(
+  entity: ExtractedEntity,
+  people: PersonAliasContext[],
+  content: string,
+): string[] {
+  const owner = people.find(person => person.normalizedName === normalizeName(entity.name))
+  if (!owner) return []
+
+  const aliases = [...entity.aliases]
+  for (const explicitAlias of extractExplicitPersonAliases(entity, content)) {
+    addUniqueAlias(aliases, explicitAlias, entity.name)
+  }
+  const explicitAliasKeys = new Set(extractExplicitPersonAliases(entity, content).map(alias => normalizeName(alias)))
+
+  return [...new Map(aliases
+    .filter(alias => isEntityAwarePersonAlias(alias, owner, people, explicitAliasKeys, aliases))
+    .map(alias => [normalizeName(alias), alias])).values()]
 }
 
 function augmentLocationAliases(entity: ExtractedEntity, content: string): void {
@@ -264,11 +448,10 @@ function postProcessExtraction(
   relationships: ExtractedRelationship[],
   content: string,
 ): ExtractionResult {
-  const nameMap = new Map<string, string>()
   const processed: ExtractedEntity[] = []
+  const rawNameToCanonical = new Map<string, string>()
 
   for (const raw of entities) {
-    const originalNames = [raw.name, ...(Array.isArray(raw.aliases) ? raw.aliases : [])]
     const entity: ExtractedEntity = {
       name: sanitizeField(raw.name ?? ''),
       type: sanitizeField(raw.type ?? ''),
@@ -283,7 +466,6 @@ function postProcessExtraction(
       entity.aliases = entity.aliases.filter(alias => !isBadAliasFragment(alias))
     }
 
-    if (entity.type === 'person') augmentPersonAliases(entity, content)
     if (entity.type === 'location') augmentLocationAliases(entity, content)
 
     const promoted = promoteOrRejectEntity(entity)
@@ -293,12 +475,24 @@ function postProcessExtraction(
       .filter(alias => normalizeName(alias) !== normalizeName(promoted.name))
 
     processed.push(promoted)
-    for (const name of originalNames) {
-      const key = normalizeName(name)
-      if (key) nameMap.set(key, promoted.name)
-    }
-    nameMap.set(normalizeName(promoted.name), promoted.name)
-    for (const alias of promoted.aliases) nameMap.set(normalizeName(alias), promoted.name)
+    const rawName = normalizeName(raw.name ?? '')
+    if (rawName) rawNameToCanonical.set(rawName, promoted.name)
+  }
+
+  const personContexts = buildPersonAliasContexts(processed)
+  for (const entity of processed) {
+    if (entity.type !== 'person') continue
+    entity.aliases = refinePersonAliases(entity, personContexts, content)
+      .filter(alias => normalizeName(alias) !== normalizeName(entity.name))
+  }
+
+  const nameMap = new Map<string, string>()
+  for (const entity of processed) {
+    nameMap.set(normalizeName(entity.name), entity.name)
+    for (const alias of entity.aliases) nameMap.set(normalizeName(alias), entity.name)
+  }
+  for (const [rawName, canonicalName] of rawNameToCanonical) {
+    if (!nameMap.has(rawName)) nameMap.set(rawName, canonicalName)
   }
 
   const sanitizedRelationships: ExtractedRelationship[] = []
@@ -306,6 +500,8 @@ function postProcessExtraction(
     const subject = nameMap.get(normalizeName(rel.subject ?? ''))
     const object = nameMap.get(normalizeName(rel.object ?? ''))
     const predicate = sanitizeField(rel.predicate ?? '')
+      .replace(/[\s-]+/g, '_')
+      .toUpperCase()
     if (!subject || !object || !predicate) continue
     sanitizedRelationships.push({
       subject,
@@ -365,6 +561,7 @@ Entity rules:
   4. Actors over settings — prefer entities that DO things over entities that are merely locations or backdrops
 - Omit entities that appear only in lists, parenthetical asides, or as minor supporting context with no described relationships.
 - Only extract specific named entities — NOT dates, dollar amounts, percentages, or generic descriptions
+- Exception: when the text directly states a named person's or organization's profession, office, or role, extract that role label as a "concept" entity so it can participate in a structured relationship. Examples: "doctor", "pilot", "house surgeon"
 - If an entity is referred to by multiple names (e.g., "OpenAI" and "the company"), list the proper name variants as aliases — NOT the generic reference
 - Include important entities even if they only appear once
 - Preserve complete person surface forms exactly when present. If the text says a person is "calling himself Cole Conway" or "known as Cole Conway", include "Cole Conway" as the entity name or alias — not only "Conway".
@@ -377,6 +574,7 @@ Entity rules:
 - For events, awards, seasons, software versions, product generations, or any time/version-specific entities, ALWAYS include the year, version, or edition in the name. Each distinct occurrence is a SEPARATE entity — e.g., "2023 NBA Finals" and "2024 NBA Finals" are different, "Python 2" and "Python 3" are different, "iPhone 15" and "iPhone 16" are different, "HTTP/1.1" and "HTTP/2" are different, "Michelin Guide 2024" and "Michelin Guide 2025" are different.
 - Different awards are ALWAYS separate entities even when they share words — "NBA Finals MVP" and "NBA MVP" are SEPARATE; "Academy Award for Best Picture" and "Academy Award for Best Director" are SEPARATE; "Nobel Peace Prize" and "Nobel Prize in Physics" are SEPARATE
 - Entities with opposing directional or categorical qualifiers are ALWAYS separate — "Western Conference" and "Eastern Conference" are SEPARATE; "North Atlantic Treaty Organization" and "South Asian Association" are SEPARATE; "Upper Egypt" and "Lower Egypt" are SEPARATE
+- Profession and role statements should become structured edges when supported by the text. Examples: "Steve Sharp, a pilot by profession" → Steve Sharp WORKS_AS pilot; "Elsie Inglis was a doctor" → Elsie Inglis WORKS_AS doctor; "She served as a house surgeon" → person HELD_ROLE house surgeon
 
 CRITICAL — Aliases vs. Relationships:
 - An ALIAS is a different name for THE SAME entity (e.g., "NYC" is an alias for "New York City")
@@ -413,6 +611,7 @@ Output:
   {"name": "Nancy Wade", "type": "person", "description": "Mother of Cousin Cæsar", "aliases": []},
   {"name": "Big-sis", "type": "person", "description": "Caretaker of Cousin Cæsar during childhood", "aliases": []},
   {"name": "Steve Sharp", "type": "person", "description": "Pilot and partner of Cousin Cæsar in the card game", "aliases": ["Sharp"]},
+  {"name": "pilot", "type": "concept", "description": "A profession practiced by Steve Sharp", "aliases": []},
   {"name": "Paducah, Kentucky", "type": "location", "description": "City in Kentucky where Cousin Cæsar uses the name Cole Conway", "aliases": ["Paducah"]},
   {"name": "West Tennessee", "type": "location", "description": "Region where Cousin Cæsar was born", "aliases": []},
   {"name": "Rob Roy", "type": "person", "description": "Wood cutter who worked for Old Smith", "aliases": ["Roy"]},
@@ -423,6 +622,7 @@ Output:
   {"subject": "Cousin Cæsar", "predicate": "BORN_IN", "object": "West Tennessee", "confidence": 0.95},
   {"subject": "Cousin Cæsar", "predicate": "TRAVELED_TO", "object": "Paducah, Kentucky", "confidence": 0.85},
   {"subject": "Cousin Cæsar", "predicate": "COLLABORATED_WITH", "object": "Steve Sharp", "confidence": 0.95},
+  {"subject": "Steve Sharp", "predicate": "WORKS_AS", "object": "pilot", "confidence": 0.9},
   {"subject": "Old Smith", "predicate": "EMPLOYED", "object": "Rob Roy", "confidence": 0.9}
 ]}
 
@@ -485,6 +685,7 @@ For each entity, provide:
 -- 4. Actors over settings — prefer entities that DO things over entities that are merely locations or backdrops
 -- Omit entities that appear only in lists, parenthetical asides, or as minor supporting context with no described relationships.
 - Only extract specific named entities — NOT dates, dollar amounts, percentages, or generic descriptions
+- Exception: when the text directly states a named person's or organization's profession, office, or role, extract that role label as a "concept" entity so it can participate in a structured relationship. Examples: "doctor", "pilot", "house surgeon"
 - If an entity is referred to by multiple names (e.g., "OpenAI" and "the company"), list the proper name variants as aliases — NOT the generic reference
 - Include important entities even if they only appear once
 - Preserve complete person surface forms exactly when present. If the text says a person is "calling himself Cole Conway" or "known as Cole Conway", include "Cole Conway" as the entity name or alias — not only "Conway".
@@ -498,6 +699,7 @@ For each entity, provide:
 - For events, awards, seasons, software versions, product generations, or any time/version-specific entities, ALWAYS include the year, version, or edition in the name. Each distinct occurrence is a SEPARATE entity — e.g., "2023 NBA Finals" and "2024 NBA Finals" are different, "Python 2" and "Python 3" are different, "iPhone 15" and "iPhone 16" are different, "HTTP/1.1" and "HTTP/2" are different, "Michelin Guide 2024" and "Michelin Guide 2025" are different.
 - Different awards are ALWAYS separate entities even when they share words — "NBA Finals MVP" and "NBA MVP" are SEPARATE; "Academy Award for Best Picture" and "Academy Award for Best Director" are SEPARATE; "Nobel Peace Prize" and "Nobel Prize in Physics" are SEPARATE
 - Entities with opposing directional or categorical qualifiers are ALWAYS separate — "Western Conference" and "Eastern Conference" are SEPARATE; "North Atlantic Treaty Organization" and "South Asian Association" are SEPARATE; "Upper Egypt" and "Lower Egypt" are SEPARATE
+- Profession and role statements should become structured edges when supported by the text. Examples: "Steve Sharp, a pilot by profession" → Steve Sharp WORKS_AS pilot; "Elsie Inglis was a doctor" → Elsie Inglis WORKS_AS doctor; "She served as a house surgeon" → person HELD_ROLE house surgeon
 
 </TASK_RULES>
 
@@ -524,14 +726,15 @@ CRITICAL — Aliases vs. Relationships:
 
   <EXAMPLE_OUTPUT>
 
-  [{"name": "Cousin Cæsar", "type": "person", "description": "A man born to Nancy Wade in West Tennessee who later uses the name Cole Conway in Paducah, Kentucky", "aliases": ["Cole Conway", "Conway"]},
+  [{"name": "Cousin Cæsar", "type": "person", "description": "A man born to Nancy Wade in West Tennessee who later uses the name Cole Conway in Paducah, Kentucky", "aliases": ["Cole Conway"]},
   {"name": "Nancy Wade", "type": "person", "description": "Mother of Cousin Cæsar", "aliases": []},
   {"name": "Big-sis", "type": "person", "description": "Caretaker of Cousin Cæsar during childhood", "aliases": []},
-  {"name": "Steve Sharp", "type": "person", "description": "Pilot and partner of Cousin Cæsar in the card game", "aliases": ["Sharp"]},
-  {"name": "Paducah, Kentucky", "type": "location", "description": "City in Kentucky where Cousin Cæsar uses the name Cole Conway", "aliases": ["Paducah"]},
+  {"name": "Steve Sharp", "type": "person", "description": "Pilot and partner of Cousin Cæsar in the card game", "aliases": []},
+  {"name": "pilot", "type": "concept", "description": "A profession practiced by Steve Sharp", "aliases": []},
+  {"name": "Paducah, Kentucky", "type": "location", "description": "City in Kentucky where Cousin Cæsar uses the name Cole Conway", "aliases": []},
   {"name": "West Tennessee", "type": "location", "description": "Region where Cousin Cæsar was born", "aliases": []},
-  {"name": "Rob Roy", "type": "person", "description": "Wood cutter who worked for Old Smith", "aliases": ["Roy"]},
-  {"name": "Old Smith", "type": "person", "description": "Farm owner near the Tennessee River who employed Rob Roy", "aliases": ["Smith"]},
+  {"name": "Rob Roy", "type": "person", "description": "Wood cutter who worked for Old Smith", "aliases": []},
+  {"name": "Old Smith", "type": "person", "description": "Farm owner near the Tennessee River who employed Rob Roy", "aliases": []},
   {"name": "Tennessee River", "type": "location", "description": "River near Old Smith's farm", "aliases": []}]
 
   </EXAMPLE_OUTPUT>
@@ -596,6 +799,7 @@ For each relationship, provide:
 - Extract relationships that are explicitly stated or strongly implied in the text
 - Do not emit self-relationships or alias relationships. If two names refer to the same entity, they belong in aliases from the entity step, not in the relationships array.
 - Do not connect an entity to a generic description or role unless that role was extracted as a specific named entity.
+- When the text directly states a profession, office, or role for a named entity, emit a structured relationship to that role concept. Examples: person WORKS_AS doctor, person HELD_ROLE house surgeon, person PRACTICED_AS physician
 - Return an empty array if no clear relationships exist between the entities listed below
 
 </TASK_RULES>
@@ -608,14 +812,15 @@ For each relationship, provide:
 
     Entities found in the example text string:
 
-    [{"name": "Cousin Cæsar", "type": "person", "description": "A man born to Nancy Wade in West Tennessee who later uses the name Cole Conway in Paducah, Kentucky", "aliases": ["Cole Conway", "Conway"]},
+    [{"name": "Cousin Cæsar", "type": "person", "description": "A man born to Nancy Wade in West Tennessee who later uses the name Cole Conway in Paducah, Kentucky", "aliases": ["Cole Conway"]},
     {"name": "Nancy Wade", "type": "person", "description": "Mother of Cousin Cæsar", "aliases": []},
     {"name": "Big-sis", "type": "person", "description": "Caretaker of Cousin Cæsar during childhood", "aliases": []},
-    {"name": "Steve Sharp", "type": "person", "description": "Pilot and partner of Cousin Cæsar in the card game", "aliases": ["Sharp"]},
-    {"name": "Paducah, Kentucky", "type": "location", "description": "City in Kentucky where Cousin Cæsar uses the name Cole Conway", "aliases": ["Paducah"]},
+    {"name": "Steve Sharp", "type": "person", "description": "Pilot and partner of Cousin Cæsar in the card game", "aliases": []},
+    {"name": "pilot", "type": "concept", "description": "A profession practiced by Steve Sharp", "aliases": []},
+    {"name": "Paducah, Kentucky", "type": "location", "description": "City in Kentucky where Cousin Cæsar uses the name Cole Conway", "aliases": []},
     {"name": "West Tennessee", "type": "location", "description": "Region where Cousin Cæsar was born", "aliases": []},
-    {"name": "Rob Roy", "type": "person", "description": "Wood cutter who worked for Old Smith", "aliases": ["Roy"]},
-    {"name": "Old Smith", "type": "person", "description": "Farm owner near the Tennessee River who employed Rob Roy", "aliases": ["Smith"]},
+    {"name": "Rob Roy", "type": "person", "description": "Wood cutter who worked for Old Smith", "aliases": []},
+    {"name": "Old Smith", "type": "person", "description": "Farm owner near the Tennessee River who employed Rob Roy", "aliases": []},
     {"name": "Tennessee River", "type": "location", "description": "River near Old Smith's farm", "aliases": []}]
 
   </EXAMPLE_ENTITIES_FOUND_IN_THE_EXAMPLE_TEXT_STRING>
@@ -632,6 +837,7 @@ For each relationship, provide:
     {"subject": "Cousin Cæsar", "predicate": "BORN_IN", "object": "West Tennessee", "confidence": 0.95},
     {"subject": "Cousin Cæsar", "predicate": "TRAVELED_TO", "object": "Paducah, Kentucky", "confidence": 0.85},
     {"subject": "Cousin Cæsar", "predicate": "COLLABORATED_WITH", "object": "Steve Sharp", "confidence": 0.95},
+    {"subject": "Steve Sharp", "predicate": "WORKS_AS", "object": "pilot", "confidence": 0.9},
     {"subject": "Old Smith", "predicate": "EMPLOYED", "object": "Rob Roy", "confidence": 0.9}]
 
   </EXAMPLE_OUTPUT>

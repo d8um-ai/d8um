@@ -144,6 +144,27 @@ describe('EntityResolver', () => {
       expect(ssSimon.entity.id).not.toBe('entity-caesar')
     })
 
+    it('does not merge distinct full names that only share a surname', async () => {
+      const existing: SemanticEntity = {
+        id: 'entity-elsie',
+        name: 'Elsie Inglis',
+        entityType: 'person',
+        aliases: ['Inglis'],
+        properties: { _similarity: 0.99 },
+        embedding: [0.9, 0.9, 0.9],
+        scope: testScope,
+        temporal: { validAt: new Date(), createdAt: new Date() },
+      }
+      const store = mockStore([existing])
+      ;(store.searchEntities as ReturnType<typeof vi.fn>).mockResolvedValue([existing])
+
+      const resolver = new EntityResolver({ store, embedding: mockEmbedding() })
+
+      const johnInglis = await resolver.resolve('John Inglis', 'person', ['Inglis'], testScope)
+      expect(johnInglis.isNew).toBe(true)
+      expect(johnInglis.entity.id).not.toBe('entity-elsie')
+    })
+
     it('keeps pseudonym surname aliases strong when backed by a full pseudonym', async () => {
       const existing: SemanticEntity = {
         id: 'entity-caesar',
@@ -529,12 +550,67 @@ describe('EntityResolver', () => {
       })
 
       const description = merged.properties.description as string
-      expect(description.length).toBeLessThanOrEqual(1200)
+      expect(description.length).toBeLessThanOrEqual(320)
       expect(description.match(/A card player using the pseudonym Cole Conway/g)).toHaveLength(1)
       expect(description).toContain('A partner of Steve Sharp in Paducah, Kentucky.')
-      expect(description).toContain('A man who travels toward the West Indies.')
+      expect(description).not.toContain('A man who travels toward the West Indies.')
       expect(description.endsWith('.')).toBe(true)
       expect(embedding.embed).toHaveBeenCalledWith(description)
+    })
+
+    it('ignores generic relation-only profile summaries when a real description already exists', async () => {
+      const embedding = mockEmbedding()
+      const resolver = new EntityResolver({
+        store: mockStore(),
+        embedding,
+      })
+
+      const existing: SemanticEntity = {
+        id: 'e-elsie',
+        name: 'Elsie Inglis',
+        entityType: 'person',
+        aliases: [],
+        properties: { description: 'Doctor and suffrage campaigner.' },
+        descriptionEmbedding: [0.1, 0.2, 0.3],
+        scope: testScope,
+        temporal: { validAt: new Date(), createdAt: new Date() },
+      }
+
+      const merged = await resolver.merge(existing, {
+        name: 'Elsie Inglis',
+        entityType: 'person',
+        aliases: [],
+        description: 'Elsie Inglis is connected to Serbia through traveled to.',
+      })
+
+      expect(merged.properties.description).toBe('Doctor and suffrage campaigner.')
+      expect(embedding.embed).not.toHaveBeenCalled()
+    })
+
+    it('drops chopped fragment descriptions that end in abbreviation fragments', async () => {
+      const embedding = mockEmbedding()
+      const resolver = new EntityResolver({
+        store: mockStore(),
+        embedding,
+      })
+
+      const merged = await resolver.merge({
+        id: 'e-foreign-office',
+        name: 'Foreign Office',
+        entityType: 'organization',
+        aliases: [],
+        properties: {},
+        scope: testScope,
+        temporal: { validAt: new Date(), createdAt: new Date() },
+      }, {
+        name: 'Foreign Office',
+        entityType: 'organization',
+        aliases: [],
+        description: 'British authority corresponding with S.',
+      })
+
+      expect(merged.properties.description).toBeUndefined()
+      expect(embedding.embed).not.toHaveBeenCalled()
     })
 
     it('does not append descriptions that describe a different named person by relationship', async () => {

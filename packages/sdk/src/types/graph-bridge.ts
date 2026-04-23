@@ -150,7 +150,7 @@ export interface KnowledgeGraphBridge {
   /** Search persisted facts by semantic similarity. */
   searchFacts?(query: string, opts?: FactSearchOpts): Promise<FactResult[]>
 
-  /** Explore a semantic subgraph using anchor resolution and relation-family intent parsing. */
+  /** Explore a semantic subgraph using anchor resolution and predicate-first intent parsing. */
   explore?(query: string, opts?: GraphExploreOpts): Promise<GraphExploreResult>
 
   /** Retrieve passages directly connected to an entity. */
@@ -254,7 +254,6 @@ export interface GraphExploreOptions {
     facts?: boolean | undefined
     passages?: boolean | undefined
   } | undefined
-  relationFamilies?: string[] | undefined
   bucketIds?: string[] | undefined
   anchorLimit?: number | undefined
   entityLimit?: number | undefined
@@ -266,28 +265,31 @@ export interface GraphExploreOptions {
 
 export type GraphExploreOpts = GraphExploreOptions & typegraphIdentity & TelemetryOpts
 
-export interface GraphExploreIntentFamily {
+export interface GraphExploreIntentPredicate {
   name: string
-  predicates: string[]
   confidence: number
 }
 
 export interface GraphExploreIntent {
   rawQuery: string
   anchorText: string
-  relationFamilies: GraphExploreIntentFamily[]
+  mode: 'attribute' | 'relationship'
+  predicates: GraphExploreIntentPredicate[]
   targetEntityTypes: string[]
 }
 
 export interface GraphExploreTrace {
   parser: 'llm' | 'fallback'
+  fallbackUsed: boolean
+  mode: 'attribute' | 'relationship'
+  selectedPredicates: string[]
+  targetEntityTypes: string[]
   anchorCandidates: EntityResult[]
   selectedAnchorIds: string[]
   matchedEdgeIds: string[]
   matchedRelations: string[]
-  droppedByRelation: number
+  droppedByPredicate: number
   droppedByType: number
-  droppedByDirection: number
 }
 
 export interface GraphExploreResult {

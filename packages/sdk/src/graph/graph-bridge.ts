@@ -9,7 +9,7 @@ import { resolveEmbeddingProvider, resolveLLMProvider } from '../typegraph.js'
 import type { MemoryStoreAdapter, SemanticEdge, SemanticEntity, SemanticEntityMention, SemanticFactRecord, SemanticPassageEntityEdge } from '../memory/types/index.js'
 import { EntityResolver, PredicateNormalizer, createTemporal } from '../memory/index.js'
 import { EmbeddedGraph } from './graph/embedded-graph.js'
-import { parseGraphExploreIntent, resolveRelationFamilies, type RelationFamilyDefinition } from './query-intent.js'
+import { parseGraphExploreIntent } from './query-intent.js'
 import { generateId } from '../utils/id.js'
 
 // ── Config ──
@@ -91,6 +91,18 @@ function relationToPhrase(relation: string): string {
 
 function factTextFor(sourceName: string, relation: string, targetName: string): string {
   return `${sourceName} ${relationToPhrase(relation)} ${targetName}`
+}
+
+function factSentenceForProfile(
+  entityName: string,
+  relatedName: string,
+  relation: string,
+  direction: 'out' | 'in',
+): string {
+  const sentence = direction === 'out'
+    ? factTextFor(entityName, relation, relatedName)
+    : factTextFor(relatedName, relation, entityName)
+  return sentence.endsWith('.') ? sentence : `${sentence}.`
 }
 
 function normalizeSeedScore(value: number): number {
@@ -224,7 +236,6 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     edge: SemanticEdge,
     nameMap: Map<string, string>,
     score: number,
-    matchedFamilyName?: string,
   ): FactResult {
     const sourceEntityName = nameMap.get(edge.sourceEntityId) ?? edge.sourceEntityId
     const targetEntityName = nameMap.get(edge.targetEntityId) ?? edge.targetEntityId
@@ -240,7 +251,6 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       weight: edge.weight,
       evidenceCount: Math.max(1, Math.round(edge.weight)),
       properties: {
-        ...(matchedFamilyName ? { matchedFamily: matchedFamilyName } : {}),
         ...(score > 0 ? { exploreScore: score } : {}),
       },
     }
@@ -286,12 +296,19 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
         ),
       ].slice(0, 25)
       const relationPhrases = [...new Set(nextEvidence.map(item => relationToPhrase(String(item.relation))).filter(Boolean))]
-      const relatedNames = [...new Set(nextEvidence.map(item => String(item.relatedEntityName)).filter(Boolean))].slice(0, 5)
+      const summarySentences = [...new Set(nextEvidence.map(item =>
+        factSentenceForProfile(
+          entity.name,
+          String(item.relatedEntityName),
+          String(item.relation),
+          String(item.direction) === 'in' ? 'in' : 'out',
+        ),
+      ))].slice(0, 2)
 
       properties.profile = {
         ...existingProfile,
-        summary: relatedNames.length > 0
-          ? `${entity.name} is connected to ${relatedNames.join(', ')} through ${relationPhrases.slice(0, 5).join(', ')}.`
+        summary: summarySentences.length > 0
+          ? summarySentences.join(' ')
           : existingProfile.summary,
         domains: Array.isArray(existingProfile.domains) ? existingProfile.domains : [],
         recurringActivities: relationPhrases.slice(0, 10),
@@ -769,32 +786,30 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     const parsed = await parseGraphExploreIntent({
       query,
       llm: explorationLlm,
-      relationFamilies: opts.relationFamilies,
     })
-    const relationFamilies = resolveRelationFamilies(parsed.intent.relationFamilies.map(family => family.name))
-    const relationConfidenceByName = new Map(parsed.intent.relationFamilies.map(family => [family.name, family.confidence]))
+    const predicateConfidenceByName = new Map(parsed.intent.predicates.map(predicate => [predicate.name, predicate.confidence]))
+    const selectedPredicates = new Set(parsed.intent.predicates.map(predicate => predicate.name))
 
     const trace: GraphExploreTrace = {
       parser: parsed.parser,
+      fallbackUsed: parsed.fallbackUsed,
+      mode: parsed.intent.mode,
+      selectedPredicates: [...selectedPredicates],
+      targetEntityTypes: parsed.intent.targetEntityTypes,
       anchorCandidates: [],
       selectedAnchorIds: [],
       matchedEdgeIds: [],
       matchedRelations: [],
-      droppedByRelation: 0,
+      droppedByPredicate: 0,
       droppedByType: 0,
-      droppedByDirection: 0,
     }
 
     const anchorQuery = parsed.intent.anchorText.trim() || query.trim()
     let anchorCandidates = await searchEntities(anchorQuery, identity, Math.max(anchorLimit * 3, anchorLimit))
     trace.anchorCandidates = anchorCandidates
 
-    if (relationFamilies.length > 0) {
-      const preferredAnchorTypes = new Set(
-        relationFamilies
-          .flatMap(family => family.anchorEntityTypes)
-          .map(type => type.toLowerCase()),
-      )
+    if (parsed.anchorEntityTypes.length > 0) {
+      const preferredAnchorTypes = new Set(parsed.anchorEntityTypes.map(type => type.toLowerCase()))
       if (preferredAnchorTypes.size > 0) {
         const filtered = anchorCandidates.filter(candidate => preferredAnchorTypes.has(candidate.entityType.toLowerCase()))
         if (filtered.length > 0) anchorCandidates = filtered
@@ -819,7 +834,8 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     const anchorScoreById = new Map(
       anchors.map(anchor => [anchor.id, normalizeSeedScore(anchor.similarity ?? 1)]),
     )
-    const subgraph = await graph.getSubgraph(anchors.map(anchor => anchor.id), depth)
+    const subgraphDepth: 1 | 2 = parsed.intent.mode === 'attribute' ? 1 : depth
+    const subgraph = await graph.getSubgraph(anchors.map(anchor => anchor.id), subgraphDepth)
     const entityById = new Map(subgraph.entities.map(entity => [entity.id, entity]))
     const nameMap = new Map(subgraph.entities.map(entity => [entity.id, entity.name]))
     const adjacency = new Map<string, string[]>()
@@ -867,12 +883,12 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     }
 
     const typeMatches = (entityType: string | undefined, allowedTypes: string[]) =>
-      !entityType ? false : allowedTypes.some(type => type.toLowerCase() === entityType.toLowerCase())
+      allowedTypes.length === 0 || (!!entityType && allowedTypes.some(type => type.toLowerCase() === entityType.toLowerCase()))
 
     const matchedEdges: Array<{
       edge: SemanticEdge
       score: number
-      family?: RelationFamilyDefinition
+      resultEntityIds: string[]
     }> = []
 
     for (const edge of subgraph.edges) {
@@ -880,77 +896,67 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       const target = entityById.get(edge.targetEntityId)
       if (!source || !target) continue
 
+      if (selectedPredicates.size > 0 && !selectedPredicates.has(edge.relation)) {
+        trace.droppedByPredicate++
+        continue
+      }
+
       const anchorScore = Math.max(
         anchorInfluenceById.get(edge.sourceEntityId) ?? 0,
         anchorInfluenceById.get(edge.targetEntityId) ?? 0,
       )
       if (anchorScore <= 0) continue
 
-      if (relationFamilies.length === 0) {
+      const sourceIsAnchor = anchorIds.has(edge.sourceEntityId)
+      const targetIsAnchor = anchorIds.has(edge.targetEntityId)
+      const directAnchorTouch = sourceIsAnchor || targetIsAnchor
+
+      if (parsed.intent.mode === 'attribute') {
+        if (!directAnchorTouch) continue
+
+        const resultEntityIds = uniqueIds([
+          ...(sourceIsAnchor && parsed.anchorSide !== 'target' ? [edge.targetEntityId] : []),
+          ...(targetIsAnchor && parsed.anchorSide !== 'source' ? [edge.sourceEntityId] : []),
+        ])
+        const filteredResultEntityIds = resultEntityIds.filter(entityId =>
+          typeMatches(entityById.get(entityId)?.entityType, parsed.intent.targetEntityTypes),
+        )
+        if (filteredResultEntityIds.length === 0) {
+          trace.droppedByType++
+          continue
+        }
+
         matchedEdges.push({
           edge,
-          score: anchorScore * Math.log2(1 + edge.weight),
+          score: anchorScore * (predicateConfidenceByName.get(edge.relation) ?? 0.8) * Math.log2(1 + edge.weight),
+          resultEntityIds: filteredResultEntityIds,
         })
         continue
       }
 
-      const candidateFamilies = relationFamilies.filter(family => family.predicates.includes(edge.relation))
-      if (candidateFamilies.length === 0) {
-        trace.droppedByRelation++
-        continue
+      let resultEntityIds = sourceIsAnchor && !targetIsAnchor
+        ? [edge.targetEntityId]
+        : targetIsAnchor && !sourceIsAnchor
+          ? [edge.sourceEntityId]
+          : [edge.sourceEntityId, edge.targetEntityId]
+
+      if (directAnchorTouch) {
+        if (sourceIsAnchor && !targetIsAnchor && parsed.anchorSide === 'target') continue
+        if (targetIsAnchor && !sourceIsAnchor && parsed.anchorSide === 'source') continue
       }
 
-      let bestMatch: { family: RelationFamilyDefinition; score: number } | null = null
-      let sawDirectionFailure = false
-      let sawTypeFailure = false
-
-      for (const family of candidateFamilies) {
-        const directAnchorTouch = anchorIds.has(edge.sourceEntityId) || anchorIds.has(edge.targetEntityId)
-        if (directAnchorTouch) {
-          const directionMatches =
-            family.anchorSide === 'either'
-            || (family.anchorSide === 'source' && anchorIds.has(edge.sourceEntityId))
-            || (family.anchorSide === 'target' && anchorIds.has(edge.targetEntityId))
-          if (!directionMatches) {
-            sawDirectionFailure = true
-            continue
-          }
-        }
-
-        const resultEntityIds = anchorIds.has(edge.sourceEntityId) && !anchorIds.has(edge.targetEntityId)
-          ? [edge.targetEntityId]
-          : anchorIds.has(edge.targetEntityId) && !anchorIds.has(edge.sourceEntityId)
-            ? [edge.sourceEntityId]
-            : family.anchorSide === 'source'
-              ? [edge.targetEntityId]
-              : family.anchorSide === 'target'
-                ? [edge.sourceEntityId]
-                : [edge.sourceEntityId, edge.targetEntityId]
-
-        const resultTypeMatches = family.resultEntityTypes.length === 0 || resultEntityIds.some(entityId =>
-          typeMatches(entityById.get(entityId)?.entityType, family.resultEntityTypes),
-        )
-        if (!resultTypeMatches) {
-          sawTypeFailure = true
-          continue
-        }
-
-        const familyScore = relationConfidenceByName.get(family.name) ?? 0.8
-        const score = anchorScore * familyScore * Math.log2(1 + edge.weight)
-        if (!bestMatch || score > bestMatch.score) bestMatch = { family, score }
-      }
-
-      if (!bestMatch) {
-        if (sawDirectionFailure) trace.droppedByDirection++
-        else if (sawTypeFailure) trace.droppedByType++
-        else trace.droppedByRelation++
+      resultEntityIds = resultEntityIds.filter(entityId =>
+        typeMatches(entityById.get(entityId)?.entityType, parsed.intent.targetEntityTypes),
+      )
+      if (parsed.intent.targetEntityTypes.length > 0 && resultEntityIds.length === 0) {
+        trace.droppedByType++
         continue
       }
 
       matchedEdges.push({
         edge,
-        score: bestMatch.score,
-        family: bestMatch.family,
+        score: anchorScore * (predicateConfidenceByName.get(edge.relation) ?? 1) * Math.log2(1 + edge.weight),
+        resultEntityIds: uniqueIds(resultEntityIds),
       })
     }
 
@@ -960,8 +966,8 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
 
     const entityScoreById = new Map<string, number>()
     for (const match of matchedEdges) {
-      for (const entityId of [match.edge.sourceEntityId, match.edge.targetEntityId]) {
-        if (anchorIds.has(entityId)) continue
+      for (const entityId of match.resultEntityIds) {
+        if (parsed.intent.mode === 'relationship' && anchorIds.has(entityId)) continue
         entityScoreById.set(entityId, Math.max(entityScoreById.get(entityId) ?? 0, match.score))
       }
     }
@@ -981,7 +987,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     const facts = include.facts
       ? matchedEdges
           .slice(0, factLimit)
-          .map(match => factResultFromEdge(match.edge, nameMap, match.score, match.family?.name))
+          .map(match => factResultFromEdge(match.edge, nameMap, match.score))
       : []
 
     let passages: PassageResult[] | undefined

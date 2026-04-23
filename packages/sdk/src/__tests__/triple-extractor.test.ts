@@ -108,7 +108,6 @@ describe('TripleExtractor', () => {
     const mentions = vi.mocked(graph.addEntityMentions).mock.calls[0]![0]
     const caesar = mentions.find(m => m.name === 'Cousin Cæsar')!
     expect(caesar.aliases).toEqual(expect.arrayContaining([
-      'Cousin Caeser',
       'Cæsar',
       'Caeser',
       'Cole Conway',
@@ -125,6 +124,114 @@ describe('TripleExtractor', () => {
 
     const paducah = mentions.find(m => m.name === 'Paducah, Kentucky')!
     expect(paducah.aliases).toContain('Paducah')
+  })
+
+  it('does not absorb different same-surname people or heading text as person aliases', async () => {
+    const graph: KnowledgeGraphBridge = {
+      addEntityMentions: vi.fn().mockResolvedValue(undefined),
+      addTriple: vi.fn().mockResolvedValue(undefined),
+    }
+    const extractor = new TripleExtractor({
+      llm: mockLLM({
+        entities: [
+          {
+            name: 'Elsie Inglis',
+            type: 'person',
+            description: 'Doctor and suffrage campaigner.',
+            aliases: [
+              'Inglis',
+              'Elsie',
+              'John Inglis',
+              'David Inglis',
+              'Miss Inglis',
+              'CHAPTER II ELSIE MAUD INGLIS',
+              'KATHERINE INGLIS',
+              'E. M. I.',
+            ],
+          },
+          {
+            name: 'John Inglis',
+            type: 'person',
+            description: 'A different member of the Inglis family.',
+            aliases: [],
+          },
+          {
+            name: 'David Inglis',
+            type: 'person',
+            description: 'Another different member of the Inglis family.',
+            aliases: [],
+          },
+        ],
+        relationships: [],
+      }),
+      graph,
+      twoPass: false,
+    })
+
+    await extractor.extractFromChunk(
+      'CHAPTER II ELSIE MAUD INGLIS. Elsie Inglis wrote to John Inglis and later mentioned David Inglis while KATHERINE INGLIS remained elsewhere.',
+      'bucket-1',
+      0,
+      'doc-1',
+    )
+
+    const mentions = vi.mocked(graph.addEntityMentions).mock.calls[0]![0]
+    const elsie = mentions.find(m => m.name === 'Elsie Inglis')!
+    expect(elsie.aliases).not.toEqual(expect.arrayContaining([
+      'Inglis',
+      'Elsie',
+      'John Inglis',
+      'David Inglis',
+      'Miss Inglis',
+      'CHAPTER II ELSIE MAUD INGLIS',
+      'KATHERINE INGLIS',
+      'E. M. I.',
+    ]))
+  })
+
+  it('passes through structured profession relationships to concept entities', async () => {
+    const graph: KnowledgeGraphBridge = {
+      addEntityMentions: vi.fn().mockResolvedValue(undefined),
+      addTriple: vi.fn().mockResolvedValue(undefined),
+    }
+    const extractor = new TripleExtractor({
+      llm: mockLLM({
+        entities: [
+          {
+            name: 'Elsie Inglis',
+            type: 'person',
+            description: 'Doctor and organizer.',
+            aliases: [],
+          },
+          {
+            name: 'doctor',
+            type: 'concept',
+            description: 'A profession practiced by Elsie Inglis.',
+            aliases: [],
+          },
+        ],
+        relationships: [
+          { subject: 'Elsie Inglis', predicate: 'works_as', object: 'doctor', confidence: 0.92 },
+        ],
+      }),
+      graph,
+      twoPass: false,
+    })
+
+    await extractor.extractFromChunk(
+      'Elsie Inglis was a doctor.',
+      'bucket-1',
+      0,
+      'doc-1',
+    )
+
+    expect(graph.addTriple).toHaveBeenCalledWith(expect.objectContaining({
+      subject: 'Elsie Inglis',
+      subjectType: 'person',
+      predicate: 'WORKS_AS',
+      object: 'doctor',
+      objectType: 'concept',
+    }))
   })
 
   it('rejects greeting, imperative, possessive, and quantifier alias fragments', async () => {
