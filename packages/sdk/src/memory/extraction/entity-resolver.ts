@@ -1,5 +1,6 @@
 import type { EmbeddingProvider } from '../../embedding/provider.js'
 import type { typegraphIdentity } from '../../types/identity.js'
+import type { Visibility } from '../../types/typegraph-document.js'
 import type { SemanticEntity } from '../types/memory.js'
 import type { MemoryStoreAdapter } from '../types/adapter.js'
 import { createTemporal } from '../temporal.js'
@@ -275,7 +276,7 @@ export class EntityResolver {
   private readonly store: MemoryStoreAdapter
   private readonly embedding: EmbeddingProvider
   private readonly threshold: number
-  // In-memory cache: normalized name → entity. Eliminates duplicates from
+  // In-memory cache: scoped normalized name → entity. Eliminates duplicates from
   // DB LIMIT misses and timing races between addTriple calls.
   private readonly nameCache = new Map<string, SemanticEntity>()
 
@@ -285,11 +286,23 @@ export class EntityResolver {
     this.threshold = config.similarityThreshold ?? 0.85
   }
 
+  private cacheKey(name: string, scope: typegraphIdentity, visibility?: Visibility): string {
+    return [
+      visibility ?? '__public__',
+      scope.tenantId ?? '',
+      scope.groupId ?? '',
+      scope.userId ?? '',
+      scope.agentId ?? '',
+      scope.conversationId ?? '',
+      normalizeForComparison(name),
+    ].join('|')
+  }
+
   private cacheEntity(entity: SemanticEntity): void {
-    this.nameCache.set(normalizeForComparison(entity.name), entity)
+    this.nameCache.set(this.cacheKey(entity.name, entity.scope, entity.visibility), entity)
     for (const alias of entity.aliases) {
       if (!isStrongAliasForMerge(alias, entity.entityType, entity.name, entity.aliases)) continue
-      this.nameCache.set(normalizeForComparison(alias), entity)
+      this.nameCache.set(this.cacheKey(alias, entity.scope, entity.visibility), entity)
     }
   }
 
@@ -303,10 +316,11 @@ export class EntityResolver {
     aliases: string[],
     scope: typegraphIdentity,
     description?: string,
+    visibility?: Visibility,
   ): Promise<{ entity: SemanticEntity; isNew: boolean }> {
     // Phase 0: In-memory cache (instant — catches all prior entities in this session)
     const normalizedName = normalizeForComparison(name)
-    const cached = this.nameCache.get(normalizedName)
+    const cached = this.nameCache.get(this.cacheKey(name, scope, visibility))
     if (cached && typesCompatible(entityType, cached.entityType)) {
       const merged = await this.merge(cached, { name, entityType, aliases, description })
       this.cacheEntity(merged)
@@ -315,7 +329,7 @@ export class EntityResolver {
     // Also check aliases against cache (skip invalid aliases to prevent false cache hits)
     for (const alias of aliases) {
       if (!isStrongAliasForMerge(alias, entityType, name, aliases)) continue
-      const cachedByAlias = this.nameCache.get(normalizeForComparison(alias))
+      const cachedByAlias = this.nameCache.get(this.cacheKey(alias, scope, visibility))
       if (cachedByAlias && typesCompatible(entityType, cachedByAlias.entityType)) {
         const merged = await this.merge(cachedByAlias, { name, entityType, aliases, description })
         this.cacheEntity(merged)
@@ -325,7 +339,8 @@ export class EntityResolver {
 
     // Phase 1: Alias matching (cheap — uses ILIKE + ANY index)
     if (this.store.findEntities) {
-      const candidates = await this.store.findEntities(name, scope, 10)
+      const candidates = (await this.store.findEntities(name, scope, 10))
+        .filter(candidate => candidateMatchesWriteScope(candidate, scope, visibility))
       const aliasMatch = this.findByAlias(name, aliases, entityType, candidates)
       if (aliasMatch) {
         const merged = await this.merge(aliasMatch, { name, entityType, aliases, description })
@@ -365,7 +380,8 @@ export class EntityResolver {
     let nameEmbedding: number[] | undefined
     if (this.store.searchEntities) {
       nameEmbedding = await this.embedding.embed(name)
-      const similar = await this.store.searchEntities(nameEmbedding, scope, 5)
+      const similar = (await this.store.searchEntities(nameEmbedding, scope, 5))
+        .filter(candidate => candidateMatchesWriteScope(candidate, scope, visibility))
 
       // Phase 3: Direct name-embedding match
       for (const candidate of similar) {
@@ -417,6 +433,7 @@ export class EntityResolver {
       embedding: nameEmbedding,
       descriptionEmbedding,
       scope,
+      visibility,
       temporal: createTemporal(),
     }
 
@@ -646,6 +663,20 @@ function normalizeForComparison(s: string): string {
     .replace(/\p{Diacritic}/gu, '')
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '')
+}
+
+function candidateMatchesWriteScope(
+  candidate: SemanticEntity,
+  scope: typegraphIdentity,
+  visibility?: Visibility,
+): boolean {
+  if (candidate.visibility !== visibility) return false
+  if (scope.tenantId && candidate.scope.tenantId !== scope.tenantId) return false
+  if (scope.groupId && candidate.scope.groupId !== scope.groupId) return false
+  if (scope.userId && candidate.scope.userId !== scope.userId) return false
+  if (scope.agentId && candidate.scope.agentId !== scope.agentId) return false
+  if (scope.conversationId && candidate.scope.conversationId !== scope.conversationId) return false
+  return true
 }
 
 function nameTokens(s: string): string[] {

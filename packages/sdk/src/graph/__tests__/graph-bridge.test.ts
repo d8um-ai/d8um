@@ -151,7 +151,7 @@ function mockEmbedding() {
 
 describe('createKnowledgeGraphBridge', () => {
   describe('addTriple', () => {
-    it('creates entities, edge, and entity↔chunk mentions from a triple', async () => {
+	    it('creates entities, edge, and entity↔chunk mentions from a triple', async () => {
       const entities = new Map<string, SemanticEntity>()
       const edges: SemanticEdge[] = []
       const mentions: MockMention[] = []
@@ -190,10 +190,101 @@ describe('createKnowledgeGraphBridge', () => {
       expect(store.upsertEntityChunkMentions).toHaveBeenCalled()
       expect(mentions).toHaveLength(2)
       expect(mentions.every(m => m.documentId === 'doc-1' && m.chunkIndex === 0 && m.bucketId === 'bucket-1')).toBe(true)
-      expect(mentions.map(m => m.mentionType).sort()).toEqual(['object', 'subject'])
+	      expect(mentions.map(m => m.mentionType).sort()).toEqual(['object', 'subject'])
+	    })
+
+    it('propagates visibility and identity scope to graph rows from a triple', async () => {
+      const cases = [
+        { visibility: 'tenant' as const, identity: { tenantId: 'tenant-1' } },
+        { visibility: 'group' as const, identity: { groupId: 'group-1' } },
+        { visibility: 'user' as const, identity: { userId: 'user-1' } },
+        { visibility: 'agent' as const, identity: { agentId: 'agent-1' } },
+        { visibility: 'conversation' as const, identity: { conversationId: 'conversation-1' } },
+      ]
+
+      for (const item of cases) {
+        const entities = new Map<string, SemanticEntity>()
+        const edges: SemanticEdge[] = []
+        const store = mockStore(entities, edges)
+        store.upsertPassageEntityEdges = vi.fn().mockResolvedValue(undefined)
+        store.upsertFactRecord = vi.fn().mockImplementation(async fact => fact)
+        const bridge = createKnowledgeGraphBridge({
+          memoryStore: store,
+          embedding: mockEmbedding(),
+          scope: testScope,
+        })
+
+        await bridge.addTriple!({
+          subject: `Subject ${item.visibility}`,
+          subjectType: 'person',
+          predicate: 'leads',
+          object: `Object ${item.visibility}`,
+          objectType: 'organization',
+          content: `Subject ${item.visibility} leads Object ${item.visibility}.`,
+          bucketId: 'bucket-1',
+          documentId: `doc-${item.visibility}`,
+          chunkIndex: 0,
+          ...item.identity,
+          visibility: item.visibility,
+        })
+
+        expect([...entities.values()].every(entity =>
+          entity.visibility === item.visibility
+          && Object.entries(item.identity).every(([key, value]) => entity.scope[key as keyof typeof item.identity] === value)
+        )).toBe(true)
+        expect(edges.every(edge =>
+          edge.visibility === item.visibility
+          && Object.entries(item.identity).every(([key, value]) => edge.scope[key as keyof typeof item.identity] === value)
+        )).toBe(true)
+        expect(store.upsertFactRecord).toHaveBeenCalledWith(expect.objectContaining({
+          visibility: item.visibility,
+          scope: expect.objectContaining(item.identity),
+        }))
+        expect(store.upsertPassageEntityEdges).toHaveBeenCalledWith(expect.arrayContaining([
+          expect.objectContaining({
+            visibility: item.visibility,
+            scope: expect.objectContaining(item.identity),
+          }),
+        ]))
+      }
     })
 
-    it('stores aliases as searchable surface mentions', async () => {
+    it('does not merge same-name group-visible entities across groups in one process', async () => {
+      const entities = new Map<string, SemanticEntity>()
+      const store = mockStore(entities)
+      const bridge = createKnowledgeGraphBridge({
+        memoryStore: store,
+        embedding: mockEmbedding(),
+        scope: testScope,
+      })
+
+      await bridge.addEntityMentions!([{
+        name: 'TypeGraph',
+        type: 'organization',
+        content: 'TypeGraph appears in group A.',
+        bucketId: 'bucket-1',
+        documentId: 'doc-a',
+        chunkIndex: 0,
+        groupId: 'group-a',
+        visibility: 'group',
+      }])
+      await bridge.addEntityMentions!([{
+        name: 'TypeGraph',
+        type: 'organization',
+        content: 'TypeGraph appears in group B.',
+        bucketId: 'bucket-1',
+        documentId: 'doc-b',
+        chunkIndex: 0,
+        groupId: 'group-b',
+        visibility: 'group',
+      }])
+
+      const typegraphEntities = [...entities.values()].filter(entity => entity.name === 'TypeGraph')
+      expect(typegraphEntities).toHaveLength(2)
+      expect(new Set(typegraphEntities.map(entity => entity.scope.groupId))).toEqual(new Set(['group-a', 'group-b']))
+    })
+
+	    it('stores aliases as searchable surface mentions', async () => {
       const entities = new Map<string, SemanticEntity>()
       const edges: SemanticEdge[] = []
       const mentions: MockMention[] = []

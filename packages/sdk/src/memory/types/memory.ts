@@ -143,6 +143,8 @@ export interface SemanticPassageEntityEdge {
   confidence?: number | undefined
   surfaceTexts: string[]
   mentionTypes: EntityMentionType[]
+  scope?: typegraphIdentity | undefined
+  visibility?: Visibility | undefined
   createdAt?: Date | undefined
   updatedAt?: Date | undefined
 }

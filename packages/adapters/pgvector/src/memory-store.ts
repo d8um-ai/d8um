@@ -282,17 +282,29 @@ const PASSAGE_ENTITY_EDGES_DDL = (t: string) => {
     passage_id    TEXT NOT NULL,
     entity_id     TEXT NOT NULL,
     weight        REAL NOT NULL DEFAULT 1.0,
-    mention_count INTEGER NOT NULL DEFAULT 1,
-    confidence    REAL,
-    surface_texts TEXT[] NOT NULL DEFAULT '{}',
-    mention_types TEXT[] NOT NULL DEFAULT '{}',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    mention_count   INTEGER NOT NULL DEFAULT 1,
+    confidence      REAL,
+    surface_texts   TEXT[] NOT NULL DEFAULT '{}',
+    mention_types   TEXT[] NOT NULL DEFAULT '{}',
+    scope           JSONB NOT NULL DEFAULT '{}',
+    tenant_id       TEXT,
+    group_id        TEXT,
+    user_id         TEXT,
+    agent_id        TEXT,
+    conversation_id TEXT,
+    visibility      TEXT CHECK (visibility IS NULL OR visibility IN ('tenant', 'group', 'user', 'agent', 'conversation')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (passage_id, entity_id)
   );
 
   CREATE INDEX IF NOT EXISTS ${idx('entity_idx')} ON ${t} (entity_id);
   CREATE INDEX IF NOT EXISTS ${idx('passage_idx')} ON ${t} (passage_id);
+  CREATE INDEX IF NOT EXISTS ${idx('tenant_group_idx')} ON ${t} (tenant_id, group_id);
+  CREATE INDEX IF NOT EXISTS ${idx('tenant_user_idx')} ON ${t} (tenant_id, user_id);
+  CREATE INDEX IF NOT EXISTS ${idx('tenant_agent_idx')} ON ${t} (tenant_id, agent_id);
+  CREATE INDEX IF NOT EXISTS ${idx('tenant_conversation_idx')} ON ${t} (tenant_id, conversation_id);
+  CREATE INDEX IF NOT EXISTS ${idx('visibility_idx')} ON ${t} (visibility);
 `
 }
 
@@ -394,12 +406,29 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
       }
     }
     await this.ensureChunkMentionShape()
+    await this.ensurePassageEntityEdgeShape()
 
     // Try to create HNSW indexes on entity and memory embeddings.
     // May fail if tables are empty (no embedding dimensions known yet).
     // In that case, created lazily after first entity/memory with embedding is inserted.
     await this.ensureHnswIndex('entity')
     await this.ensureHnswIndex('memory')
+  }
+
+  private async ensurePassageEntityEdgeShape(): Promise<void> {
+    const i = idxPrefix(this.passageEntityEdgesTable)
+    await this.sql(`ALTER TABLE ${this.passageEntityEdgesTable} ADD COLUMN IF NOT EXISTS scope JSONB NOT NULL DEFAULT '{}'`)
+    await this.sql(`ALTER TABLE ${this.passageEntityEdgesTable} ADD COLUMN IF NOT EXISTS tenant_id TEXT`)
+    await this.sql(`ALTER TABLE ${this.passageEntityEdgesTable} ADD COLUMN IF NOT EXISTS group_id TEXT`)
+    await this.sql(`ALTER TABLE ${this.passageEntityEdgesTable} ADD COLUMN IF NOT EXISTS user_id TEXT`)
+    await this.sql(`ALTER TABLE ${this.passageEntityEdgesTable} ADD COLUMN IF NOT EXISTS agent_id TEXT`)
+    await this.sql(`ALTER TABLE ${this.passageEntityEdgesTable} ADD COLUMN IF NOT EXISTS conversation_id TEXT`)
+    await this.sql(`ALTER TABLE ${this.passageEntityEdgesTable} ADD COLUMN IF NOT EXISTS visibility TEXT`)
+    await this.sql(`CREATE INDEX IF NOT EXISTS ${safeIdx(i, 'tenant_group_idx')} ON ${this.passageEntityEdgesTable} (tenant_id, group_id)`)
+    await this.sql(`CREATE INDEX IF NOT EXISTS ${safeIdx(i, 'tenant_user_idx')} ON ${this.passageEntityEdgesTable} (tenant_id, user_id)`)
+    await this.sql(`CREATE INDEX IF NOT EXISTS ${safeIdx(i, 'tenant_agent_idx')} ON ${this.passageEntityEdgesTable} (tenant_id, agent_id)`)
+    await this.sql(`CREATE INDEX IF NOT EXISTS ${safeIdx(i, 'tenant_conversation_idx')} ON ${this.passageEntityEdgesTable} (tenant_id, conversation_id)`)
+    await this.sql(`CREATE INDEX IF NOT EXISTS ${safeIdx(i, 'visibility_idx')} ON ${this.passageEntityEdgesTable} (visibility)`)
   }
 
   /**
@@ -775,31 +804,39 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
     return mapRowToEntity(rows[0]!)
   }
 
-  async getEntity(id: string): Promise<SemanticEntity | null> {
+  async getEntity(id: string, scope?: typegraphIdentity): Promise<SemanticEntity | null> {
+    const identity = buildGraphVisibilityWhere(scope, 1)
+    const scopeClause = identity.where ? `AND ${identity.where}` : ''
     const rows = await this.sqlWithRetry(
       `SELECT id, name, entity_type, aliases, properties, scope,
               tenant_id, group_id, user_id, agent_id, conversation_id, visibility,
               valid_at, invalid_at, created_at, updated_at
-       FROM ${this.entitiesTable} WHERE id = $1`,
-      [id]
+       FROM ${this.entitiesTable}
+       WHERE id = $1
+         ${scopeClause}`,
+      [id, ...identity.params]
     )
     return rows.length > 0 ? mapRowToEntity(rows[0]!) : null
   }
 
-  async getEntitiesBatch(ids: string[]): Promise<SemanticEntity[]> {
+  async getEntitiesBatch(ids: string[], scope?: typegraphIdentity): Promise<SemanticEntity[]> {
     if (ids.length === 0) return []
+    const identity = buildGraphVisibilityWhere(scope, 1)
+    const scopeClause = identity.where ? `AND ${identity.where}` : ''
     const rows = await this.sqlWithRetry(
       `SELECT id, name, entity_type, aliases, properties, scope,
               tenant_id, group_id, user_id, agent_id, conversation_id, visibility,
               valid_at, invalid_at, created_at, updated_at
-       FROM ${this.entitiesTable} WHERE id = ANY($1::text[])`,
-      [ids]
+       FROM ${this.entitiesTable}
+       WHERE id = ANY($1::text[])
+         ${scopeClause}`,
+      [ids, ...identity.params]
     )
     return rows.map(mapRowToEntity)
   }
 
   async findEntities(query: string, scope: typegraphIdentity, limit?: number): Promise<SemanticEntity[]> {
-    const { where, params } = buildIdentityWhere(scope)
+    const { where, params } = buildGraphVisibilityWhere(scope)
     const baseIdx = params.length
     params.push(`%${query}%`)
     const nameParam = `$${baseIdx + 1}`
@@ -828,7 +865,7 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
 
   async searchEntities(embedding: number[], scope: typegraphIdentity, limit?: number): Promise<SemanticEntity[]> {
     const vectorStr = `[${embedding.join(',')}]`
-    const { where, params } = buildIdentityWhere(scope, 1)
+    const { where, params } = buildGraphVisibilityWhere(scope, 1)
     const scopeClause = where ? ` AND ${where}` : ''
     params.push(limit ?? 20)
     const limitParam = `$${1 + params.length}`
@@ -851,7 +888,7 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
     const lowerQuery = query.trim().toLowerCase()
     const maxRows = limit ?? 20
 
-    const identity = buildIdentityWhere(scope, 4)
+    const identity = buildGraphVisibilityWhere(scope, 4, 'e')
     const scopeClause = identity.where ? ` AND ${identity.where}` : ''
 
     const lexicalParams: unknown[] = [lowerQuery, normalizedQuery, likeQuery, maxRows * 4, ...identity.params]
@@ -892,7 +929,7 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
     )
 
     const vectorStr = `[${embedding.join(',')}]`
-    const vectorWhere = buildIdentityWhere(scope, 1)
+    const vectorWhere = buildGraphVisibilityWhere(scope, 1)
     const vectorScopeClause = vectorWhere.where ? ` AND ${vectorWhere.where}` : ''
     const vectorLimitParam = `$${2 + vectorWhere.params.length}`
     const vectorRows = await this.sqlWithRetry(
@@ -983,7 +1020,8 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
     const params: unknown[] = []
     for (const edge of edges) {
       const base = params.length
-      values.push(`($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7})`)
+      const scope = edge.scope ?? {}
+      values.push(`($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},$${base + 9},$${base + 10},$${base + 11},$${base + 12},$${base + 13},$${base + 14})`)
       params.push(
         edge.passageId,
         edge.entityId,
@@ -992,13 +1030,21 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
         edge.confidence ?? null,
         edge.surfaceTexts,
         edge.mentionTypes,
+        JSON.stringify(scope),
+        scope.tenantId ?? null,
+        scope.groupId ?? null,
+        scope.userId ?? null,
+        scope.agentId ?? null,
+        scope.conversationId ?? null,
+        edge.visibility ?? null,
       )
     }
 
     const tbl = unqualified(this.passageEntityEdgesTable)
     await this.sqlWithRetry(
       `INSERT INTO ${this.passageEntityEdgesTable}
-        (passage_id, entity_id, weight, mention_count, confidence, surface_texts, mention_types)
+        (passage_id, entity_id, weight, mention_count, confidence, surface_texts, mention_types,
+         scope, tenant_id, group_id, user_id, agent_id, conversation_id, visibility)
        VALUES ${values.join(',')}
        ON CONFLICT (passage_id, entity_id) DO UPDATE SET
          weight = LEAST(5.0, ${tbl}.weight + EXCLUDED.weight),
@@ -1006,6 +1052,13 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
          confidence = GREATEST(COALESCE(${tbl}.confidence, 0), COALESCE(EXCLUDED.confidence, 0)),
          surface_texts = ARRAY(SELECT DISTINCT v FROM unnest(${tbl}.surface_texts || EXCLUDED.surface_texts) AS v WHERE v <> ''),
          mention_types = ARRAY(SELECT DISTINCT v FROM unnest(${tbl}.mention_types || EXCLUDED.mention_types) AS v WHERE v <> ''),
+         scope = EXCLUDED.scope,
+         tenant_id = EXCLUDED.tenant_id,
+         group_id = EXCLUDED.group_id,
+         user_id = EXCLUDED.user_id,
+         agent_id = EXCLUDED.agent_id,
+         conversation_id = EXCLUDED.conversation_id,
+         visibility = EXCLUDED.visibility,
          updated_at = NOW()`,
       params
     )
@@ -1059,7 +1112,7 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
 
   async searchFacts(embedding: number[], scope: typegraphIdentity, limit?: number): Promise<SemanticFactRecord[]> {
     const vectorStr = `[${embedding.join(',')}]`
-    const identity = buildIdentityWhere(scope, 1)
+    const identity = buildGraphVisibilityWhere(scope, 1)
     const scopeClause = identity.where ? ` AND ${identity.where}` : ''
     const limitParam = `$${2 + identity.params.length}`
     const rows = await this.sqlWithRetry(
@@ -1090,11 +1143,14 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
       params.push(opts.bucketIds)
       bucketClause = `AND p.bucket_id = ANY($${params.length}::text[])`
     }
-    const identity = opts?.scope ? buildAliasedIdentityWhere('p', opts.scope, params.length) : { where: '', params: [] }
-    params.push(...identity.params)
+    const edgeIdentity = buildGraphVisibilityWhere(opts?.scope, params.length, 'pe')
+    params.push(...edgeIdentity.params)
+    const passageIdentity = buildGraphVisibilityWhere(opts?.scope, params.length, 'p')
+    params.push(...passageIdentity.params)
     params.push(opts?.limit ?? entityIds.length * 200)
     const limitParam = `$${params.length}`
-    const scopeClause = identity.where ? `AND ${identity.where}` : ''
+    const edgeScopeClause = edgeIdentity.where ? `AND ${edgeIdentity.where}` : ''
+    const passageScopeClause = passageIdentity.where ? `AND ${passageIdentity.where}` : ''
 
     const rows = await this.sqlWithRetry(
       `SELECT pe.*
@@ -1102,7 +1158,8 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
          JOIN ${this.passageNodesTable} p ON p.id = pe.passage_id
         WHERE pe.entity_id = ANY($1::text[])
           ${bucketClause}
-          ${scopeClause}
+          ${edgeScopeClause}
+          ${passageScopeClause}
         ORDER BY pe.weight DESC, pe.mention_count DESC
         LIMIT ${limitParam}`,
       params
@@ -1114,6 +1171,7 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
     passageIds: string[],
     opts: {
       chunksTable: string
+      scope?: typegraphIdentity | undefined
       bucketIds?: string[] | undefined
     }
   ): Promise<Array<{
@@ -1137,6 +1195,12 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
       params.push(opts.bucketIds)
       bucketClause = `AND p.bucket_id = ANY($${params.length}::text[])`
     }
+    const passageIdentity = buildGraphVisibilityWhere(opts.scope, params.length, 'p')
+    params.push(...passageIdentity.params)
+    const chunkIdentity = buildGraphVisibilityWhere(opts.scope, params.length, 'c')
+    params.push(...chunkIdentity.params)
+    const passageScopeClause = passageIdentity.where ? `AND ${passageIdentity.where}` : ''
+    const chunkScopeClause = chunkIdentity.where ? `AND ${chunkIdentity.where}` : ''
     const rows = await this.sqlWithRetry(
       `SELECT p.id AS passage_id, c.content, c.bucket_id, c.document_id, c.chunk_index,
               c.total_chunks, c.metadata, c.tenant_id, c.group_id, c.user_id,
@@ -1147,7 +1211,9 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
           AND p.chunk_index = c.chunk_index
           AND p.bucket_id = c.bucket_id
         WHERE p.id = ANY($1::text[])
-          ${bucketClause}`,
+          ${bucketClause}
+          ${passageScopeClause}
+          ${chunkScopeClause}`,
       params
     )
     return rows.map(mapRowToPassageContent)
@@ -1183,11 +1249,14 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
       params.push(opts.bucketIds)
       bucketClause = `AND p.bucket_id = ANY($${params.length}::text[])`
     }
-    const identity = buildAliasedIdentityWhere('p', scope, params.length)
-    params.push(...identity.params)
+    const passageIdentity = buildGraphVisibilityWhere(scope, params.length, 'p')
+    params.push(...passageIdentity.params)
+    const chunkIdentity = buildGraphVisibilityWhere(scope, params.length, 'c')
+    params.push(...chunkIdentity.params)
     params.push(opts.limit ?? 200)
     const limitParam = `$${params.length}`
-    const scopeClause = identity.where ? `AND ${identity.where}` : ''
+    const passageScopeClause = passageIdentity.where ? `AND ${passageIdentity.where}` : ''
+    const chunkScopeClause = chunkIdentity.where ? `AND ${chunkIdentity.where}` : ''
 
     const rows = await this.sqlWithRetry(
       `SELECT p.id AS passage_id, c.content, c.bucket_id, c.document_id, c.chunk_index,
@@ -1201,7 +1270,8 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
           AND p.bucket_id = c.bucket_id
         WHERE c.embedding IS NOT NULL
           ${bucketClause}
-          ${scopeClause}
+          ${passageScopeClause}
+          ${chunkScopeClause}
         ORDER BY c.embedding <=> $1::vector
         LIMIT ${limitParam}`,
       params
@@ -1249,35 +1319,38 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
     return mapRowToEdge(rows[0]!)
   }
 
-  async getEdges(entityId: string, direction?: 'in' | 'out' | 'both'): Promise<SemanticEdge[]> {
+  async getEdges(entityId: string, direction?: 'in' | 'out' | 'both', scope?: typegraphIdentity): Promise<SemanticEdge[]> {
     let query: string
-    const params = [entityId]
+    const identity = buildGraphVisibilityWhere(scope, 1)
+    const scopeClause = identity.where ? `AND ${identity.where}` : ''
+    const params = [entityId, ...identity.params]
     if (direction === 'in') {
-      query = `SELECT * FROM ${this.edgesTable} WHERE target_entity_id = $1 AND invalid_at IS NULL`
+      query = `SELECT * FROM ${this.edgesTable} WHERE target_entity_id = $1 AND invalid_at IS NULL ${scopeClause}`
     } else if (direction === 'out') {
-      query = `SELECT * FROM ${this.edgesTable} WHERE source_entity_id = $1 AND invalid_at IS NULL`
+      query = `SELECT * FROM ${this.edgesTable} WHERE source_entity_id = $1 AND invalid_at IS NULL ${scopeClause}`
     } else {
-      query = `SELECT * FROM ${this.edgesTable} WHERE (source_entity_id = $1 OR target_entity_id = $1) AND invalid_at IS NULL`
+      query = `SELECT * FROM ${this.edgesTable} WHERE (source_entity_id = $1 OR target_entity_id = $1) AND invalid_at IS NULL ${scopeClause}`
     }
     const rows = await this.sqlWithRetry(query, params)
     return rows.map(mapRowToEdge)
   }
 
-  async getEdgesBatch(entityIds: string[], direction: 'in' | 'out' | 'both' = 'both'): Promise<SemanticEdge[]> {
+  async getEdgesBatch(entityIds: string[], direction: 'in' | 'out' | 'both' = 'both', scope?: typegraphIdentity): Promise<SemanticEdge[]> {
     if (entityIds.length === 0) return []
+    const identity = buildGraphVisibilityWhere(scope, 1)
+    const scopeClause = identity.where ? `AND ${identity.where}` : ''
     let query: string
     if (direction === 'out') {
-      query = `SELECT * FROM ${this.edgesTable} WHERE source_entity_id = ANY($1::text[]) AND invalid_at IS NULL`
+      query = `SELECT * FROM ${this.edgesTable} WHERE source_entity_id = ANY($1::text[]) AND invalid_at IS NULL ${scopeClause}`
     } else if (direction === 'in') {
-      query = `SELECT * FROM ${this.edgesTable} WHERE target_entity_id = ANY($1::text[]) AND invalid_at IS NULL`
+      query = `SELECT * FROM ${this.edgesTable} WHERE target_entity_id = ANY($1::text[]) AND invalid_at IS NULL ${scopeClause}`
     } else {
-      // UNION ALL lets Postgres use each B-tree index separately (faster than bitmap OR).
-      // Duplicates (edges where both endpoints are in the set) are expected — callers deduplicate by edge ID.
-      query = `SELECT * FROM ${this.edgesTable} WHERE source_entity_id = ANY($1::text[]) AND invalid_at IS NULL
-               UNION ALL
-               SELECT * FROM ${this.edgesTable} WHERE target_entity_id = ANY($1::text[]) AND invalid_at IS NULL`
+      query = `SELECT * FROM ${this.edgesTable}
+               WHERE (source_entity_id = ANY($1::text[]) OR target_entity_id = ANY($1::text[]))
+                 AND invalid_at IS NULL
+                 ${scopeClause}`
     }
-    const rows = await this.sqlWithRetry(query, [entityIds])
+    const rows = await this.sqlWithRetry(query, [entityIds, ...identity.params])
     return rows.map(mapRowToEdge)
   }
 
@@ -1460,46 +1533,63 @@ export class PgMemoryStoreAdapter implements MemoryStoreAdapter {
     return (rows[0]?.['n'] as number) ?? 0
   }
 
-  async countEntities(): Promise<number> {
+  async countEntities(scope?: typegraphIdentity): Promise<number> {
+    const identity = buildGraphVisibilityWhere(scope)
+    const scopeClause = identity.where ? `AND ${identity.where}` : ''
     const rows = await this.sqlWithRetry(
-      `SELECT COUNT(*)::integer AS n FROM ${this.entitiesTable} WHERE invalid_at IS NULL`
+      `SELECT COUNT(*)::integer AS n FROM ${this.entitiesTable} WHERE invalid_at IS NULL ${scopeClause}`,
+      identity.params
     )
     return (rows[0]?.['n'] as number) ?? 0
   }
 
-  async countEdges(): Promise<number> {
+  async countEdges(scope?: typegraphIdentity): Promise<number> {
+    const identity = buildGraphVisibilityWhere(scope)
+    const scopeClause = identity.where ? `AND ${identity.where}` : ''
     const rows = await this.sqlWithRetry(
-      `SELECT COUNT(*)::integer AS n FROM ${this.edgesTable} WHERE invalid_at IS NULL`
+      `SELECT COUNT(*)::integer AS n FROM ${this.edgesTable} WHERE invalid_at IS NULL ${scopeClause}`,
+      identity.params
     )
     return (rows[0]?.['n'] as number) ?? 0
   }
 
-  async getRelationTypes(): Promise<Array<{ relation: string; count: number }>> {
+  async getRelationTypes(scope?: typegraphIdentity): Promise<Array<{ relation: string; count: number }>> {
+    const identity = buildGraphVisibilityWhere(scope)
+    const scopeClause = identity.where ? `AND ${identity.where}` : ''
     const rows = await this.sqlWithRetry(
       `SELECT relation, COUNT(*)::integer AS count FROM ${this.edgesTable}
        WHERE invalid_at IS NULL
-       GROUP BY relation ORDER BY count DESC`
+         ${scopeClause}
+       GROUP BY relation ORDER BY count DESC`,
+      identity.params
     )
     return rows.map(r => ({ relation: r.relation as string, count: r.count as number }))
   }
 
-  async getEntityTypes(): Promise<Array<{ entityType: string; count: number }>> {
+  async getEntityTypes(scope?: typegraphIdentity): Promise<Array<{ entityType: string; count: number }>> {
+    const identity = buildGraphVisibilityWhere(scope)
+    const scopeClause = identity.where ? `AND ${identity.where}` : ''
     const rows = await this.sqlWithRetry(
       `SELECT entity_type, COUNT(*)::integer AS count FROM ${this.entitiesTable}
        WHERE invalid_at IS NULL
-       GROUP BY entity_type ORDER BY count DESC`
+         ${scopeClause}
+       GROUP BY entity_type ORDER BY count DESC`,
+      identity.params
     )
     return rows.map(r => ({ entityType: r.entity_type as string, count: r.count as number }))
   }
 
-  async getDegreeDistribution(): Promise<Array<{ degree: number; count: number }>> {
+  async getDegreeDistribution(scope?: typegraphIdentity): Promise<Array<{ degree: number; count: number }>> {
+    const identity = buildGraphVisibilityWhere(scope)
+    const scopeClause = identity.where ? `AND ${identity.where}` : ''
     const rows = await this.sqlWithRetry(
       `SELECT degree, COUNT(*)::integer AS count FROM (
-         SELECT source_entity_id AS eid, COUNT(*)::integer AS degree FROM ${this.edgesTable} WHERE invalid_at IS NULL GROUP BY source_entity_id
+         SELECT source_entity_id AS eid, COUNT(*)::integer AS degree FROM ${this.edgesTable} WHERE invalid_at IS NULL ${scopeClause} GROUP BY source_entity_id
          UNION ALL
-         SELECT target_entity_id AS eid, COUNT(*)::integer AS degree FROM ${this.edgesTable} WHERE invalid_at IS NULL GROUP BY target_entity_id
+         SELECT target_entity_id AS eid, COUNT(*)::integer AS degree FROM ${this.edgesTable} WHERE invalid_at IS NULL ${scopeClause} GROUP BY target_entity_id
        ) sub
-       GROUP BY degree ORDER BY degree`
+       GROUP BY degree ORDER BY degree`,
+      identity.params
     )
     return rows.map(r => ({ degree: r.degree as number, count: r.count as number }))
   }
@@ -1644,6 +1734,8 @@ function mapRowToPassageEntityEdge(row: Record<string, unknown>): SemanticPassag
     confidence: (row.confidence as number | null) ?? undefined,
     surfaceTexts: (row.surface_texts as string[] | null) ?? [],
     mentionTypes: (row.mention_types as SemanticPassageEntityEdge['mentionTypes'] | null) ?? [],
+    scope: rowToIdentity(row),
+    visibility: (row.visibility as SemanticPassageEntityEdge['visibility']) ?? undefined,
     createdAt: row.created_at ? new Date(row.created_at as string) : undefined,
     updatedAt: row.updated_at ? new Date(row.updated_at as string) : undefined,
   }
@@ -1839,6 +1931,62 @@ function buildIdentityWhere(
   if (identity.userId) { params.push(identity.userId); conditions.push(`user_id = ${p()}`) }
   if (identity.agentId) { params.push(identity.agentId); conditions.push(`agent_id = ${p()}`) }
   if (identity.conversationId) { params.push(identity.conversationId); conditions.push(`conversation_id = ${p()}`) }
+
+  return {
+    where: conditions.join(' AND '),
+    params,
+  }
+}
+
+function buildGraphVisibilityWhere(
+  identity: typegraphIdentity | undefined,
+  paramOffset = 0,
+  alias?: string,
+): { where: string; params: unknown[] } {
+  const conditions: string[] = []
+  const params: unknown[] = []
+  const p = () => `$${paramOffset + params.length}`
+  const col = (name: string) => alias ? `${alias}.${name}` : name
+
+  let tenantParam: string | undefined
+  let groupParam: string | undefined
+  let userParam: string | undefined
+  let agentParam: string | undefined
+  let conversationParam: string | undefined
+
+  if (identity?.tenantId) {
+    params.push(identity.tenantId)
+    tenantParam = p()
+    conditions.push(`${col('tenant_id')} = ${tenantParam}`)
+  }
+  if (identity?.groupId) {
+    params.push(identity.groupId)
+    groupParam = p()
+    conditions.push(`${col('group_id')} = ${groupParam}`)
+  }
+  if (identity?.userId) {
+    params.push(identity.userId)
+    userParam = p()
+    conditions.push(`${col('user_id')} = ${userParam}`)
+  }
+  if (identity?.agentId) {
+    params.push(identity.agentId)
+    agentParam = p()
+    conditions.push(`${col('agent_id')} = ${agentParam}`)
+  }
+  if (identity?.conversationId) {
+    params.push(identity.conversationId)
+    conversationParam = p()
+    conditions.push(`${col('conversation_id')} = ${conversationParam}`)
+  }
+
+  const visibilityBranches = [`${col('visibility')} IS NULL`]
+  if (tenantParam) visibilityBranches.push(`(${col('visibility')} = 'tenant' AND ${col('tenant_id')} = ${tenantParam})`)
+  if (groupParam) visibilityBranches.push(`(${col('visibility')} = 'group' AND ${col('group_id')} = ${groupParam})`)
+  if (userParam) visibilityBranches.push(`(${col('visibility')} = 'user' AND ${col('user_id')} = ${userParam})`)
+  if (agentParam) visibilityBranches.push(`(${col('visibility')} = 'agent' AND ${col('agent_id')} = ${agentParam})`)
+  if (conversationParam) visibilityBranches.push(`(${col('visibility')} = 'conversation' AND ${col('conversation_id')} = ${conversationParam})`)
+  conditions.push(`(${visibilityBranches.join(' OR ')})`)
 
   return {
     where: conditions.join(' AND '),

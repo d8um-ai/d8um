@@ -52,6 +52,7 @@ function sanitizeInvalidSurrogates(value: string): string {
 function sanitizeDocument(doc: RawDocument): RawDocument {
   return {
     ...doc,
+    url: doc.url ?? undefined,
     title: sanitizeText(doc.title),
     content: sanitizeText(doc.content),
   }
@@ -116,7 +117,7 @@ export class IndexEngine {
         agentId,
         conversationId,
         title: cleanDoc.title,
-        url: cleanDoc.url,
+        url: cleanDoc.url ?? undefined,
         contentHash,
         chunkCount: cleanChunks.length,
         status: 'processing',
@@ -181,6 +182,7 @@ export class IndexEngine {
           propagated,
           documentTitle,
           { tenantId, groupId, userId, agentId, conversationId },
+          visibility,
         )
       }
 
@@ -331,7 +333,7 @@ export class IndexEngine {
           agentId,
           conversationId,
           title: doc.title,
-          url: doc.url,
+          url: doc.url ?? undefined,
           contentHash,
           chunkCount: chunks.length,
           status: 'processing',
@@ -409,6 +411,7 @@ export class IndexEngine {
           propagated,
           documentTitle,
           { tenantId, groupId, userId, agentId, conversationId },
+          visibility,
         )
 
         if (!result.extraction) result.extraction = { succeeded: 0, failed: 0 }
@@ -538,6 +541,7 @@ export class IndexEngine {
       agentId?: string | undefined
       conversationId?: string | undefined
     },
+    visibility?: IngestOptions['visibility'],
   ): Promise<{ succeeded: number; failed: number; failedChunks?: ExtractionFailure[] }> {
     let entityContext: EntityContext[] = []
     let succeeded = 0
@@ -560,6 +564,7 @@ export class IndexEngine {
             contextForChunk,
             documentTitle,
             identity,
+            visibility,
           ),
           TRIPLE_EXTRACTION_TIMEOUT_MS,
         )

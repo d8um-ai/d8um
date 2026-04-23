@@ -4,7 +4,7 @@ export interface RawDocument<TMeta extends Record<string, unknown> = Record<stri
   title: string
   updatedAt?: Date | undefined
 
-  url?: string | undefined
+  url?: string | null | undefined
   createdAt?: Date | undefined
   mimeType?: string | undefined
   language?: string | undefined
@@ -22,4 +22,3 @@ export interface Chunk {
   chunkIndex: number
   metadata?: Record<string, unknown> | undefined
 }
-

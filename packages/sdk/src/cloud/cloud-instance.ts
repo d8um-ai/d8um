@@ -110,15 +110,22 @@ export function createCloudInstance(config: CloudConfig): typegraphCloudInstance
     }): Promise<EntityResult[]> {
       return client.post<EntityResult[]>('/v1/graph/entities/search', { query, identity, ...opts })
     },
-    async getEntity(id: string): Promise<EntityDetail | null> {
-      return client.get<EntityDetail | null>(`/v1/graph/entities/${e(id)}`)
+    async getEntity(id: string, opts?: typegraphIdentity): Promise<EntityDetail | null> {
+      const params = new URLSearchParams()
+      for (const [key, value] of Object.entries(opts ?? {})) {
+        if (typeof value === 'string') params.set(key, value)
+      }
+      const query = params.toString()
+      return client.get<EntityDetail | null>(`/v1/graph/entities/${e(id)}${query ? `?${query}` : ''}`)
     },
     async getEdges(entityId: string, opts?: {
       direction?: 'in' | 'out' | 'both'
       relation?: string
       limit?: number
-    }): Promise<EdgeResult[]> {
-      return client.post<EdgeResult[]>(`/v1/graph/entities/${e(entityId)}/edges`, opts)
+    } & typegraphIdentity): Promise<EdgeResult[]> {
+      const { tenantId, groupId, userId, agentId, conversationId, ...rest } = opts ?? {}
+      const identity = { tenantId, groupId, userId, agentId, conversationId }
+      return client.post<EdgeResult[]>(`/v1/graph/entities/${e(entityId)}/edges`, { ...rest, identity })
     },
     async searchFacts(query: string, opts?: FactSearchOpts): Promise<FactResult[]> {
       const { tenantId, groupId, userId, agentId, conversationId, ...rest } = opts ?? {}
@@ -133,8 +140,10 @@ export function createCloudInstance(config: CloudConfig): typegraphCloudInstance
     async getPassagesForEntity(entityId: string, opts?: {
       bucketIds?: string[] | undefined
       limit?: number | undefined
-    }): Promise<PassageResult[]> {
-      return client.post<PassageResult[]>(`/v1/graph/entities/${e(entityId)}/passages`, opts)
+    } & typegraphIdentity): Promise<PassageResult[]> {
+      const { tenantId, groupId, userId, agentId, conversationId, ...rest } = opts ?? {}
+      const identity = { tenantId, groupId, userId, agentId, conversationId }
+      return client.post<PassageResult[]>(`/v1/graph/entities/${e(entityId)}/passages`, { ...rest, identity })
     },
     async explainQuery(query: string, opts?: GraphExplainOpts): Promise<GraphSearchTrace> {
       const { tenantId, groupId, userId, agentId, conversationId, ...rest } = opts ?? {}

@@ -135,6 +135,36 @@ describe('IndexEngine', () => {
       expect(stored[0]!.metadata.url).toBe('https://example.com')
     })
 
+    it('normalizes url=null to no URL during batch ingest', async () => {
+      const doc = createTestDocument({ id: 'doc-null-url', url: null })
+      const { bucket, ingestOptions } = createMockBucket({ documents: [doc] })
+      const engine = new IndexEngine(adapter, embedding)
+      await ingestDocs(engine, bucket.id, [doc], ingestOptions)
+
+      const recordCall = adapter.calls.find(c => c.method === 'upsertDocumentRecord')!
+      expect(recordCall.args[0].url).toBeUndefined()
+      const stored = adapter._chunks.get(embeddingModelKey(embedding))!
+      expect(stored[0]!.metadata.url).toBeUndefined()
+    })
+
+    it('normalizes url=null to no URL during pre-chunked ingest', async () => {
+      const doc = createTestDocument({ id: 'doc-null-url-prechunked', url: null })
+      const { bucket } = createMockBucket({ documents: [] })
+      const engine = new IndexEngine(adapter, embedding)
+
+      const result = await engine.ingestWithChunks(
+        bucket.id,
+        doc,
+        [{ content: 'Chunk content', chunkIndex: 0 }],
+      )
+
+      expect(result.inserted).toBe(1)
+      const recordCall = adapter.calls.find(c => c.method === 'upsertDocumentRecord')!
+      expect(recordCall.args[0].url).toBeUndefined()
+      const stored = adapter._chunks.get(embeddingModelKey(embedding))!
+      expect(stored[0]!.metadata.url).toBeUndefined()
+    })
+
     it('propagates custom metadata fields', async () => {
       const doc = createTestDocument({
         metadata: { category: 'tech', priority: 'high' },

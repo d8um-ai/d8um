@@ -178,13 +178,14 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
   async function hydrateEntityResults(
     semanticEntities: SemanticEntity[],
     similarityById?: Map<string, number>,
+    identity?: typegraphIdentity,
   ): Promise<EntityResult[]> {
     const resultIds = uniqueIds(semanticEntities.map(entity => entity.id))
     const edgeIdsByEntity = new Map<string, Set<string>>()
     for (const id of resultIds) edgeIdsByEntity.set(id, new Set())
 
     if (resultIds.length > 0) {
-      const edges = await graph.getEdgesBatch(resultIds, 'both')
+      const edges = await graph.getEdgesBatch(resultIds, 'both', identity)
       for (const edge of edges) {
         edgeIdsByEntity.get(edge.sourceEntityId)?.add(edge.id)
         edgeIdsByEntity.get(edge.targetEntityId)?.add(edge.id)
@@ -213,10 +214,11 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
   async function hydrateEntityResultsById(
     entityIds: string[],
     similarityById?: Map<string, number>,
+    identity?: typegraphIdentity,
   ): Promise<EntityResult[]> {
     if (entityIds.length === 0) return []
-    const entities = await graph.getEntitiesBatch(uniqueIds(entityIds))
-    return hydrateEntityResults(entities, similarityById)
+    const entities = await graph.getEntitiesBatch(uniqueIds(entityIds), identity)
+    return hydrateEntityResults(entities, similarityById, identity)
   }
 
   function edgeResultFromSemanticEdge(edge: SemanticEdge, nameMap: Map<string, string>): EdgeResult {
@@ -345,6 +347,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     userId?: string | undefined
     agentId?: string | undefined
     conversationId?: string | undefined
+    visibility?: import('../types/typegraph-document.js').Visibility | undefined
     confidence?: number | undefined
     mentionType: SemanticEntityMention['mentionType']
   }): Promise<SemanticEntity> {
@@ -361,6 +364,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       input.aliases ?? [],
       scope,
       input.description,
+      input.visibility,
     )
 
     await graph.addEntity(result.entity)
@@ -399,6 +403,8 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
         confidence: input.confidence,
         surfaceTexts: uniqueSurfaceTexts,
         mentionTypes: [input.mentionType],
+        scope,
+        visibility: input.visibility,
       }])
     }
 
@@ -419,6 +425,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     userId?: string | undefined
     agentId?: string | undefined
     conversationId?: string | undefined
+    visibility?: import('../types/typegraph-document.js').Visibility | undefined
     metadata?: Record<string, unknown> | undefined
     confidence?: number | undefined
   }>): Promise<void> {
@@ -437,6 +444,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
         userId: mention.userId,
         agentId: mention.agentId,
         conversationId: mention.conversationId,
+        visibility: mention.visibility,
         confidence: mention.confidence,
         mentionType: 'entity',
       })
@@ -463,6 +471,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     userId?: string | undefined
     agentId?: string | undefined
     conversationId?: string | undefined
+    visibility?: import('../types/typegraph-document.js').Visibility | undefined
     metadata?: Record<string, unknown>
   }): Promise<void> {
     const scope = mergeScope(defaultScope, {
@@ -492,6 +501,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       userId: triple.userId,
       agentId: triple.agentId,
       conversationId: triple.conversationId,
+      visibility: triple.visibility,
       confidence: triple.confidence,
       mentionType: 'subject',
     })
@@ -508,6 +518,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       userId: triple.userId,
       agentId: triple.agentId,
       conversationId: triple.conversationId,
+      visibility: triple.visibility,
       confidence: triple.confidence,
       mentionType: 'object',
     })
@@ -533,6 +544,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       weight,
       properties: triple.metadata ? { metadata: triple.metadata } : {},
       scope,
+      visibility: triple.visibility,
       temporal: createTemporal(),
       evidence: [],
     }
@@ -553,6 +565,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
         evidenceCount: Math.max(1, Math.round(storedEdge.weight)),
         embedding: factEmbedding,
         scope,
+        visibility: storedEdge.visibility,
         createdAt: storedEdge.temporal.createdAt,
         updatedAt: new Date(),
       })
@@ -591,6 +604,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
               weight: 0.3,
               properties: {},
               scope,
+              visibility: triple.visibility,
               temporal: createTemporal(),
               evidence: [],
             })
@@ -629,11 +643,12 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       if (typeof similarity === 'number') similarityById.set(entity.id, similarity)
     }
 
-    return hydrateEntityResults(entities, similarityById)
+    return hydrateEntityResults(entities, similarityById, identity)
   }
 
   async function getAdjacencyList(
     entityIds: string[],
+    identity?: typegraphIdentity,
   ): Promise<Map<string, Array<{ target: string; weight: number }>>> {
     const adjacency = new Map<string, Array<{ target: string; weight: number }>>()
 
@@ -654,7 +669,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     const allEntityIds = new Set(entityIds)
     const neighborEdges: SemanticEdge[] = []
 
-    const seedEdges = await graph.getEdgesBatch(entityIds, 'both')
+    const seedEdges = await graph.getEdgesBatch(entityIds, 'both', identity)
     for (const edge of seedEdges) {
       neighborEdges.push(edge)
       allEntityIds.add(edge.sourceEntityId)
@@ -663,7 +678,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
 
     const firstHopIds = [...allEntityIds].filter(id => !entityIds.includes(id)).slice(0, 100)
     if (firstHopIds.length > 0) {
-      const firstHopEdges = await graph.getEdgesBatch(firstHopIds, 'both')
+      const firstHopEdges = await graph.getEdgesBatch(firstHopIds, 'both', identity)
       for (const edge of firstHopEdges) {
         neighborEdges.push(edge)
         allEntityIds.add(edge.sourceEntityId)
@@ -673,7 +688,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       const seenIds = new Set<string>([...entityIds, ...firstHopIds])
       const secondHopIds = [...allEntityIds].filter(id => !seenIds.has(id)).slice(0, 100)
       if (secondHopIds.length > 0) {
-        const secondHopEdges = await graph.getEdgesBatch(secondHopIds, 'both')
+        const secondHopEdges = await graph.getEdgesBatch(secondHopIds, 'both', identity)
         neighborEdges.push(...secondHopEdges)
       }
     }
@@ -758,7 +773,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       conversationId: opts.conversationId,
     }
     const facts = await memoryStore.searchFacts(queryEmbedding, identity, opts.limit ?? 20)
-    return hydrateFacts(facts)
+    return hydrateFacts(facts, identity)
   }
 
   async function explore(
@@ -837,7 +852,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       anchors.map(anchor => [anchor.id, normalizeSeedScore(anchor.similarity ?? 1)]),
     )
     const subgraphDepth: 1 | 2 = parsed.intent.mode === 'attribute' ? 1 : depth
-    const subgraph = await graph.getSubgraph(anchors.map(anchor => anchor.id), subgraphDepth)
+    const subgraph = await graph.getSubgraph(anchors.map(anchor => anchor.id), subgraphDepth, identity)
     const entityById = new Map(subgraph.entities.map(entity => [entity.id, entity]))
     const nameMap = new Map(subgraph.entities.map(entity => [entity.id, entity.name]))
     const adjacency = new Map<string, string[]>()
@@ -985,7 +1000,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     }
 
     const entityResults = include.entities
-      ? (await hydrateEntityResultsById([...entityScoreById.keys()])).map(entity => ({
+      ? (await hydrateEntityResultsById([...entityScoreById.keys()], undefined, identity)).map(entity => ({
           ...entity,
           properties: {
             ...(entity.properties ?? {}),
@@ -1014,6 +1029,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
         const connectedPassages = await getPassagesForEntity(entityId, {
           bucketIds: opts.bucketIds,
           limit: passageLimit,
+          ...identity,
         })
         const entityScore = entityScoreById.get(entityId) ?? 0
         for (const passage of connectedPassages) {
@@ -1046,9 +1062,17 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
   async function getPassagesForEntity(entityId: string, opts?: {
     bucketIds?: string[] | undefined
     limit?: number | undefined
-  }): Promise<PassageResult[]> {
+  } & typegraphIdentity): Promise<PassageResult[]> {
     if (!memoryStore.getPassageEdgesForEntities || !memoryStore.getPassagesByIds || !config.resolveChunksTable) return []
+    const identity = {
+      tenantId: opts?.tenantId,
+      groupId: opts?.groupId,
+      userId: opts?.userId,
+      agentId: opts?.agentId,
+      conversationId: opts?.conversationId,
+    }
     const passageEdges = await memoryStore.getPassageEdgesForEntities([entityId], {
+      scope: identity,
       bucketIds: opts?.bucketIds,
       limit: opts?.limit ?? 20,
     })
@@ -1056,7 +1080,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     const chunksTable = await config.resolveChunksTable(embeddingModelKey(embedding))
     const passageRows = await memoryStore.getPassagesByIds(
       passageEdges.map(edge => edge.passageId),
-      { chunksTable, bucketIds: opts?.bucketIds },
+      { chunksTable, bucketIds: opts?.bucketIds, scope: identity },
     )
     const scoreByPassage = new Map(passageEdges.map(edge => [edge.passageId, edge.weight]))
     return passageRows
@@ -1123,7 +1147,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       : []
     let selectedFacts = factCandidates.slice(0, factSeedLimit)
     if (opts.factFilter && config.factRelevanceFilter && factCandidates.length > 0) {
-      const filterInput = await hydrateFacts(factCandidates.slice(0, factFilterInputLimit))
+      const filterInput = await hydrateFacts(factCandidates.slice(0, factFilterInputLimit), identity)
       try {
         const selectedIds = new Set(await config.factRelevanceFilter(query, filterInput))
         selectedFacts = factCandidates.filter(f => selectedIds.has(f.id)).slice(0, factSeedLimit)
@@ -1172,7 +1196,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
 
     const entitySeedIds = [...entitySeeds.keys()]
     const entityAdjacency = entitySeedIds.length > 0
-      ? await getAdjacencyList(entitySeedIds)
+      ? await getAdjacencyList(entitySeedIds, identity)
       : new Map<string, Array<{ target: string; weight: number }>>()
     for (const [entityId, edges] of entityAdjacency) {
       for (const edge of edges.slice(0, maxExpansionEdgesPerEntity)) {
@@ -1224,7 +1248,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       .slice(0, Math.max(0, count - scoredPassageIds.length))
     const passageIds = [...scoredPassageIds, ...fallbackPassageIds]
     const passageRows = memoryStore.getPassagesByIds && passageIds.length > 0
-      ? await memoryStore.getPassagesByIds(passageIds, { chunksTable, bucketIds: opts.bucketIds })
+      ? await memoryStore.getPassagesByIds(passageIds, { chunksTable, bucketIds: opts.bucketIds, scope: identity })
       : []
     const denseScoreByPassage = new Map(passageSeedRows.map(row => [row.passageId, row.similarity]))
     const results = passageRows
@@ -1277,10 +1301,10 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     return result.trace
   }
 
-  async function hydrateFacts(facts: SemanticFactRecord[]): Promise<FactResult[]> {
+  async function hydrateFacts(facts: SemanticFactRecord[], identity?: typegraphIdentity): Promise<FactResult[]> {
     if (facts.length === 0) return []
     const entityIds = [...new Set(facts.flatMap(f => [f.sourceEntityId, f.targetEntityId]))]
-    const entities = await graph.getEntitiesBatch(entityIds)
+    const entities = await graph.getEntitiesBatch(entityIds, identity)
     const nameMap = new Map(entities.map(entity => [entity.id, entity.name]))
     return facts.map(fact => ({
       id: fact.id,
@@ -1466,11 +1490,11 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
 
   // ── Graph Exploration ──
 
-  async function getEntity(id: string): Promise<EntityDetail | null> {
-    const entity = await graph.getEntity(id)
+  async function getEntity(id: string, opts: typegraphIdentity = {}): Promise<EntityDetail | null> {
+    const entity = await graph.getEntity(id, opts)
     if (!entity) return null
 
-    const edges = await graph.getEdges(id, 'both')
+    const edges = await graph.getEdges(id, 'both', opts)
     const neighborIds = new Set<string>()
     for (const e of edges) {
       neighborIds.add(e.sourceEntityId)
@@ -1478,7 +1502,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     }
     neighborIds.delete(id)
     const nameMap = new Map<string, string>([[id, entity.name]])
-    const neighbors = await graph.getEntitiesBatch([...neighborIds])
+    const neighbors = await graph.getEntitiesBatch([...neighborIds], opts)
     for (const n of neighbors) nameMap.set(n.id, n.name)
 
     const topEdges: EdgeResult[] = edges
@@ -1514,8 +1538,15 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     direction?: 'in' | 'out' | 'both'
     relation?: string
     limit?: number
-  }): Promise<EdgeResult[]> {
-    let edges = await graph.getEdges(entityId, opts?.direction ?? 'both')
+  } & typegraphIdentity): Promise<EdgeResult[]> {
+    const identity = {
+      tenantId: opts?.tenantId,
+      groupId: opts?.groupId,
+      userId: opts?.userId,
+      agentId: opts?.agentId,
+      conversationId: opts?.conversationId,
+    }
+    let edges = await graph.getEdges(entityId, opts?.direction ?? 'both', identity)
     if (opts?.relation) {
       edges = edges.filter(e => e.relation === opts.relation)
     }
@@ -1526,7 +1557,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
       entityIds.add(e.targetEntityId)
     }
     const nameMap = new Map<string, string>()
-    const ents = await graph.getEntitiesBatch([...entityIds])
+    const ents = await graph.getEntitiesBatch([...entityIds], identity)
     for (const ent of ents) nameMap.set(ent.id, ent.name)
 
     const limit = opts?.limit ?? 50
@@ -1556,7 +1587,7 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     }
 
     const depth = Math.min(opts.depth ?? 1, 3)
-    const sub = await graph.getSubgraph(seedIds, depth)
+    const sub = await graph.getSubgraph(seedIds, depth, opts.identity)
 
     let entities = sub.entities
     let edges = sub.edges
@@ -1629,12 +1660,12 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     }
   }
 
-  async function getGraphStats(_identity: typegraphIdentity): Promise<GraphStats> {
-    const totalEntities = memoryStore.countEntities ? await memoryStore.countEntities() : 0
-    const totalEdges = memoryStore.countEdges ? await memoryStore.countEdges() : 0
-    const topRelations = memoryStore.getRelationTypes ? await memoryStore.getRelationTypes() : []
-    const topEntityTypes = memoryStore.getEntityTypes ? await memoryStore.getEntityTypes() : []
-    const degreeDistribution = memoryStore.getDegreeDistribution ? await memoryStore.getDegreeDistribution() : []
+  async function getGraphStats(identity: typegraphIdentity): Promise<GraphStats> {
+    const totalEntities = memoryStore.countEntities ? await memoryStore.countEntities(identity) : 0
+    const totalEdges = memoryStore.countEdges ? await memoryStore.countEdges(identity) : 0
+    const topRelations = memoryStore.getRelationTypes ? await memoryStore.getRelationTypes(identity) : []
+    const topEntityTypes = memoryStore.getEntityTypes ? await memoryStore.getEntityTypes(identity) : []
+    const degreeDistribution = memoryStore.getDegreeDistribution ? await memoryStore.getDegreeDistribution(identity) : []
 
     return {
       totalEntities,
@@ -1646,12 +1677,12 @@ export function createKnowledgeGraphBridge(config: CreateKnowledgeGraphBridgeCon
     }
   }
 
-  async function getRelationTypes(_identity: typegraphIdentity): Promise<Array<{ relation: string; count: number }>> {
-    return memoryStore.getRelationTypes ? memoryStore.getRelationTypes() : []
+  async function getRelationTypes(identity: typegraphIdentity): Promise<Array<{ relation: string; count: number }>> {
+    return memoryStore.getRelationTypes ? memoryStore.getRelationTypes(identity) : []
   }
 
-  async function getEntityTypes(_identity: typegraphIdentity): Promise<Array<{ entityType: string; count: number }>> {
-    return memoryStore.getEntityTypes ? memoryStore.getEntityTypes() : []
+  async function getEntityTypes(identity: typegraphIdentity): Promise<Array<{ entityType: string; count: number }>> {
+    return memoryStore.getEntityTypes ? memoryStore.getEntityTypes(identity) : []
   }
 
   async function deploy(): Promise<void> {

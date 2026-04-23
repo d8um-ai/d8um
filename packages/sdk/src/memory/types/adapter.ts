@@ -119,8 +119,8 @@ export interface MemoryStoreAdapter {
   // ── Entity Storage (optional - needed for semantic memory graph) ──
 
   upsertEntity?(entity: SemanticEntity): Promise<SemanticEntity>
-  getEntity?(id: string): Promise<SemanticEntity | null>
-  getEntitiesBatch?(ids: string[]): Promise<SemanticEntity[]>
+  getEntity?(id: string, scope?: typegraphIdentity): Promise<SemanticEntity | null>
+  getEntitiesBatch?(ids: string[], scope?: typegraphIdentity): Promise<SemanticEntity[]>
   findEntities?(query: string, scope: typegraphIdentity, limit?: number): Promise<SemanticEntity[]>
   searchEntities?(embedding: number[], scope: typegraphIdentity, limit?: number): Promise<SemanticEntity[]>
   searchEntitiesHybrid?(query: string, embedding: number[], scope: typegraphIdentity, limit?: number): Promise<SemanticEntity[]>
@@ -148,6 +148,7 @@ export interface MemoryStoreAdapter {
     passageIds: string[],
     opts: {
       chunksTable: string
+      scope?: typegraphIdentity | undefined
       bucketIds?: string[] | undefined
     }
   ): Promise<Array<{
@@ -204,8 +205,8 @@ export interface MemoryStoreAdapter {
   // ── Edge Storage (optional - needed for semantic memory graph) ──
 
   upsertEdge?(edge: SemanticEdge): Promise<SemanticEdge>
-  getEdges?(entityId: string, direction?: 'in' | 'out' | 'both'): Promise<SemanticEdge[]>
-  getEdgesBatch?(entityIds: string[], direction?: 'in' | 'out' | 'both'): Promise<SemanticEdge[]>
+  getEdges?(entityId: string, direction?: 'in' | 'out' | 'both', scope?: typegraphIdentity): Promise<SemanticEdge[]>
+  getEdgesBatch?(entityIds: string[], direction?: 'in' | 'out' | 'both', scope?: typegraphIdentity): Promise<SemanticEdge[]>
   findEdges?(sourceId: string, targetId: string, relation?: string): Promise<SemanticEdge[]>
   invalidateEdge?(id: string, invalidAt?: Date): Promise<void>
 
@@ -224,14 +225,14 @@ export interface MemoryStoreAdapter {
   /** Count memory records matching an optional filter. */
   countMemories?(filter?: MemoryFilter): Promise<number>
   /** Count total semantic entities. */
-  countEntities?(): Promise<number>
+  countEntities?(scope?: typegraphIdentity): Promise<number>
   /** Count total semantic edges. */
-  countEdges?(): Promise<number>
+  countEdges?(scope?: typegraphIdentity): Promise<number>
 
   /** Get all relation types with their occurrence counts. */
-  getRelationTypes?(): Promise<Array<{ relation: string; count: number }>>
+  getRelationTypes?(scope?: typegraphIdentity): Promise<Array<{ relation: string; count: number }>>
   /** Get all entity types with their occurrence counts. */
-  getEntityTypes?(): Promise<Array<{ entityType: string; count: number }>>
+  getEntityTypes?(scope?: typegraphIdentity): Promise<Array<{ entityType: string; count: number }>>
   /** Get degree distribution (how many entities have N edges). */
-  getDegreeDistribution?(): Promise<Array<{ degree: number; count: number }>>
+  getDegreeDistribution?(scope?: typegraphIdentity): Promise<Array<{ degree: number; count: number }>>
 }

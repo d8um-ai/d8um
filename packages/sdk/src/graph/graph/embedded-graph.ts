@@ -54,9 +54,9 @@ export class EmbeddedGraph {
   /**
    * Get an entity by ID.
    */
-  async getEntity(id: string): Promise<SemanticEntity | null> {
+  async getEntity(id: string, scope?: typegraphIdentity): Promise<SemanticEntity | null> {
     if (!this.store.getEntity) return null
-    return this.store.getEntity(id)
+    return this.store.getEntity(id, scope)
   }
 
   /**
@@ -65,9 +65,10 @@ export class EmbeddedGraph {
   async getEdges(
     entityId: string,
     direction: 'in' | 'out' | 'both' = 'both',
+    scope?: typegraphIdentity,
   ): Promise<SemanticEdge[]> {
     if (!this.store.getEdges) return []
-    return this.store.getEdges(entityId, direction)
+    return this.store.getEdges(entityId, direction, scope)
   }
 
   /**
@@ -77,15 +78,16 @@ export class EmbeddedGraph {
   async getEdgesBatch(
     entityIds: string[],
     direction: 'in' | 'out' | 'both' = 'both',
+    scope?: typegraphIdentity,
   ): Promise<SemanticEdge[]> {
     if (this.store.getEdgesBatch) {
-      return this.store.getEdgesBatch(entityIds, direction)
+      return this.store.getEdgesBatch(entityIds, direction, scope)
     }
     // Fallback to sequential
     if (!this.store.getEdges) return []
     const results: SemanticEdge[] = []
     for (const id of entityIds) {
-      const edges = await this.store.getEdges(id, direction)
+      const edges = await this.store.getEdges(id, direction, scope)
       results.push(...edges)
     }
     return results
@@ -95,15 +97,15 @@ export class EmbeddedGraph {
    * Get multiple entities by ID in a single batch query.
    * Falls back to sequential getEntity() if batch not supported.
    */
-  async getEntitiesBatch(ids: string[]): Promise<SemanticEntity[]> {
+  async getEntitiesBatch(ids: string[], scope?: typegraphIdentity): Promise<SemanticEntity[]> {
     if (this.store.getEntitiesBatch) {
-      return this.store.getEntitiesBatch(ids)
+      return this.store.getEntitiesBatch(ids, scope)
     }
     // Fallback to sequential
     if (!this.store.getEntity) return []
     const results: SemanticEntity[] = []
     for (const id of ids) {
-      const entity = await this.store.getEntity(id)
+      const entity = await this.store.getEntity(id, scope)
       if (entity) results.push(entity)
     }
     return results
@@ -117,6 +119,7 @@ export class EmbeddedGraph {
     entityId: string,
     depth: number = 1,
     direction: 'in' | 'out' | 'both' = 'both',
+    scope?: typegraphIdentity,
   ): Promise<GraphNode[]> {
     if (!this.store.getEdges || !this.store.getEntity) return []
 
@@ -130,14 +133,14 @@ export class EmbeddedGraph {
       visited.add(current.id)
 
       if (current.id !== entityId) {
-        const entity = await this.store.getEntity(current.id)
+        const entity = await this.store.getEntity(current.id, scope)
         if (entity) {
           result.push({ entity, depth: current.depth })
         }
       }
 
       if (current.depth < depth) {
-        const edges = await this.store.getEdges(current.id, direction)
+        const edges = await this.store.getEdges(current.id, direction, scope)
         for (const edge of edges) {
           const neighborId = edge.sourceEntityId === current.id
             ? edge.targetEntityId
@@ -171,9 +174,10 @@ export class EmbeddedGraph {
   async getSubgraph(
     entityIds: string[],
     depth: number = 0,
+    scope?: typegraphIdentity,
   ): Promise<Subgraph> {
     // Step 1: Batch-load seed entities (1 roundtrip)
-    const seedEntities = await this.getEntitiesBatch(entityIds)
+    const seedEntities = await this.getEntitiesBatch(entityIds, scope)
     const entityMap = new Map<string, SemanticEntity>()
     for (const e of seedEntities) entityMap.set(e.id, e)
 
@@ -187,7 +191,7 @@ export class EmbeddedGraph {
 
       for (let d = 0; d < depth && frontier.length > 0; d++) {
         // Batch-load edges for current frontier (1 roundtrip per depth level)
-        const frontierEdges = await this.getEdgesBatch(frontier, 'both')
+        const frontierEdges = await this.getEdgesBatch(frontier, 'both', scope)
         allEdges.push(...frontierEdges)
         for (const id of frontier) edgeLoadedIds.add(id)
 
@@ -201,7 +205,7 @@ export class EmbeddedGraph {
 
         if (uniqueNewIds.length > 0) {
           // Batch-load neighbor entities (1 roundtrip per depth level)
-          const neighbors = await this.getEntitiesBatch(uniqueNewIds)
+          const neighbors = await this.getEntitiesBatch(uniqueNewIds, scope)
           for (const n of neighbors) entityMap.set(n.id, n)
         }
 
@@ -213,7 +217,7 @@ export class EmbeddedGraph {
     // Step 3: Load edges for entities that haven't had edges loaded yet
     const needEdgeIds = [...entityMap.keys()].filter(id => !edgeLoadedIds.has(id))
     if (needEdgeIds.length > 0) {
-      const remaining = await this.getEdgesBatch(needEdgeIds, 'both')
+      const remaining = await this.getEdgesBatch(needEdgeIds, 'both', scope)
       allEdges.push(...remaining)
     }
 

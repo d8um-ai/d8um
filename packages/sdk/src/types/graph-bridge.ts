@@ -3,6 +3,7 @@ import type { ConversationTurnResult, MemoryHealthReport } from './memory.js'
 import type { MemoryRecord } from '../memory/types/memory.js'
 import type { PaginationOpts } from './pagination.js'
 import type { TelemetryOpts } from './events.js'
+import type { Visibility } from './typegraph-document.js'
 
 // ── Memory method opts ──
 // All memory ops take a unified (payload, opts) shape. `opts` extends
@@ -105,6 +106,7 @@ export interface KnowledgeGraphBridge {
     userId?: string | undefined
     agentId?: string | undefined
     conversationId?: string | undefined
+    visibility?: Visibility | undefined
     metadata?: Record<string, unknown>
   }): Promise<void>
 
@@ -123,6 +125,7 @@ export interface KnowledgeGraphBridge {
     userId?: string | undefined
     agentId?: string | undefined
     conversationId?: string | undefined
+    visibility?: Visibility | undefined
     metadata?: Record<string, unknown> | undefined
     confidence?: number | undefined
   }>): Promise<void>
@@ -157,7 +160,7 @@ export interface KnowledgeGraphBridge {
   getPassagesForEntity?(entityId: string, opts?: {
     bucketIds?: string[] | undefined
     limit?: number | undefined
-  }): Promise<PassageResult[]>
+  } & typegraphIdentity): Promise<PassageResult[]>
 
   /** Run heterogeneous graph traversal and return ranked passages. */
   searchGraphPassages?(query: string, identity: typegraphIdentity, opts?: GraphSearchOpts): Promise<GraphSearchResult>
@@ -171,14 +174,14 @@ export interface KnowledgeGraphBridge {
   // ── Graph exploration methods ──
 
   /** Get a single entity by ID. */
-  getEntity?(id: string): Promise<EntityDetail | null>
+  getEntity?(id: string, opts?: typegraphIdentity): Promise<EntityDetail | null>
 
   /** Get edges for an entity. */
   getEdges?(entityId: string, opts?: {
     direction?: 'in' | 'out' | 'both'
     relation?: string
     limit?: number
-  }): Promise<EdgeResult[]>
+  } & typegraphIdentity): Promise<EdgeResult[]>
 
   /** Extract a subgraph around seed entities or a query. */
   getSubgraph?(opts: SubgraphOpts): Promise<SubgraphResult>

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { LLMProvider } from '../types/llm-provider.js'
 import type { KnowledgeGraphBridge } from '../types/graph-bridge.js'
+import type { Visibility } from '../types/typegraph-document.js'
 import { getPredicatesForPrompt } from './ontology.js'
 
 export interface TripleExtractorConfig {
@@ -910,6 +911,7 @@ export class TripleExtractor {
       agentId?: string | undefined
       conversationId?: string | undefined
     },
+    visibility?: Visibility,
   ): Promise<{ entities: EntityContext[] } | undefined> {
     if (!this.graph.addTriple && !this.graph.addEntityMentions) return { entities: [] }
 
@@ -935,6 +937,7 @@ export class TripleExtractor {
         ...(identity?.userId ? { userId: identity.userId } : {}),
         ...(identity?.agentId ? { agentId: identity.agentId } : {}),
         ...(identity?.conversationId ? { conversationId: identity.conversationId } : {}),
+        ...(visibility ? { visibility } : {}),
         ...(metadata ? { metadata } : {}),
       })))
     }
@@ -971,6 +974,7 @@ export class TripleExtractor {
           ...(identity?.userId ? { userId: identity.userId } : {}),
           ...(identity?.agentId ? { agentId: identity.agentId } : {}),
           ...(identity?.conversationId ? { conversationId: identity.conversationId } : {}),
+          ...(visibility ? { visibility } : {}),
           ...(metadata ? { metadata } : {}),
         })
       }

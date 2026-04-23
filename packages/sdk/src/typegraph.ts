@@ -41,9 +41,9 @@ export const DEFAULT_BUCKET_DESCRIPTION = 'System default bucket. All ingested d
 
 // Fills in defaults for optional fields the engine relies on.
 export function normalizeRawDocument<TMeta extends Record<string, unknown>>(doc: RawDocument<TMeta>): RawDocument<TMeta> {
-  if (doc.updatedAt && doc.metadata) return doc
   return {
     ...doc,
+    url: doc.url ?? undefined,
     updatedAt: doc.updatedAt ?? new Date(),
     metadata: doc.metadata ?? ({} as TMeta),
   }
@@ -171,18 +171,18 @@ export interface GraphApi {
     entityType?: string
     minConnections?: number
   } & TelemetryOpts): Promise<EntityResult[]>
-  getEntity(id: string): Promise<EntityDetail | null>
+  getEntity(id: string, opts?: typegraphIdentity): Promise<EntityDetail | null>
   getEdges(entityId: string, opts?: {
     direction?: 'in' | 'out' | 'both'
     relation?: string
     limit?: number
-  }): Promise<EdgeResult[]>
+  } & typegraphIdentity): Promise<EdgeResult[]>
   searchFacts(query: string, opts?: FactSearchOpts & TelemetryOpts): Promise<FactResult[]>
   explore(query: string, opts?: GraphExploreOpts): Promise<GraphExploreResult>
   getPassagesForEntity(entityId: string, opts?: {
     bucketIds?: string[] | undefined
     limit?: number | undefined
-  }): Promise<PassageResult[]>
+  } & typegraphIdentity): Promise<PassageResult[]>
   explainQuery(query: string, opts?: GraphExplainOpts & TelemetryOpts): Promise<GraphSearchTrace>
   backfill(identity: typegraphIdentity, opts?: GraphBackfillOpts & TelemetryOpts): Promise<GraphBackfillResult>
   getSubgraph(opts: SubgraphOpts): Promise<SubgraphResult>
@@ -517,17 +517,17 @@ class TypegraphImpl implements typegraphInstance {
       return results
     },
 
-    getEntity: async (id: string): Promise<EntityDetail | null> => {
+    getEntity: async (id: string, opts?: typegraphIdentity): Promise<EntityDetail | null> => {
       const kg = this.requireKnowledgeGraph()
       if (!kg.getEntity) throw new ConfigError('Knowledge graph bridge does not support entity lookup.')
-      return kg.getEntity(id)
+      return kg.getEntity(id, opts)
     },
 
     getEdges: async (entityId: string, opts?: {
       direction?: 'in' | 'out' | 'both'
       relation?: string
       limit?: number
-    }): Promise<EdgeResult[]> => {
+    } & typegraphIdentity): Promise<EdgeResult[]> => {
       const kg = this.requireKnowledgeGraph()
       if (!kg.getEdges) throw new ConfigError('Knowledge graph bridge does not support edge queries.')
       return kg.getEdges(entityId, opts)
@@ -548,7 +548,7 @@ class TypegraphImpl implements typegraphInstance {
     getPassagesForEntity: async (entityId: string, opts?: {
       bucketIds?: string[] | undefined
       limit?: number | undefined
-    }): Promise<PassageResult[]> => {
+    } & typegraphIdentity): Promise<PassageResult[]> => {
       const kg = this.requireKnowledgeGraph()
       if (!kg.getPassagesForEntity) throw new ConfigError('Knowledge graph bridge does not support passage lookup.')
       return kg.getPassagesForEntity(entityId, opts)
