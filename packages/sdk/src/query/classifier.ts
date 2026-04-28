@@ -1,11 +1,8 @@
-import type { QuerySignals } from '../types/query.js'
-
 /** Query type categories with optimized weight profiles. */
 export type QueryType = 'factual-lookup' | 'entity-centric' | 'relational' | 'temporal' | 'exploratory'
 
 export interface QueryClassification {
   type: QueryType
-  signals: QuerySignals
   /** Recommended score weights for this query type. Keys match normalized score categories. */
   weights: Record<string, number>
   /** Classifier confidence (0-1). Higher = more distinctive pattern match. */
@@ -20,12 +17,6 @@ const WEIGHT_PROFILES: Record<QueryType, Record<string, number>> = {
   'temporal':        { semantic: 0.30, keyword: 0.10, graph: 0.15, memory: 0.45 },
   'exploratory':     { semantic: 0.45, keyword: 0.05, graph: 0.25, memory: 0.25 },
 }
-
-/** All signals active — used for complex/multi-hop queries that benefit from graph+memory. */
-const FULL_SIGNALS: QuerySignals = { semantic: true, keyword: true, graph: true, memory: true }
-
-/** Semantic-only — used for simple lookups and factual queries. */
-const SEMANTIC_ONLY: QuerySignals = { semantic: true }
 
 // ── Pattern sets ──
 
@@ -62,7 +53,7 @@ const ENTITY_CENTRIC_PATTERNS = [
 ]
 
 /**
- * Classify a query into a type with recommended signals and score weights.
+ * Classify a query into a type with recommended score weights.
  * Pure heuristics — no LLM call, sub-millisecond.
  */
 export function classifyQuery(text: string): QueryClassification {
@@ -71,21 +62,21 @@ export function classifyQuery(text: string): QueryClassification {
   // Check relational patterns first (most specific)
   for (const pattern of RELATIONAL_PATTERNS) {
     if (pattern.test(lower)) {
-      return { type: 'relational', signals: FULL_SIGNALS, weights: WEIGHT_PROFILES['relational'], confidence: 0.8 }
+      return { type: 'relational', weights: WEIGHT_PROFILES['relational'], confidence: 0.8 }
     }
   }
 
   // Temporal patterns
   for (const pattern of TEMPORAL_PATTERNS) {
     if (pattern.test(lower)) {
-      return { type: 'temporal', signals: FULL_SIGNALS, weights: WEIGHT_PROFILES['temporal'], confidence: 0.7 }
+      return { type: 'temporal', weights: WEIGHT_PROFILES['temporal'], confidence: 0.7 }
     }
   }
 
   // Entity-centric patterns
   for (const pattern of ENTITY_CENTRIC_PATTERNS) {
     if (pattern.test(lower)) {
-      return { type: 'entity-centric', signals: FULL_SIGNALS, weights: WEIGHT_PROFILES['entity-centric'], confidence: 0.7 }
+      return { type: 'entity-centric', weights: WEIGHT_PROFILES['entity-centric'], confidence: 0.7 }
     }
   }
 
@@ -99,16 +90,16 @@ export function classifyQuery(text: string): QueryClassification {
     }
   }
   if (entityCount >= 3) {
-    return { type: 'entity-centric', signals: FULL_SIGNALS, weights: WEIGHT_PROFILES['entity-centric'], confidence: 0.6 }
+    return { type: 'entity-centric', weights: WEIGHT_PROFILES['entity-centric'], confidence: 0.6 }
   }
 
   // Factual lookup patterns
   for (const pattern of FACTUAL_PATTERNS) {
     if (pattern.test(lower)) {
-      return { type: 'factual-lookup', signals: SEMANTIC_ONLY, weights: WEIGHT_PROFILES['factual-lookup'], confidence: 0.7 }
+      return { type: 'factual-lookup', weights: WEIGHT_PROFILES['factual-lookup'], confidence: 0.7 }
     }
   }
 
   // Default: exploratory
-  return { type: 'exploratory', signals: SEMANTIC_ONLY, weights: WEIGHT_PROFILES['exploratory'], confidence: 0.3 }
+  return { type: 'exploratory', weights: WEIGHT_PROFILES['exploratory'], confidence: 0.3 }
 }

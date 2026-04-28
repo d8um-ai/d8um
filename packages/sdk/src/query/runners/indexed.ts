@@ -3,7 +3,7 @@ import type { EmbeddingProvider } from '../../embedding/provider.js'
 import type { DocumentFilter } from '../../types/typegraph-document.js'
 import type { typegraphIdentity } from '../../types/identity.js'
 import type { QuerySignals } from '../../types/query.js'
-import type { NormalizedResult } from '../merger.js'
+import type { RetrievalCandidate } from '../merger.js'
 import type { typegraphEvent, typegraphEventSink } from '../../types/events.js'
 
 export class IndexedRunner {
@@ -26,8 +26,8 @@ export class IndexedRunner {
     traceId?: string,
     spanId?: string,
     temporalAt?: Date,
-  ): Promise<NormalizedResult[]> {
-    const allResults: NormalizedResult[] = []
+  ): Promise<RetrievalCandidate[]> {
+    const allResults: RetrievalCandidate[] = []
     const fetchCount = count * 3
     const useSemantic = signals?.semantic ?? true
     const useKeyword = signals?.keyword ?? false
@@ -72,7 +72,6 @@ export class IndexedRunner {
             chunk: {
               index: chunk.chunkIndex,
               total: chunk.totalChunks,
-              isNeighbor: false,
             },
             url: chunk.document?.url ?? chunk.metadata.url as string | undefined,
             title: chunk.document?.title ?? chunk.metadata.title as string | undefined,
@@ -116,7 +115,6 @@ export class IndexedRunner {
             chunk: {
               index: chunk.chunkIndex,
               total: chunk.totalChunks,
-              isNeighbor: false,
             },
             url: chunk.metadata.url as string | undefined,
             title: chunk.metadata.title as string | undefined,
@@ -147,7 +145,7 @@ export class IndexedRunner {
     }
 
     // Document-level dedup: keep highest-scoring chunk per document
-    const docBest = new Map<string, NormalizedResult>()
+    const docBest = new Map<string, RetrievalCandidate>()
     for (const r of allResults) {
       const existing = docBest.get(r.documentId)
       if (!existing || r.normalizedScore > existing.normalizedScore) {

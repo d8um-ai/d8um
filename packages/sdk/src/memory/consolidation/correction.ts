@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod/v4-mini'
 import type { LLMProvider } from '../../types/llm-provider.js'
 import type { MemoryStoreAdapter } from '../types/adapter.js'
 import type { typegraphIdentity } from '../../types/identity.js'
@@ -9,11 +9,11 @@ import { generateId } from '../../utils/id.js'
 // ── Zod schema for structured output ──
 
 const correctionSchema = z.object({
-  targetContent: z.string().optional(),
-  newContent: z.string().optional(),
-  subject: z.string().optional(),
-  predicate: z.string().optional(),
-  object: z.string().optional(),
+  targetContent: z.optional(z.string()),
+  newContent: z.optional(z.string()),
+  subject: z.optional(z.string()),
+  predicate: z.optional(z.string()),
+  object: z.optional(z.string()),
 })
 
 // ── Correction Types ──

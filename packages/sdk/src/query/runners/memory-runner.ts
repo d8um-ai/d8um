@@ -1,6 +1,6 @@
 import type { MemoryBridge } from '../../types/graph-bridge.js'
 import type { typegraphIdentity } from '../../types/identity.js'
-import type { NormalizedResult } from '../merger.js'
+import type { RetrievalCandidate } from '../merger.js'
 
 /** Memory composite score weights */
 const W_SIMILARITY = 0.55
@@ -25,7 +25,7 @@ export class MemoryRunner {
     identity: typegraphIdentity,
     count: number,
     opts?: { temporalAt?: Date | undefined; includeInvalidated?: boolean | undefined; useKeyword?: boolean | undefined },
-  ): Promise<NormalizedResult[]> {
+  ): Promise<RetrievalCandidate[]> {
     // Use hybrid search when keyword signal is active and bridge supports it
     const useHybrid = opts?.useKeyword && this.memory.recallHybrid
     const recallOpts = {

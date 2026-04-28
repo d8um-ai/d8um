@@ -185,6 +185,9 @@ importers:
       ai:
         specifier: ^6.0.0
         version: 6.0.160(zod@4.3.6)
+      esbuild:
+        specifier: ^0.21.5
+        version: 0.21.5
       typescript:
         specifier: ^5.4.0
         version: 5.9.3

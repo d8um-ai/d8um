@@ -3,6 +3,32 @@ import type { MemoryRecord } from '../memory/types/memory.js'
 
 export type QueryGraphOptions = GraphSearchOpts
 
+export type ContextFormat = 'xml' | 'markdown' | 'plain'
+export type ContextSection = 'facts' | 'entities' | 'chunks' | 'memories'
+
+export interface QueryContextOptions {
+  format?: ContextFormat | undefined
+  sections?: ContextSection[] | undefined
+  includeAttributes?: boolean | undefined
+  maxTotalTokens?: number | undefined
+  maxChunkTokens?: number | undefined
+  maxFactTokens?: number | undefined
+  maxEntityTokens?: number | undefined
+  maxMemoryTokens?: number | undefined
+}
+
+export interface QueryContextStats {
+  format: ContextFormat
+  totalTokens: number
+  truncated: boolean
+  sections: Partial<Record<ContextSection, {
+    available: number
+    included: number
+    tokens: number
+    truncated: boolean
+  }>>
+}
+
 /** Which retrieval signals to activate. All fields default to false except `semantic` which defaults to true. */
 export interface QuerySignals {
   /** Semantic embedding search against chunk embeddings. Default: true */
@@ -68,7 +94,6 @@ export interface QueryChunkResult {
   chunk: {
     index: number
     total: number
-    isNeighbor: boolean
   }
 
   metadata: Record<string, unknown>
@@ -114,12 +139,9 @@ export interface QueryOpts {
   /** When true, automatically adjust score weights based on query type classification.
    *  Uses pure heuristics (no LLM call) to detect factual-lookup, entity-centric,
    *  relational, temporal, or exploratory queries and applies optimized weight profiles.
+   *  This never enables or disables retrieval signals; `signals` remains the source of truth.
    *  User-provided `scoreWeights` always override. Default: false. */
   autoWeights?: boolean | undefined
-
-  /** Override semantic score calibration. Default: { floor: 0.10, ceiling: 0.70 }
-   *  for text-embedding-3-small. Adjust for other embedding models. */
-  semanticCalibration?: { floor: number; ceiling: number } | undefined
 
   /** Controls how graph results interact with indexed results.
    *  - 'off': include all graph results as-is (default)
@@ -151,10 +173,8 @@ export interface QueryOpts {
   /** Include invalidated/expired results (memories, graph edges). Default: false. */
   includeInvalidated?: boolean | undefined
 
-  /** Format results into an LLM-ready context string. When set, response includes `context`. */
-  format?: 'xml' | 'markdown' | 'plain' | ((results: QueryResults) => string) | undefined
-  /** Token budget for formatted context. Trims lowest-scored results to fit. */
-  maxTokens?: number | undefined
+  /** Build an LLM-ready context string from query results. When set, response includes `context`. */
+  context?: true | QueryContextOptions | undefined
 
   /** OpenTelemetry trace ID for distributed tracing correlation. */
   traceId?: string | undefined
@@ -165,7 +185,7 @@ export interface QueryOpts {
 export interface QueryResponse {
   results: QueryResults
   buckets: Record<string, {
-    mode: 'indexed' | 'live' | 'cached'
+    mode: 'indexed' | 'memory' | 'graph'
     resultCount: number
     durationMs: number
     status: 'ok' | 'timeout' | 'error'
@@ -177,7 +197,8 @@ export interface QueryResponse {
     durationMs: number
     mergeStrategy: string
   }
-  /** Formatted context string. Present when `format` is specified in query opts. */
+  /** Formatted context string. Present when `context` is specified in query opts. */
   context?: string | undefined
+  contextStats?: QueryContextStats | undefined
   warnings?: string[] | undefined
 }

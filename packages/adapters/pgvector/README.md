@@ -1,64 +1,144 @@
 # @typegraph-ai/adapter-pgvector
 
-PostgreSQL + [pgvector](https://github.com/pgvector/pgvector) adapter for TypeGraph. Hybrid search combining vector similarity with keyword matching via `tsvector` and Reciprocal Rank Fusion.
+Postgres + [pgvector](https://github.com/pgvector/pgvector) storage for TypeGraph.
 
-Bring your own Postgres driver -- works with Neon serverless, node-postgres, Drizzle, or anything that can run a parameterized query. Per-model table isolation keeps embedding dimensions and indexes clean.
+This adapter provides document/chunk storage, vector search, BM25 keyword search, hybrid retrieval, jobs, events, policies, and the memory/graph backing store used by TypeGraph graph and memory features.
+
+For complete setup instructions, see [Self-Hosted Initialization](https://typegraph.ai/docs/guides/self-hosted-initialization).
 
 ## Install
 
 ```bash
-npm install @typegraph-ai/adapter-pgvector @typegraph-ai/core
+pnpm add @typegraph-ai/sdk @typegraph-ai/adapter-pgvector @ai-sdk/gateway @neondatabase/serverless
 ```
 
-## Usage
+Swap `@neondatabase/serverless` for `pg`, Supabase, or another Postgres client if that is what your app uses.
+
+## Basic Usage
+
+```ts
+import { gateway } from '@ai-sdk/gateway'
+import { neon } from '@neondatabase/serverless'
+import { PgVectorAdapter } from '@typegraph-ai/adapter-pgvector'
+import { typegraphDeploy, typegraphInit } from '@typegraph-ai/sdk'
+
+const sql = neon(process.env.DATABASE_URL!)
+const vectorStore = new PgVectorAdapter({ sql })
+
+const config = {
+  vectorStore,
+  embedding: {
+    model: gateway.embeddingModel('openai/text-embedding-3-small'),
+    dimensions: 1536,
+  },
+}
+
+await typegraphDeploy(config)
+const tg = await typegraphInit(config)
+```
+
+The adapter accepts a small `SqlExecutor`, so it is driver-agnostic:
+
+```ts
+type SqlExecutor = (
+  query: string,
+  params?: unknown[],
+) => Promise<Record<string, unknown>[]>
+```
+
+## Driver Examples
+
+Neon:
 
 ```ts
 import { neon } from '@neondatabase/serverless'
 import { PgVectorAdapter } from '@typegraph-ai/adapter-pgvector'
-import { typegraph } from '@typegraph-ai/core'
 
 const sql = neon(process.env.DATABASE_URL!)
+const adapter = new PgVectorAdapter({ sql })
+```
+
+node-postgres:
+
+```ts
+import { Pool } from 'pg'
+import { PgVectorAdapter, type SqlExecutor } from '@typegraph-ai/adapter-pgvector'
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+
+const sql: SqlExecutor = (query, params) =>
+  pool.query(query, params).then(result => result.rows)
 
 const adapter = new PgVectorAdapter({ sql })
+```
 
-const agent = await typegraph.initialize({
-  adapter,
-  // ... embedding provider, etc.
+## Graph And Memory Store
+
+Graph and memory features use the same Postgres connection with `PgMemoryStoreAdapter`.
+
+```ts
+import {
+  PgMemoryStoreAdapter,
+  PgVectorAdapter,
+} from '@typegraph-ai/adapter-pgvector'
+import {
+  createKnowledgeGraphBridge,
+  createMemoryBridge,
+} from '@typegraph-ai/sdk'
+
+const vectorStore = new PgVectorAdapter({ sql })
+const memoryStore = new PgMemoryStoreAdapter({
+  sql,
+  embeddingDimensions: 1536,
+})
+
+const config = {
+  vectorStore,
+  embedding,
+  llm,
+  memory: createMemoryBridge({ memoryStore, embedding, llm }),
+  knowledgeGraph: createKnowledgeGraphBridge({
+    memoryStore,
+    embedding,
+    resolveChunksTable: model => vectorStore.getTable(model),
+  }),
+}
+```
+
+See [Graph RAG](https://typegraph.ai/docs/guides/graph-rag) for extraction and graph retrieval setup.
+
+## Configuration
+
+```ts
+new PgVectorAdapter({
+  sql,
+  schema: 'public',
+  tablePrefix: 'typegraph_chunks',
+  hashesTable: 'typegraph_hashes',
+  documentsTable: 'typegraph_documents',
+  bucketsTable: 'typegraph_buckets',
+  jobsTable: 'typegraph_jobs',
 })
 ```
 
-The `SqlExecutor` pattern means you wire up the driver yourself:
-
-```ts
-// node-postgres
-import { Pool } from 'pg'
-const pool = new Pool({ connectionString: '...' })
-const sql: SqlExecutor = (q, p) => pool.query(q, p).then(r => r.rows)
-```
+Most projects only need `sql`. Use `schema` or table overrides when sharing a database with existing applications.
 
 ## Exports
 
-| Export | Description |
-|--------|-------------|
-| `PgVectorAdapter` | Main adapter class, implements `VectorStoreAdapter` |
+| Export | Purpose |
+| --- | --- |
+| `PgVectorAdapter` | Main Postgres + pgvector adapter |
+| `PgMemoryStoreAdapter` | Persistent memory/entity/fact/passage backing store |
 | `PgHashStore` | Content-hash deduplication store |
-| `PgDocumentStore` | Document record CRUD |
-| `REGISTRY_SQL` | DDL for model registry table |
-| `MODEL_TABLE_SQL` | DDL for per-model chunk tables |
-| `HASH_TABLE_SQL` | DDL for hash deduplication table |
-| `DOCUMENTS_TABLE_SQL` | DDL for documents table |
-| `BUCKETS_TABLE_SQL` | DDL for buckets table |
-| `JOBS_TABLE_SQL` | DDL for jobs table |
-| `sanitizeModelKey` | Normalizes model names into safe table suffixes |
+| `PgDocumentStore` | Document CRUD store |
+| `PgJobStore` | Job tracking store |
+| `PgEventSink` | Event sink for query/index telemetry |
+| `PgPolicyStore` | Policy storage |
+| `SqlExecutor` | Driver-agnostic query function type |
 
-## Types
+## Learn More
 
-| Type | Description |
-|------|-------------|
-| `PgVectorAdapterConfig` | Constructor options (`sql`, `transaction`, `schema`, `tablePrefix`, `hashesTable`, `documentsTable`) |
-| `SqlExecutor` | `(query: string, params?: unknown[]) => Promise<Record<string, unknown>[]>` |
-
-## Related
-
-- [TypeGraph main repo](../..)
-- [Self-Hosted Setup Guide](../../guides/Self%20Hosted/setup.md)
+- [TypeGraph docs](https://typegraph.ai/docs)
+- [Self-Hosted Initialization](https://typegraph.ai/docs/guides/self-hosted-initialization)
+- [Simple RAG](https://typegraph.ai/docs/guides/simple-rag)
+- [Graph RAG](https://typegraph.ai/docs/guides/graph-rag)

@@ -302,19 +302,20 @@ describe('typegraphInit', () => {
       expect(response.query.tenantId).toBe('query-tenant')
     })
 
-    it('supports format option for XML context', async () => {
+    it('supports context option for XML context', async () => {
       const { bucket, documents, ingestOptions } = createMockBucket({ documents: createTestDocuments(1) })
       registerTestBucket(instance, bucket, embedding)
       await instance.ingest(documents, { ...ingestOptions, bucketId: bucket.id })
-      const response = await instance.query('test', { format: 'xml' })
+      const response = await instance.query('test', { context: { format: 'xml' } })
       expect(response.context).toContain('<context>')
+      expect(response.contextStats?.format).toBe('xml')
     })
 
-    it('supports format option for plain text context', async () => {
+    it('supports context option for plain text context', async () => {
       const { bucket, documents, ingestOptions } = createMockBucket({ documents: createTestDocuments(1) })
       registerTestBucket(instance, bucket, embedding)
       await instance.ingest(documents, { ...ingestOptions, bucketId: bucket.id })
-      const response = await instance.query('test', { format: 'plain' })
+      const response = await instance.query('test', { context: { format: 'plain' } })
       expect(response.context).toBeDefined()
       expect(response.context).not.toContain('<context>')
     })

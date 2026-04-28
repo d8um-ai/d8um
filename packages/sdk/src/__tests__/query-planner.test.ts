@@ -166,6 +166,27 @@ describe('QueryPlanner', () => {
     expect(result.sources).toContain('semantic')
   })
 
+  it('autoWeights adjusts scoring without enabling graph search', async () => {
+    const knowledgeGraph: KnowledgeGraphBridge = {
+      searchGraphPassages: vi.fn().mockResolvedValue({
+        results: [],
+        facts: [],
+        entities: [],
+        trace: {},
+      }),
+    }
+    const planner = new QueryPlanner(adapter, bucketIds, bucketEmbeddings, bucketEmbeddings, undefined, knowledgeGraph)
+
+    const response = await planner.execute('how does Tennyson relate to Maud?', {
+      autoWeights: true,
+      count: 1,
+    })
+
+    expect(knowledgeGraph.searchGraphPassages).not.toHaveBeenCalled()
+    expect(response.results.facts).toEqual([])
+    expect(response.results.entities).toEqual([])
+  })
+
   it('returns nonzero graph scores for graph-only passage graph results', async () => {
     const firstChunk = [...adapter._chunks.values()][0]![0]!
     const knowledgeGraph: KnowledgeGraphBridge = {
@@ -228,6 +249,21 @@ describe('QueryPlanner', () => {
     expect(response.results.chunks[0]!.scores.normalized.graph).toBeCloseTo(Math.sqrt(Math.sqrt(0.25)))
     expect(response.results.facts).toEqual([expect.objectContaining({ id: 'fact-1', factText: 'Tennyson wrote Maud' })])
     expect(response.results.entities).toEqual([expect.objectContaining({ id: 'ent-1', name: 'Tennyson' })])
+    expect(knowledgeGraph.searchGraphPassages).toHaveBeenCalledWith(
+      'Document 1',
+      expect.anything(),
+      expect.objectContaining({
+        factFilter: true,
+        factCandidateLimit: 80,
+        factFilterInputLimit: 12,
+        factSeedLimit: 4,
+        passageSeedLimit: 80,
+        maxExpansionEdgesPerEntity: 25,
+        factChainLimit: 2,
+        maxPprIterations: 40,
+        minPprScore: 1e-8,
+      })
+    )
   })
 
   it('merges graph scores into indexed results by chunk identity', async () => {

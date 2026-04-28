@@ -322,7 +322,10 @@ export interface PassageResult {
   conversationId?: string | undefined
 }
 
+export type GraphSearchProfile = 'fact-filtered-narrow'
+
 export interface GraphSearchOpts {
+  profile?: GraphSearchProfile | undefined
   count?: number | undefined
   bucketIds?: string[] | undefined
   restartProbability?: number | undefined

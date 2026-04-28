@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod/v4-mini'
 import type { LLMProvider } from '../types/llm-provider.js'
 import type { KnowledgeGraphBridge } from '../types/graph-bridge.js'
 import type { Visibility } from '../types/typegraph-document.js'
@@ -644,78 +644,115 @@ function buildEntityExtractionPrompt(content: string, entityContext?: EntityCont
     ? `\nPreviously identified entities in the text string:\n${entityContext.map(e => `- ${e.name} (${e.type})`).join('\n')}\n\nUse these names as canonical entities when the text refers to them by pronoun, abbreviation, surname, title, epithet, or pseudonym. Preserve any newly observed surface form as an alias instead of creating a duplicate entity.\n`
     : ''
   const titleSection = documentTitle
-    ? `\nThe text string is from a document titled: "${documentTitle}". Entities referenced in the title should be extracted as primary entities using their full formal names.\n`
+    ? `\nThe text string is from a document titled: "${documentTitle}". Entities referenced in the title should be extracted as primary entities using their full formal and canonical names.\n`
     : ''
 
-  return `Your task is to extract all named entities from a text string.
+    return `Your task is to extract all named entities from a text string.
 
-<TASK_INSTRUCTIONS>
-
-For each entity, provide:
-
-- "name": The most complete, formal and canonical name of the entity that is supported by the text or prior entity context. Always use full proper names — NOT surnames, first names, nicknames, shortened forms, or abbreviations alone. Examples across domains:
--- People: "Stephen Curry" not "Curry"; "Barack Obama" not "Obama"; "Marie Curie" not "Curie"; "Ada Lovelace" not "Lovelace"; "Cole Conway" not "Conway" when the full form appears
--- Organizations: "Goldman Sachs Group" not "Goldman"; "European Central Bank" not "ECB"; "Massachusetts Institute of Technology" not "MIT"; "World Health Organization" not "WHO"; "Apple Inc." not "Apple"
--- Technology: "Amazon Web Services" not "AWS"; "React Native" not "React"; "PostgreSQL" not "Postgres"; "Large Language Model" not "LLM" (when first introduced)
--- Locations: "San Francisco Bay Area" not "Bay Area"; "United Kingdom" not "UK"; "Silicon Valley" not "the Valley"; "Paducah, Kentucky" not "Paducah" when the full form appears; do not invent a state/country if the text does not provide one
--- Events: "2024 United States presidential election" not "the election"; "1984 Summer Olympics" not "1984 games"; "CES 2025" not "CES"; "World War II" not "the war"
--- Legal/Science: "General Data Protection Regulation" not "GDPR"; "Clean Air Act of 1970" not "Clean Air Act"; "Hubble Space Telescope" not "Hubble"; "CRISPR-Cas9" not "CRISPR"
--- Products: "iPhone 16 Pro Max" not "iPhone"; "Tesla Model 3" not "Model 3"; "GPT-4" not "GPT"
--- Culture: "Naismith Memorial Basketball Hall of Fame" not "Hall of Fame"; "Academy Award for Best Picture" not "Best Picture"; "The Great Gatsby" not "Gatsby"
-- "type": One of: ${ENTITY_TYPES_LIST}
-- "description": A one-sentence description of what this entity IS — its defining attributes, NOT its relationships to other entities
-- "aliases": Other proper names, abbreviations, pseudonyms, titles, or stable short references for THIS SAME entity in the text (array of strings). Preserve the exact surface forms that appear in the source text.
--- Valid aliases: "NYC" for "New York City", "WHO" for "World Health Organization", "The Iron Lady" for "Margaret Thatcher", "Python" for "Python programming language", "Cole Conway" and "Conway" for "Cousin Cæsar" when the text says he is calling himself Cole Conway and later refers to him as Conway
--- NEVER include as aliases:
---- Pronouns or pronoun phrases (he, she, it, they, them, we, his, her, its)
---- Generic references (the team, the roster, the company, the city, the league, the organization, the event, the protocol, the framework, the ingredient)
---- Surnames or first names alone as canonical entity names (Curry, Obama, Kevin, Marie). A bare surname may be an alias only when the same passage or prior context clearly ties it to a full person entity, e.g. "Conway" after "Cole Conway"
---- Names of DIFFERENT entities — "FIBA Hall of Fame" and "Naismith Hall of Fame" are SEPARATE entities; "React" and "React Native" are SEPARATE; "Python 2" and "Python 3" are SEPARATE
---- Descriptive phrases (the American team, the defending champions, the former president, the lead researcher, the main ingredient)
---- Country/city names for their teams — "France" is NOT an alias of "France men's national basketball team"; "Brazil" is NOT an alias of "Brazil national football team"
---- Shortened generic forms — "Finals" is NOT an alias of "NBA Finals"; "MVP" is NOT an alias of any specific MVP award; "Olympics" is NOT an alias of "2024 Summer Olympics"
-
-</TASK_INSTRUCTIONS>
-
-<TASK_RULES>
-
-- Extract a MAXIMUM of 15 entities. When the text contains more potential entities, prioritize:
--- 1. Primary subjects — entities the text is primarily ABOUT, not merely mentioned
--- 2. Entities with explicit relationships — entities that have stated connections to other entities in the text
--- 3. Specific over generic — prefer "2006 FIBA World Championship" over "basketball"
--- 4. Actors over settings — prefer entities that DO things over entities that are merely locations or backdrops
--- Omit entities that appear only in lists, parenthetical asides, or as minor supporting context with no described relationships.
-- Only extract specific named entities — NOT dates, dollar amounts, percentages, or generic descriptions
-- Exception: when the text directly states a named person's or organization's profession, office, or role, extract that role label as a "concept" entity so it can participate in a structured relationship. Examples: "doctor", "pilot", "house surgeon"
-- If an entity is referred to by multiple names (e.g., "OpenAI" and "the company"), list the proper name variants as aliases — NOT the generic reference
-- Include important entities even if they only appear once
-- Preserve complete person surface forms exactly when present. If the text says a person is "calling himself Cole Conway" or "known as Cole Conway", include "Cole Conway" as the entity name or alias — not only "Conway".
-- For people, prefer complete first+last names, titled names, and pseudonyms over bare first names or surnames.
-- Never create a standalone PERSON entity from a bare first name or surname when a fuller person name appears in the text or prior context. Promote it to the fuller entity and store the bare form as an alias only if it is clearly used as a reference.
-- Treat "called", "calling himself", "known as", "alias", "under the name", "styled himself", and "went by" constructions as alias evidence for the same entity unless the text clearly describes two different people.
-- Do not add a shared family surname as an alias when several related people use that surname. For example, "Simon" alone is not a safe alias for "Cæsar Simon" when "S. S. Simon" or "Young Simon" may also appear.
-- For locations, use the fullest location span stated in the text. If the source says "Paducah, Kentucky" or "Cairo, Egypt", the entity name should include the qualifier; the bare city may be an alias. Do not invent missing qualifiers.
-- Reject generic, low-information entities such as "Bill", "Bertha", "Coffee", "College Avenue", "the Queen", "the city", or "the old man" unless the text clearly establishes that exact phrase as a specific named entity.
-- Return an empty array if no named entities exist
-- For events, awards, seasons, software versions, product generations, or any time/version-specific entities, ALWAYS include the year, version, or edition in the name. Each distinct occurrence is a SEPARATE entity — e.g., "2023 NBA Finals" and "2024 NBA Finals" are different, "Python 2" and "Python 3" are different, "iPhone 15" and "iPhone 16" are different, "HTTP/1.1" and "HTTP/2" are different, "Michelin Guide 2024" and "Michelin Guide 2025" are different.
-- Different awards are ALWAYS separate entities even when they share words — "NBA Finals MVP" and "NBA MVP" are SEPARATE; "Academy Award for Best Picture" and "Academy Award for Best Director" are SEPARATE; "Nobel Peace Prize" and "Nobel Prize in Physics" are SEPARATE
-- Entities with opposing directional or categorical qualifiers are ALWAYS separate — "Western Conference" and "Eastern Conference" are SEPARATE; "North Atlantic Treaty Organization" and "South Asian Association" are SEPARATE; "Upper Egypt" and "Lower Egypt" are SEPARATE
-- Profession and role statements should become structured edges when supported by the text. Examples: "Steve Sharp, a pilot by profession" → Steve Sharp WORKS_AS pilot; "Elsie Inglis was a doctor" → Elsie Inglis WORKS_AS doctor; "She served as a house surgeon" → person HELD_ROLE house surgeon
-
-</TASK_RULES>
-
-<CRITICAL_RULES>
-
-CRITICAL — Aliases vs. Relationships:
-- An ALIAS is a different name for THE SAME entity (e.g., "NYC" is an alias for "New York City")
-- A RELATIONSHIP connects TWO DIFFERENT entities (e.g., "NBA" and "Los Angeles Lakers" are connected by MEMBER_OF — "Lakers" is NOT an alias of "NBA")
-- NEVER list a related entity as an alias. If "Kevin Durant" appears in text about "Brooklyn Nets", they are SEPARATE entities connected by a relationship
-- NEVER create a separate entity for a pseudonym or surface form that the text says belongs to the same person. If "Cousin Cæsar" is "calling himself Cole Conway", extract one person entity and put "Cole Conway" in aliases.
-- Test: Could you replace one name with the other in any sentence and preserve meaning? If yes → alias. If no → separate entities with a relationship
-
-</CRITICAL_RULES>
-
-<EXAMPLE_TASK>
+    <TASK_INSTRUCTIONS>
+    
+    For each entity, provide:
+    
+    - "name": The most complete, formal and canonical name of the entity that is supported by the text or prior entity context. Always use full proper names — NOT surnames, first names, nicknames, shortened forms, or abbreviations alone. Examples across domains:
+    -- People: "Stephen Curry" not "Curry"; "Barack Obama" not "Obama"; "Marie Curie" not "Curie"; "Ada Lovelace" not "Lovelace"; "Cole Conway" not "Conway" when the full form appears
+    -- Organizations: "Goldman Sachs Group" not "Goldman"; "European Central Bank" not "ECB"; "Massachusetts Institute of Technology" not "MIT"; "World Health Organization" not "WHO"; "Apple Inc." not "Apple"
+    -- Technology: "Amazon Web Services" not "AWS"; "React Native" not "React"; "PostgreSQL" not "Postgres"; "Large Language Model" not "LLM" (when first introduced)
+    -- Locations: "San Francisco Bay Area" not "Bay Area"; "United Kingdom" not "UK"; "Silicon Valley" not "the Valley"; "Paducah, Kentucky" not "Paducah" when the full form appears; do not invent a state/country if the text does not provide one
+    -- Events: "2024 United States presidential election" not "the election"; "1984 Summer Olympics" not "1984 games"; "CES 2025" not "CES"; "World War II" not "the war"
+    -- Legal/Science: "General Data Protection Regulation" not "GDPR"; "Clean Air Act of 1970" not "Clean Air Act"; "Hubble Space Telescope" not "Hubble"; "CRISPR-Cas9" not "CRISPR"
+    -- Products: "iPhone 16 Pro Max" not "iPhone"; "Tesla Model 3" not "Model 3"; "GPT-4" not "GPT"
+    -- Culture: "Naismith Memorial Basketball Hall of Fame" not "Hall of Fame"; "Academy Award for Best Picture" not "Best Picture"; "The Great Gatsby" not "Gatsby"
+    - "type": One of: ${ENTITY_TYPES_LIST}
+    - "description": A one-sentence description of what this entity IS — its defining attributes, NOT its relationships to other entities
+    - "aliases": Other proper names, abbreviations, pseudonyms, titles, or stable short references for THIS SAME entity in the text (array of strings). Preserve the exact surface forms that appear in the source text.
+    -- Valid aliases: "NYC" for "New York City", "WHO" for "World Health Organization", "The Iron Lady" for "Margaret Thatcher", "Python" for "Python programming language", "Cole Conway" and "Conway" for "Cousin Cæsar" when the text says he is calling himself Cole Conway and later refers to him as Conway
+    -- NEVER include as aliases:
+    --- Pronouns or pronoun phrases (he, she, it, they, them, we, his, her, its)
+    --- Generic references (the team, the roster, the company, the city, the league, the organization, the event, the protocol, the framework, the ingredient)
+    --- Surnames or first names alone as canonical entity names (Curry, Obama, Kevin, Marie). A bare surname may be an alias only when the same passage or prior context clearly ties it to a full person entity, e.g. "Conway" after "Cole Conway"
+    --- Names of DIFFERENT entities — "FIBA Hall of Fame" and "Naismith Hall of Fame" are SEPARATE entities; "React" and "React Native" are SEPARATE; "Python 2" and "Python 3" are SEPARATE
+    --- Descriptive phrases (the American team, the defending champions, the former president, the lead researcher, the main ingredient)
+    --- Country/city names for their teams — "France" is NOT an alias of "France men's national basketball team"; "Brazil" is NOT an alias of "Brazil national football team"
+    --- Shortened generic forms — "Finals" is NOT an alias of "NBA Finals"; "MVP" is NOT an alias of any specific MVP award; "Olympics" is NOT an alias of "2024 Summer Olympics"
+    
+    </TASK_INSTRUCTIONS>
+    
+    <TASK_RULES>
+    
+    - Extract the most relevant and topically-important entities. When the text contains too many potential entities, prioritize:
+    -- 1. PRIMARY SUBJECTS — entities the text is primarily ABOUT, not merely mentioned
+    -- 2. ENTITIES WITH EXPLICIT RELATIONSHIPS — entities that have stated or repeated connections to other entities in the text
+    -- 3. SPECIFIC OVER GENERIC — prefer "2006 FIBA World Championship" over "basketball"
+    -- 4. ACTORS OVER SETTINGS — prefer entities that DO things over entities that are merely locations or backdrops
+    -- Omit entities that appear only in lists, parenthetical asides, or as minor supporting context with no described relationships.
+    - Only extract specific named entities. NOT dates, dollar amounts, percentages, or generic descriptions
+    - Exception: when the text directly states a named person's or organization's profession, office, or role, extract that role label as a "concept" entity so it can participate in a structured relationship. Examples: "doctor", "pilot", "house surgeon"
+    - If an entity is referred to by multiple names (e.g., "OpenAI" and "the company"), list the proper name variants as aliases — NOT the generic reference
+    - Include important entities even if they only appear once
+    - Preserve complete person surface forms exactly when present. If the text says a person is "calling himself Cole Conway" or "known as Cole Conway", include "Cole Conway" as the entity name or alias — not only "Conway".
+    - For people, prefer complete first+last names, titled names, and pseudonyms over bare first names or surnames.
+    - Never create a standalone PERSON entity from a bare first name or surname when a fuller person name appears in the text or prior context. Promote it to the fuller entity and store the bare form as an alias only if it is clearly used as a reference.
+    - Treat "called", "calling himself", "known as", "alias", "under the name", "styled himself", and "went by" constructions as alias evidence for the same entity unless the text clearly describes two different people.
+    - Do not add a shared family surname as an alias when several related people use that surname. For example, "Simon" alone is not a safe alias for "Cæsar Simon" when "S. S. Simon" or "Young Simon" may also appear.
+    - For locations, use the fullest location span stated in the text. If the source says "Paducah, Kentucky" or "Cairo, Egypt", the entity name should include the qualifier; the bare city may be an alias. Do not invent missing qualifiers.
+    - Reject generic, low-information entities such as "Bill", "Bertha", "Coffee", "College Avenue", "the Queen", "the city", or "the old man" unless the text clearly establishes that exact phrase as a specific named entity.
+    - Return an empty array if no named entities exist
+    - For events, awards, seasons, software versions, product generations, or any time/version-specific entities, ALWAYS include the year, version, or edition in the name. Each distinct occurrence is a SEPARATE entity — e.g., "2023 NBA Finals" and "2024 NBA Finals" are different, "Python 2" and "Python 3" are different, "iPhone 15" and "iPhone 16" are different, "HTTP/1.1" and "HTTP/2" are different, "Michelin Guide 2024" and "Michelin Guide 2025" are different.
+    - Different awards are ALWAYS separate entities even when they share words — "NBA Finals MVP" and "NBA MVP" are SEPARATE; "Academy Award for Best Picture" and "Academy Award for Best Director" are SEPARATE; "Nobel Peace Prize" and "Nobel Prize in Physics" are SEPARATE
+    - Entities with opposing directional or categorical qualifiers are ALWAYS separate — "Western Conference" and "Eastern Conference" are SEPARATE; "North Atlantic Treaty Organization" and "South Asian Association" are SEPARATE; "Upper Egypt" and "Lower Egypt" are SEPARATE
+    - Profession and role statements should become structured edges when supported by the text. Examples: "Steve Sharp, a pilot by profession" → Steve Sharp WORKS_AS pilot; "Elsie Inglis was a doctor" → Elsie Inglis WORKS_AS doctor; "She served as a house surgeon" → person HELD_ROLE house surgeon
+    
+    </TASK_RULES>
+    
+    <CRITICAL_RULES>
+    
+    CRITICAL — ALIASES vs. RELATIONSHIPS:
+    - An ALIAS is a different name for THE SAME entity (e.g., "NYC" is an alias for "New York City")
+    - A RELATIONSHIP connects TWO DIFFERENT entities (e.g., "National Basketball Association" and "Los Angeles Lakers" are connected by MEMBER_OF — "Lakers" is NOT an alias of "National Basketball Association").
+    - NEVER list a related entity as an alias. If "Kevin Durant" appears in text about "Brooklyn Nets", they are SEPARATE entities connected by a relationship.
+    - NEVER create a separate entity for a pseudonym or surface form that the text says belongs to the same person. If "Cousin Cæsar" is "calling himself Cole Conway", extract one person entity and put "Cole Conway" in aliases.
+    - Test: Could you replace one name with the other in any sentence and preserve meaning? If yes → alias. If no → separate entities with a relationship.
+    
+    ACRONYM / INITIALISM CANONICALIZATION RULES:
+    - Never use an acronym, abbreviation, or initialism as the canonical "name" when a fuller proper name is available in the text, document title, prior entity context, or common domain context.
+    - Use the expanded full name as "name" and put the acronym/initialism in "aliases".
+    - Examples:
+      - Use "Time Variance Authority" as name, aliases ["TVA"].
+      - Use "Marvel Cinematic Universe" as name, aliases ["MCU"].
+      - Use "National Basketball Association"as name, aliases ["NBA"].
+      - Use "Professor Charles Xavier’s School for Gifted Youngsters" as name, not "Xavier’s School" if the full name is available.
+    - If the text contains only an acronym and no reliable expansion is available, you may use the acronym as the name, but set aliases to [].
+    - If a prior entity context contains the expanded name, reuse that expanded name as canonical for later acronym mentions.
+    - Do not create separate entities for an acronym and its expansion. Merge them into one entity.
+    
+    </CRITICAL_RULES>
+    
+    <EXAMPLE_TASK>
+    
+      This is an example, purely for illustrative purposes, to help you understand the task.
+    
+      <EXAMPLE_TEXT_STRING>
+    
+      "Cousin Cæsar was born to Nancy Wade in West Tennessee and grew up under the care of Big-sis. At twenty years of age we find Cousin Cæsar in Paducah, Kentucky, calling himself Cole Conway, in company with one Steve Sharp; they were partners in the game, as they called it. Sharp, a pilot by profession, had purchased the cards, while Conway dealt in the back room of a saloon. Earlier, Rob Roy cut wood for Old Smith on a farm near the Tennessee River."
+    
+      </EXAMPLE_TEXT_STRING>
+    
+      <EXAMPLE_OUTPUT>
+    
+      [{"name": "Cousin Cæsar", "type": "person", "description": "A man born to Nancy Wade in West Tennessee who later uses the name Cole Conway in Paducah, Kentucky", "aliases": ["Cole Conway"]},
+      {"name": "Nancy Wade", "type": "person", "description": "Mother of Cousin Cæsar", "aliases": []},
+      {"name": "Big-sis", "type": "person", "description": "Caretaker of Cousin Cæsar during childhood", "aliases": []},
+      {"name": "Steve Sharp", "type": "person", "description": "Pilot and partner of Cousin Cæsar in the card game", "aliases": []},
+      {"name": "pilot", "type": "concept", "description": "A profession practiced by Steve Sharp", "aliases": []},
+      {"name": "Paducah, Kentucky", "type": "location", "description": "City in Kentucky where Cousin Cæsar uses the name Cole Conway", "aliases": []},
+      {"name": "West Tennessee", "type": "location", "description": "Region where Cousin Cæsar was born", "aliases": []},
+      {"name": "Rob Roy", "type": "person", "description": "Wood cutter who worked for Old Smith", "aliases": []},
+      {"name": "Old Smith", "type": "person", "description": "Farm owner near the Tennessee River who employed Rob Roy", "aliases": []},
+      {"name": "Tennessee River", "type": "location", "description": "River near Old Smith's farm", "aliases": []}]
+    
+      </EXAMPLE_OUTPUT>
+    
+    </EXAMPLE_TASK>
 
   This is an example, purely for illustrative purposes, to help you understand the task.
 

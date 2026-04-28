@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod/v4-mini'
 import { generateId } from '../../utils/id.js'
 import type { EmbeddingProvider } from '../../embedding/provider.js'
 import type { LLMProvider } from '../../types/llm-provider.js'

@@ -1,10 +1,38 @@
 import type { EntityResult, FactResult, KnowledgeGraphBridge } from '../../types/graph-bridge.js'
 import type { typegraphIdentity } from '../../types/identity.js'
 import type { QueryGraphOptions } from '../../types/query.js'
-import type { NormalizedResult } from '../merger.js'
+import type { RetrievalCandidate } from '../merger.js'
+
+const FACT_FILTERED_NARROW_GRAPH_OPTIONS: Required<Pick<QueryGraphOptions,
+  'factFilter' |
+  'factCandidateLimit' |
+  'factFilterInputLimit' |
+  'factSeedLimit' |
+  'passageSeedLimit' |
+  'maxExpansionEdgesPerEntity' |
+  'factChainLimit' |
+  'maxPprIterations' |
+  'minPprScore'
+>> = {
+  factFilter: true,
+  factCandidateLimit: 80,
+  factFilterInputLimit: 12,
+  factSeedLimit: 4,
+  passageSeedLimit: 80,
+  maxExpansionEdgesPerEntity: 25,
+  factChainLimit: 2,
+  maxPprIterations: 40,
+  minPprScore: 1e-8,
+}
+
+export function resolveGraphSearchOptions(options?: QueryGraphOptions): QueryGraphOptions {
+  const { profile = 'fact-filtered-narrow', ...overrides } = options ?? {}
+  const preset = profile === 'fact-filtered-narrow' ? FACT_FILTERED_NARROW_GRAPH_OPTIONS : {}
+  return { ...preset, ...overrides }
+}
 
 export interface GraphRunResult {
-  results: NormalizedResult[]
+  results: RetrievalCandidate[]
   facts: FactResult[]
   entities: EntityResult[]
 }
@@ -32,7 +60,7 @@ export class GraphRunner {
     }
 
     const graphResult = await this.graph.searchGraphPassages(text, identity, {
-      ...options,
+      ...resolveGraphSearchOptions(options),
       count,
       bucketIds,
     })
@@ -50,7 +78,7 @@ export class GraphRunner {
           ...(result.metadata ?? {}),
           passageId: result.passageId,
         },
-        chunk: { index: result.chunkIndex, total: result.totalChunks ?? 1, isNeighbor: false },
+        chunk: { index: result.chunkIndex, total: result.totalChunks ?? 1 },
         tenantId: result.tenantId ?? identity.tenantId,
         groupId: result.groupId,
         userId: result.userId,

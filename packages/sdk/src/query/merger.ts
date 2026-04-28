@@ -2,15 +2,15 @@ import { createHash } from 'crypto'
 import type { QueryMemoryRecord, QuerySignals, NormalizedScores } from '../types/query.js'
 import { computeCompositeScore } from './planner.js'
 
-export interface NormalizedResult {
+export interface RetrievalCandidate {
   content: string
   bucketId: string
   documentId: string
-  rawScores: { semantic?: number | undefined; keyword?: number | undefined; rrf?: number | undefined; liveRelevance?: number | undefined; memory?: number | undefined; graph?: number | undefined; memorySimilarity?: number | undefined; memoryImportance?: number | undefined; memoryRecency?: number | undefined }
+  rawScores: { semantic?: number | undefined; keyword?: number | undefined; rrf?: number | undefined; memory?: number | undefined; graph?: number | undefined; memorySimilarity?: number | undefined; memoryImportance?: number | undefined; memoryRecency?: number | undefined }
   normalizedScore: number
-  mode: 'indexed' | 'live' | 'cached' | 'memory' | 'graph'
+  mode: 'indexed' | 'memory' | 'graph'
   metadata: Record<string, unknown>
-  chunk?: { index: number; total: number; isNeighbor: boolean } | undefined
+  chunk?: { index: number; total: number } | undefined
   url?: string | undefined
   title?: string | undefined
   updatedAt?: Date | undefined
@@ -25,14 +25,14 @@ export interface NormalizedResult {
   memoryRecord?: QueryMemoryRecord | undefined
 }
 
-export function dedupKey(r: NormalizedResult): string {
+export function dedupKey(r: RetrievalCandidate): string {
   if (r.documentId && r.chunk?.index !== undefined && r.bucketId) {
     return `${r.bucketId}:${r.documentId}:${r.chunk.index}`
   }
   return createHash('sha256').update(r.content).digest('hex')
 }
 
-export function minMaxNormalize(results: NormalizedResult[]): NormalizedResult[] {
+export function minMaxNormalize(results: RetrievalCandidate[]): RetrievalCandidate[] {
   if (results.length === 0) return results
   const scores = results.map(r => r.normalizedScore)
   const min = Math.min(...scores)
@@ -51,15 +51,6 @@ export function normalizeRRF(rrfScore: number, numLists: number, k = 60): number
   return theoreticalMax > 0 ? Math.min(rrfScore / theoreticalMax, 1) : 0
 }
 
-/** Normalize a raw PPR score to 0-1 by dividing by a reference value.
- *  Kept for backward compatibility — composite scoring now uses
- *  normalizeGraphPPR() fourth-root scaling instead. This function is still exported for tests
- *  and any direct consumers. */
-export function normalizePPR(pprScore: number, reference = 0.30): number {
-  if (reference <= 0) return 0
-  return Math.min(pprScore / reference, 1.0)
-}
-
 /** Normalize graph PPR scores with fourth-root scaling.
  *  PPR is a probability mass and useful passage scores are often small
  *  absolute values. Fourth-root scaling expands low-but-meaningful scores
@@ -71,17 +62,17 @@ export function normalizeGraphPPR(pprScore: number): number {
 
 /** Calibrate raw cosine similarity to a 0-1 relevance scale.
  *  Rescales the practical range of the embedding model to use the full 0-1 range.
- *  Default floor/ceiling tuned for text-embedding-3-small. */
-export function calibrateSemantic(cosine: number, floor = 0.10, ceiling = 0.70): number {
+ *  Default floor/ceiling tuned for current cross-query score stability. */
+export function calibrateSemantic(cosine: number, floor = 0, ceiling = 0.85): number {
   if (cosine <= floor) return 0
   if (cosine >= ceiling) return 1
   return (cosine - floor) / (ceiling - floor)
 }
 
 /** Calibrate raw ts_rank() BM25 score to 0-1.
- *  ts_rank() produces values typically in [0, 0.5] range.
+ *  ts_rank() produces values typically in [0, 1] range.
  *  Static ceiling normalization ensures consistent 0-1 scale across queries. */
-export function calibrateKeyword(score: number, floor = 0, ceiling = 0.23): number {
+export function calibrateKeyword(score: number, floor = 0, ceiling = 1): number {
   if (score <= floor) return 0
   if (score >= ceiling) return 1
   return (score - floor) / (ceiling - floor)
@@ -90,8 +81,6 @@ export function calibrateKeyword(score: number, floor = 0, ceiling = 0.23): numb
 /** Default RRF weights by internal runner mode. */
 const DEFAULT_RRF_WEIGHTS: Record<string, number> = {
   indexed: 0.5,
-  live: 0.1,
-  cached: 0.1,
   memory: 0.2,
   graph: 0.15,
 }
@@ -104,18 +93,16 @@ function deriveRRFWeights(scoreWeights?: Partial<Record<string, number>>): Recor
     indexed: (scoreWeights.semantic ?? 0.5) + (scoreWeights.keyword ?? 0),
     memory: scoreWeights.memory ?? 0.2,
     graph: scoreWeights.graph ?? 0.15,
-    live: 0.1,
-    cached: 0.1,
   }
 }
 
 export function mergeAndRank(
-  runnerResults: NormalizedResult[][],
+  runnerResults: RetrievalCandidate[][],
   count: number,
   weights?: Record<string, number>,
   signals?: Required<QuerySignals>,
   scoreWeights?: Partial<Record<'rrf' | 'semantic' | 'keyword' | 'graph' | 'memory', number>>
-): NormalizedResult[] {
+): RetrievalCandidate[] {
   const numLists = runnerResults.length
   const rrfWeights = weights ?? deriveRRFWeights(scoreWeights)
 
@@ -192,7 +179,7 @@ export function mergeAndRank(
 
     return {
       ...best,
-      rawScores: aggregatedScores as NormalizedResult['rawScores'],
+      rawScores: aggregatedScores as RetrievalCandidate['rawScores'],
       modes: [...modes],
       finalScore: rrfScore,
       compositeScore,

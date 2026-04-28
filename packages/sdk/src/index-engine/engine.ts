@@ -4,7 +4,6 @@ import { embeddingModelKey } from '../embedding/provider.js'
 import type { IngestOptions, IndexResult, ExtractionFailure } from '../types/index-types.js'
 import type { RawDocument, Chunk } from '../types/connector.js'
 import { generateId } from '../utils/id.js'
-import { IndexError } from '../types/index-types.js'
 import { sha256, resolveIdempotencyKey, buildHashStoreKey } from './hash.js'
 import { stripMarkdown } from './strip-markdown.js'
 import type { TripleExtractor, EntityContext } from './triple-extractor.js'
@@ -20,7 +19,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined>
 }
 
 const TRIPLE_EXTRACTION_TIMEOUT_MS = 360_000 // 6 minutes per chunk
-const ENTITY_CONTEXT_LIMIT = 20
+const ENTITY_CONTEXT_LIMIT = 100
 
 function sanitizeText(value: string): string {
   return sanitizeInvalidSurrogates(value

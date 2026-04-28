@@ -63,7 +63,20 @@ describe('GraphRunner', () => {
     expect(searchGraphPassages).toHaveBeenCalledWith(
       'Adarsh Plotline SDK',
       { tenantId: 'tenant-1' },
-      { restartProbability: 0.5, count: 3, bucketIds: ['bucket-1'] }
+      {
+        factFilter: true,
+        factCandidateLimit: 80,
+        factFilterInputLimit: 12,
+        factSeedLimit: 4,
+        passageSeedLimit: 80,
+        maxExpansionEdgesPerEntity: 25,
+        factChainLimit: 2,
+        maxPprIterations: 40,
+        minPprScore: 1e-8,
+        restartProbability: 0.5,
+        count: 3,
+        bucketIds: ['bucket-1'],
+      }
     )
     expect(run.facts).toEqual([expect.objectContaining({ id: 'fact-1', factText: 'Adarsh works on Plotline SDK' })])
     expect(run.entities).toEqual([expect.objectContaining({ id: 'ent-1', name: 'Adarsh Tadimari' })])
@@ -74,7 +87,7 @@ describe('GraphRunner', () => {
         documentId: 'doc-1',
         rawScores: { graph: 0.42 },
         mode: 'graph',
-        chunk: { index: 2, total: 5, isNeighbor: false },
+        chunk: { index: 2, total: 5 },
         metadata: expect.objectContaining({
           source: 'test',
           passageId: 'passage-1',
@@ -90,5 +103,31 @@ describe('GraphRunner', () => {
     await expect(
       runner.run('Adarsh', { tenantId: 'tenant-1' }, 5)
     ).rejects.toThrow('Knowledge graph bridge must implement searchGraphPassages for graph queries.')
+  })
+
+  it('lets explicit graph options override the default profile', async () => {
+    const searchGraphPassages = vi.fn().mockResolvedValue({
+      results: [],
+      facts: [],
+      entities: [],
+      trace: {},
+    })
+    const runner = new GraphRunner({ searchGraphPassages } satisfies KnowledgeGraphBridge)
+
+    await runner.run('query', { tenantId: 'tenant-1' }, 5, undefined, {
+      factFilter: false,
+      factCandidateLimit: 25,
+    })
+
+    expect(searchGraphPassages).toHaveBeenCalledWith(
+      'query',
+      { tenantId: 'tenant-1' },
+      expect.objectContaining({
+        factFilter: false,
+        factCandidateLimit: 25,
+        factSeedLimit: 4,
+        count: 5,
+      })
+    )
   })
 })

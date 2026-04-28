@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod/v4-mini'
 import type { LLMProvider } from '../types/llm-provider.js'
 import type { GraphExploreIntent, GraphExploreIntentPredicate } from '../types/graph-bridge.js'
 import { ALL_PREDICATES, getPredicatesForPrompt } from '../index-engine/ontology.js'
@@ -194,15 +194,17 @@ const QUERY_PREDICATE_DEFINITIONS: PredicateQueryDefinition[] = [
   },
 ]
 
+const predicateSchema = z.object({
+  name: z.string(),
+  confidence: z.optional(z.number().check(z.minimum(0), z.maximum(1))),
+})
+
 const intentSchema = z.object({
-  anchorText: z.string().optional(),
-  anchorSide: z.enum(['source', 'target', 'either']).optional(),
-  mode: z.enum(['attribute', 'relationship']).optional(),
-  predicates: z.array(z.object({
-    name: z.string(),
-    confidence: z.number().min(0).max(1).optional(),
-  })).default([]),
-  targetEntityTypes: z.array(z.string()).max(8).default([]),
+  anchorText: z.optional(z.string()),
+  anchorSide: z.optional(z.enum(['source', 'target', 'either'])),
+  mode: z.optional(z.enum(['attribute', 'relationship'])),
+  predicates: z._default(z.array(predicateSchema), []),
+  targetEntityTypes: z._default(z.array(z.string()).check(z.maxLength(8)), []),
 })
 
 const FILLER_WORDS = new Set([

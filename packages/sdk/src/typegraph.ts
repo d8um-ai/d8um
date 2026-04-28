@@ -1,6 +1,6 @@
 import type { VectorStoreAdapter, UndeployResult } from './types/adapter.js'
 import type { Bucket, CreateBucketInput, BucketListFilter, EmbeddingConfig } from './types/bucket.js'
-import type { QueryChunkResult, QueryOpts, QueryResponse } from './types/query.js'
+import type { QueryOpts, QueryResponse } from './types/query.js'
 import type { IngestOptions, IndexResult } from './types/index-types.js'
 import type { EmbeddingProvider } from './embedding/provider.js'
 import { embeddingModelKey } from './embedding/provider.js'
@@ -30,6 +30,10 @@ import { aiSdkEmbeddingProvider, isAISDKEmbeddingInput } from './embedding/ai-sd
 import { aiSdkLlmProvider, isAISDKLLMInput } from './llm/ai-sdk-adapter.js'
 import { IndexEngine } from './index-engine/engine.js'
 import { TripleExtractor } from './index-engine/triple-extractor.js'
+import { defaultChunker } from './index-engine/chunker.js'
+import { QueryPlanner } from './query/planner.js'
+import { buildContext } from './query/assemble.js'
+import { createCloudInstance } from './cloud/cloud-instance.js'
 import { NotFoundError, NotInitializedError, ConfigError } from './types/errors.js'
 import { generateId } from './utils/id.js'
 
@@ -220,7 +224,7 @@ export interface typegraphInstance {
   /** Ingest a document with pre-chunked content. Target bucket set via opts.bucketId. */
   ingestPreChunked(doc: RawDocument, chunks: Chunk[], opts?: IngestOptions): Promise<IndexResult>
 
-  /** Search across buckets. Optionally format results via opts.format. */
+  /** Search across buckets. Optionally build an LLM-ready context via opts.context. */
   query(text: string, opts?: QueryOpts): Promise<QueryResponse>
 
   // ── Memory operations (require graph bridge) ──
@@ -833,11 +837,10 @@ class TypegraphImpl implements typegraphInstance {
     const bucket = await this.buckets.get(resolvedBucketId)
     if (!bucket) throw new NotFoundError('Bucket', resolvedBucketId)
     const resolvedOpts = this.resolveIngestOptions(opts, bucket)
-    const { defaultChunker: chunker } = await import('./index-engine/chunker.js')
     const chunkSize = resolvedOpts.chunkSize ?? 512
     const chunkOverlap = resolvedOpts.chunkOverlap ?? 64
     const normalizedDocs = docs.map(doc => normalizeRawDocument(doc))
-    const items = await Promise.all(normalizedDocs.map(async doc => ({ doc, chunks: await chunker(doc, { chunkSize, chunkOverlap }) })))
+    const items = await Promise.all(normalizedDocs.map(async doc => ({ doc, chunks: await defaultChunker(doc, { chunkSize, chunkOverlap }) })))
     const embedding = await this.resolveEmbeddingForBucket(resolvedBucketId)
     const engine = this.createIndexEngine(embedding)
     this.logger?.info('Ingesting documents', { bucketId: resolvedBucketId, count: docs.length })
@@ -885,7 +888,6 @@ class TypegraphImpl implements typegraphInstance {
       }
     }
 
-    const { QueryPlanner } = await import('./query/planner.js')
     const planner = new QueryPlanner(
       this.adapter,
       [...this._buckets.keys()],
@@ -901,18 +903,11 @@ class TypegraphImpl implements typegraphInstance {
       tenantId: opts?.tenantId ?? this.config.tenantId,
     })
 
-    // Format results if requested
-    if (opts?.format) {
-      const { assemble } = await import('./query/assemble.js')
-      const resultsToFormat = opts.maxTokens
-        ? {
-            ...response.results,
-            chunks: trimToTokenBudget(response.results.chunks, opts.maxTokens, this.config.tokenizer),
-          }
-        : response.results
-      response.context = typeof opts.format === 'function'
-        ? opts.format(resultsToFormat)
-        : assemble(resultsToFormat, { format: opts.format })
+    // Build LLM-ready context if requested.
+    if (opts?.context) {
+      const built = buildContext(response.results, opts.context, this.config.tokenizer)
+      response.context = built.context
+      response.contextStats = built.stats
     }
 
     await this.config.hooks?.onQueryResults?.(text, response.results)
@@ -1111,24 +1106,6 @@ class TypegraphImpl implements typegraphInstance {
   }
 }
 
-/** Trim results to fit within a token budget, keeping highest-scored results first. */
-function trimToTokenBudget(
-  results: QueryChunkResult[],
-  maxTokens: number,
-  tokenizer?: (text: string) => number
-): QueryChunkResult[] {
-  const countTokens = tokenizer ?? ((text: string) => Math.ceil(text.split(/\s+/).length * 1.3))
-  const trimmed: QueryChunkResult[] = []
-  let budget = maxTokens
-  for (const r of results) {
-    const tokens = countTokens(r.content)
-    if (budget - tokens < 0 && trimmed.length > 0) break
-    trimmed.push(r)
-    budget -= tokens
-  }
-  return trimmed
-}
-
 /**
  * Runtime initialization. No DDL. Returns a ready-to-use instance.
  * - **Cloud mode**: pass `{ apiKey }` — everything runs server-side.
@@ -1136,7 +1113,6 @@ function trimToTokenBudget(
  */
 export async function typegraphInit(config: typegraphConfig): Promise<typegraphInstance> {
   if (config.apiKey) {
-    const { createCloudInstance } = await import('./cloud/cloud-instance.js')
     return createCloudInstance({
       apiKey: config.apiKey,
       baseUrl: config.baseUrl,

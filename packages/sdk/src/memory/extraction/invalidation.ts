@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod/v4-mini'
 import type { typegraphIdentity } from '../../types/identity.js'
 import type { SemanticFact } from '../types/memory.js'
 import type { MemoryStoreAdapter } from '../types/adapter.js'

@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod/v4-mini'
 import type { EmbeddingProvider } from '../../embedding/provider.js'
 import type { typegraphIdentity } from '../../types/identity.js'
 import type { EpisodicMemory, SemanticFact } from '../types/memory.js'
@@ -20,7 +20,7 @@ const candidateFactSchema = z.array(z.object({
 
 const conflictResolutionSchema = z.object({
   operation: z.enum(['ADD', 'UPDATE', 'DELETE', 'NOOP']),
-  targetIndex: z.number().nullable(),
+  targetIndex: z.nullable(z.number()),
   reasoning: z.string(),
 })
 

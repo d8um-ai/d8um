@@ -13,6 +13,7 @@ import type { LLMProvider } from './extraction/llm-provider.js'
 import type { ExtractionResult, ConversationMessage } from './extraction/extractor.js'
 import { MemoryExtractor } from './extraction/extractor.js'
 import { InvalidationEngine } from './extraction/invalidation.js'
+import { decayScore, DEFAULT_DECAY_CONFIG } from './consolidation/decay.js'
 import { createTemporal } from './temporal.js'
 import { generateId } from '../utils/id.js'
 
@@ -443,7 +444,6 @@ export class TypegraphMemory {
     // Staleness: sample active memories and count those below decay threshold
     let stalenessIndex = 0
     if (activeMemories > 0) {
-      const { decayScore, DEFAULT_DECAY_CONFIG } = await import('./consolidation/decay.js')
       const sample = await this.store.list({ status: 'active' }, Math.min(activeMemories, 500))
       const stale = sample.filter(r => decayScore(r, DEFAULT_DECAY_CONFIG) < DEFAULT_DECAY_CONFIG.minScore)
       stalenessIndex = Math.round((stale.length / sample.length) * 1000) / 1000

@@ -16,7 +16,7 @@ function registerTestBucket(instance: typegraphInstance, bucket: Bucket, embeddi
 }
 
 describe('integration', () => {
-  it('add bucket → ingest → query → format xml', async () => {
+  it('add bucket → ingest → query → context xml', async () => {
     const adapter = createMockAdapter()
     const embedding = createMockEmbedding()
     const instance = await typegraphInit({ vectorStore: adapter, embedding })
@@ -25,11 +25,12 @@ describe('integration', () => {
     registerTestBucket(instance, bucket, embedding)
     await instance.ingest(documents, { ...ingestOptions, bucketId: bucket.id })
 
-    const response = await instance.query('Document 1', { format: 'xml' })
+    const response = await instance.query('Document 1', { context: { format: 'xml' } })
     expect(response.results.chunks.length).toBeGreaterThan(0)
     expect(response.context).toContain('<context>')
-    expect(response.context).toContain('<source')
-    expect(response.context).toContain('<passage')
+    expect(response.context).toContain('<context_chunks>')
+    expect(response.context).toContain('<context_chunk_1>')
+    expect(response.contextStats?.format).toBe('xml')
   })
 
   it('ingest → re-ingest with changes → query shows updated content', async () => {
@@ -140,7 +141,7 @@ describe('integration', () => {
     expect(response.results.chunks.length).toBeGreaterThan(0)
   })
 
-  it('query format pipeline (same results → xml/md/plain/custom)', async () => {
+  it('query context pipeline (same results → xml/md/plain)', async () => {
     const adapter = createMockAdapter()
     const embedding = createMockEmbedding()
     const instance = await typegraphInit({ vectorStore: adapter, embedding })
@@ -149,15 +150,13 @@ describe('integration', () => {
     registerTestBucket(instance, bucket, embedding)
     await instance.ingest(documents, { ...ingestOptions, bucketId: bucket.id })
 
-    const xmlResponse = await instance.query('Document', { format: 'xml' })
-    const mdResponse = await instance.query('Document', { format: 'markdown' })
-    const plainResponse = await instance.query('Document', { format: 'plain' })
-    const customResponse = await instance.query('Document', { format: (r) => `Count: ${r.chunks.length}` })
+    const xmlResponse = await instance.query('Document', { context: { format: 'xml' } })
+    const mdResponse = await instance.query('Document', { context: { format: 'markdown' } })
+    const plainResponse = await instance.query('Document', { context: { format: 'plain' } })
 
     expect(xmlResponse.context).toContain('<context>')
-    expect(mdResponse.context).toContain('---')
+    expect(mdResponse.context).toContain('# Context')
     expect(plainResponse.context).not.toContain('<')
-    expect(customResponse.context).toMatch(/Count: \d+/)
   })
 
   describe('visibility scope isolation', () => {

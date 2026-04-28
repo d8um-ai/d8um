@@ -1,22 +1,22 @@
 import { describe, it, expect } from 'vitest'
-import { assemble } from '../query/assemble.js'
+import { buildContext } from '../query/assemble.js'
 import type { QueryChunkResult, QueryResults } from '../types/query.js'
 
 function makeChunk(overrides: Partial<QueryChunkResult> = {}): QueryChunkResult {
   return {
-    content: 'Test passage content',
-    score: 0.85,
-    scores: { raw: { cosineSimilarity: 0.85 }, normalized: { semantic: 0.85 } },
+    content: 'Maud is a poem by Alfred Tennyson.',
+    score: 0.9123,
+    scores: { raw: { cosineSimilarity: 0.9123 }, normalized: { semantic: 0.9123 } },
     sources: ['semantic'],
     document: {
       id: 'doc-1',
-      bucketId: 'src-1',
-      title: 'Test Document',
-      url: 'https://example.com/doc',
+      bucketId: 'books',
+      title: 'Maud',
+      url: 'https://example.com/maud',
       updatedAt: new Date('2024-01-01'),
     },
-    chunk: { index: 0, total: 1, isNeighbor: false },
-    metadata: {},
+    chunk: { index: 0, total: 4 },
+    metadata: { source: 'gutenberg', tags: ['poetry', 'victorian'] },
     ...overrides,
   }
 }
@@ -31,147 +31,122 @@ function makeResults(chunks: QueryChunkResult[] = [makeChunk()], overrides: Part
   }
 }
 
-describe('assemble', () => {
-  it('defaults to XML format with context/source/passage tags', () => {
-    const results = makeResults()
-    const output = assemble(results)
-    expect(output).toContain('<context>')
-    expect(output).toContain('</context>')
-    expect(output).toContain('<source')
-    expect(output).toContain('</source>')
-    expect(output).toContain('<passage')
-    expect(output).toContain('</passage>')
+describe('buildContext', () => {
+  it('defaults to XML with context section and numbered chunk tags', () => {
+    const built = buildContext(makeResults())
+
+    expect(built.context).toContain('<context>')
+    expect(built.context).toContain('<context_chunks>')
+    expect(built.context).toContain('<context_chunk_1>')
+    expect(built.context).toContain('Maud is a poem by Alfred Tennyson.')
+    expect(built.context).not.toContain('score=')
+    expect(built.stats.format).toBe('xml')
+    expect(built.stats.sections.chunks?.included).toBe(1)
   })
 
-  it('includes source attributes in XML', () => {
-    const results = makeResults()
-    const output = assemble(results)
-    expect(output).toContain('id="src-1"')
-    expect(output).toContain('title="Test Document"')
-    expect(output).toContain('url="https://example.com/doc"')
+  it('renders XML attributes and nested readable metadata when requested', () => {
+    const built = buildContext(makeResults(), {
+      format: 'xml',
+      includeAttributes: true,
+      sections: ['chunks'],
+    })
+
+    expect(built.context).toContain('score="0.9123"')
+    expect(built.context).toContain('bucketId="books"')
+    expect(built.context).toContain('url="https://example.com/maud"')
+    expect(built.context).toContain('<context_chunk_1_metadata>{"source":"gutenberg","tags":["poetry","victorian"]}</context_chunk_1_metadata>')
+    expect(built.context).toContain('<context_chunk_1_content>Maud is a poem by Alfred Tennyson.</context_chunk_1_content>')
+    expect(built.context).not.toContain('metadata=')
+    expect(built.context).not.toContain('&quot;source&quot;')
   })
 
-  it('includes score in XML passage', () => {
-    const results = makeResults([makeChunk({ score: 0.8500 })])
-    const output = assemble(results)
-    expect(output).toContain('score="0.8500"')
-  })
-
-  it('groups by bucket in XML', () => {
-    const baseDocument = makeChunk().document
-    const results = makeResults([
-      makeChunk({ content: 'A', document: { ...baseDocument, bucketId: 'src-1' } }),
-      makeChunk({ content: 'B', document: { ...baseDocument, bucketId: 'src-1' } }),
-      makeChunk({ content: 'C', document: { ...baseDocument, bucketId: 'src-2', title: 'Other' } }),
-    ])
-    const output = assemble(results)
-    // Should have two <source> blocks
-    const sourceMatches = output.match(/<source /g)
-    expect(sourceMatches).toHaveLength(2)
-  })
-
-  it('escapes XML special chars', () => {
-    const results = makeResults([makeChunk({
-      content: 'Use <div> & "quotes"',
-      document: { ...makeChunk().document, title: 'A & B <C>' },
-    })])
-    const output = assemble(results)
-    expect(output).toContain('&amp;')
-    expect(output).toContain('&lt;')
-    expect(output).toContain('&gt;')
-    expect(output).toContain('&quot;')
-  })
-
-  it('assembles markdown format with headings and horizontal rules', () => {
-    const results = makeResults([
-      makeChunk({ content: 'First' }),
-      makeChunk({ content: 'Second' }),
-    ])
-    const output = assemble(results, { format: 'markdown' })
-    expect(output).toContain('# [Test Document]')
-    expect(output).toContain('First')
-    expect(output).toContain('---')
-    expect(output).toContain('Second')
-  })
-
-  it('assembles markdown with linked title when url present', () => {
-    const results = makeResults([makeChunk({
-      content: 'Content here',
-      document: { ...makeChunk().document, title: 'My Page', url: 'https://example.com' },
-    })])
-    const output = assemble(results, { format: 'markdown' })
-    expect(output).toContain('# [My Page](https://example.com)')
-  })
-
-  it('assembles markdown with plain title when no url', () => {
-    const results = makeResults([makeChunk({
-      content: 'Content here',
-      document: { ...makeChunk().document, title: 'FAQ Item', url: undefined },
-    })])
-    const output = assemble(results, { format: 'markdown' })
-    expect(output).toContain('# FAQ Item')
-    expect(output).not.toContain('[')
-  })
-
-  it('assembles plain format with double newlines', () => {
-    const results = makeResults([
-      makeChunk({ content: 'First' }),
-      makeChunk({ content: 'Second' }),
-    ])
-    const output = assemble(results, { format: 'plain' })
-    expect(output).toBe('First\n\nSecond')
-  })
-
-  it('supports custom format function', () => {
-    const results = makeResults([makeChunk({ content: 'Test' })])
-    const output = assemble(results, { format: (r) => r.chunks.map(x => x.content.toUpperCase()).join(',') })
-    expect(output).toBe('TEST')
-  })
-
-  it('renders graph evidence and memories as separate sections', () => {
-    const results = makeResults([], {
+  it('renders markdown with context headings and XML-like content wrappers', () => {
+    const built = buildContext(makeResults([], {
+      chunks: [makeChunk()],
       facts: [{
         id: 'fact-1',
         edgeId: 'edge-1',
         sourceEntityId: 'ent-1',
-        sourceEntityName: 'Tennyson',
+        sourceEntityName: 'Alfred Tennyson',
         targetEntityId: 'ent-2',
         targetEntityName: 'Maud',
         relation: 'WROTE',
-        factText: 'Tennyson wrote Maud',
+        factText: 'Alfred Tennyson wrote Maud.',
         weight: 1,
-        evidenceCount: 1,
+        evidenceCount: 2,
       }],
-      entities: [{
-        id: 'ent-1',
-        name: 'Tennyson',
-        entityType: 'person',
-        aliases: [],
-        edgeCount: 1,
-      }],
-      memories: [{
-        id: 'mem-1',
-        category: 'semantic',
-        status: 'active',
-        content: 'Remembered context',
-        importance: 0.8,
-        accessCount: 0,
-        lastAccessedAt: new Date('2024-01-01'),
-        metadata: {},
-        scope: {},
-        validAt: new Date('2024-01-01'),
-        createdAt: new Date('2024-01-01'),
-        score: 0.7,
-        scores: { raw: { memorySimilarity: 0.7 }, normalized: { memory: 0.7 } },
-      }],
+    }), {
+      format: 'markdown',
+      sections: ['chunks', 'facts'],
+      includeAttributes: true,
     })
 
-    const output = assemble(results, { format: 'markdown' })
-    expect(output).toContain('# Facts')
-    expect(output).toContain('Tennyson wrote Maud')
-    expect(output).toContain('# Entities')
-    expect(output).toContain('Tennyson')
-    expect(output).toContain('# Memories')
-    expect(output).toContain('Remembered context')
+    expect(built.context).toContain('# Context')
+    expect(built.context).toContain('## Context Chunks')
+    expect(built.context).toContain('### Context Chunk 1')
+    expect(built.context).toContain('metadata: {"source":"gutenberg","tags":["poetry","victorian"]}')
+    expect(built.context).toContain('<context_chunk_1>\nMaud is a poem by Alfred Tennyson.\n</context_chunk_1>')
+    expect(built.context).toContain('## Context Facts')
+    expect(built.context).toContain('relation: WROTE')
+    expect(built.context).toContain('<context_fact_1>\nAlfred Tennyson wrote Maud.\n</context_fact_1>')
+  })
+
+  it('omits facts when the facts section is not requested', () => {
+    const built = buildContext(makeResults([makeChunk()], {
+      facts: [{
+        id: 'fact-1',
+        edgeId: 'edge-1',
+        sourceEntityId: 'ent-1',
+        targetEntityId: 'ent-2',
+        relation: 'WROTE',
+        factText: 'Alfred Tennyson wrote Maud.',
+        weight: 1,
+        evidenceCount: 2,
+      }],
+    }), {
+      format: 'markdown',
+      sections: ['chunks'],
+    })
+
+    expect(built.context).toContain('## Context Chunks')
+    expect(built.context).not.toContain('## Context Facts')
+    expect(built.context).not.toContain('Alfred Tennyson wrote Maud.')
+  })
+
+  it('applies per-section token budgets and reports truncation stats', () => {
+    const built = buildContext(makeResults([], {
+      facts: [
+        {
+          id: 'fact-1',
+          edgeId: 'edge-1',
+          sourceEntityId: 'ent-1',
+          targetEntityId: 'ent-2',
+          relation: 'FIRST',
+          factText: 'First fact.',
+          weight: 1,
+          evidenceCount: 1,
+        },
+        {
+          id: 'fact-2',
+          edgeId: 'edge-2',
+          sourceEntityId: 'ent-1',
+          targetEntityId: 'ent-3',
+          relation: 'SECOND',
+          factText: 'Second fact.',
+          weight: 1,
+          evidenceCount: 1,
+        },
+      ],
+    }), {
+      format: 'plain',
+      sections: ['facts'],
+      maxFactTokens: 5,
+    }, text => text.includes('Second fact') ? 10 : 1)
+
+    expect(built.context).toContain('First fact.')
+    expect(built.context).not.toContain('Second fact.')
+    expect(built.stats.sections.facts?.available).toBe(2)
+    expect(built.stats.sections.facts?.included).toBe(1)
+    expect(built.stats.sections.facts?.truncated).toBe(true)
   })
 })

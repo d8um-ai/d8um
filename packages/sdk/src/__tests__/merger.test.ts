@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { dedupKey, minMaxNormalize, mergeAndRank, normalizeRRF, normalizePPR, normalizeGraphPPR, calibrateSemantic, calibrateKeyword, type NormalizedResult } from '../query/merger.js'
+import { dedupKey, minMaxNormalize, mergeAndRank, normalizeRRF, normalizeGraphPPR, calibrateSemantic, calibrateKeyword, type RetrievalCandidate } from '../query/merger.js'
 
-function makeResult(overrides: Partial<NormalizedResult> = {}): NormalizedResult {
+function makeResult(overrides: Partial<RetrievalCandidate> = {}): RetrievalCandidate {
   return {
     content: 'Test content',
     bucketId: 'src-1',
@@ -16,7 +16,7 @@ function makeResult(overrides: Partial<NormalizedResult> = {}): NormalizedResult
 
 describe('dedupKey', () => {
   it('uses stable chunk identity when bucket, document, and chunk are available', () => {
-    const r = makeResult({ url: 'https://example.com/page', chunk: { index: 2, total: 5, isNeighbor: false } })
+    const r = makeResult({ url: 'https://example.com/page', chunk: { index: 2, total: 5 } })
     const key = dedupKey(r)
     expect(key).toBe('src-1:doc-1:2')
   })
@@ -100,44 +100,6 @@ describe('normalizeRRF', () => {
   })
 })
 
-describe('normalizePPR', () => {
-  it('normalizes PPR by dividing by reference', () => {
-    // PPR equal to reference → 1.0
-    expect(normalizePPR(0.35, 0.35)).toBeCloseTo(1.0)
-  })
-
-  it('produces values between 0 and 1 for typical PPR scores', () => {
-    expect(normalizePPR(0.1, 0.35)).toBeCloseTo(0.1 / 0.35)
-    expect(normalizePPR(0.1, 0.35)).toBeGreaterThan(0)
-    expect(normalizePPR(0.1, 0.35)).toBeLessThan(1)
-  })
-
-  it('caps at 1.0 for scores above reference', () => {
-    expect(normalizePPR(0.5, 0.35)).toBe(1.0)
-  })
-
-  it('returns 0 for 0 reference', () => {
-    expect(normalizePPR(0.1, 0)).toBe(0)
-  })
-
-  it('returns 0 for 0 PPR score', () => {
-    expect(normalizePPR(0, 0.35)).toBe(0)
-  })
-
-  it('uses default reference of 0.30', () => {
-    // Default reference = 0.30
-    expect(normalizePPR(0.15)).toBeCloseTo(0.15 / 0.30)
-    expect(normalizePPR(0.30)).toBeCloseTo(1.0)
-  })
-
-  it('same PPR score always produces same normalized value', () => {
-    const query1Result = normalizePPR(0.15, 0.35)
-    const query2Result = normalizePPR(0.15, 0.35)
-    expect(query1Result).toBe(query2Result)
-    expect(query1Result).toBeCloseTo(0.4286, 3)
-  })
-})
-
 describe('normalizeGraphPPR', () => {
   it('uses fourth-root scaling for graph PPR', () => {
     expect(normalizeGraphPPR(0.03)).toBeCloseTo(Math.sqrt(Math.sqrt(0.03)))
@@ -152,28 +114,27 @@ describe('normalizeGraphPPR', () => {
 
 describe('calibrateSemantic', () => {
   it('maps floor to 0', () => {
-    expect(calibrateSemantic(0.10)).toBe(0)
+    expect(calibrateSemantic(0)).toBe(0)
   })
 
   it('maps ceiling to 1', () => {
-    expect(calibrateSemantic(0.70)).toBe(1)
-  })
-
-  it('maps below floor to 0', () => {
-    expect(calibrateSemantic(0.05)).toBe(0)
-  })
-
-  it('maps above ceiling to 1', () => {
     expect(calibrateSemantic(0.85)).toBe(1)
   })
 
-  it('maps midpoint correctly', () => {
-    // midpoint of [0.10, 0.70] = 0.40 → 0.50
-    expect(calibrateSemantic(0.40)).toBeCloseTo(0.5)
+  it('maps below floor to 0', () => {
+    expect(calibrateSemantic(-0.05)).toBe(0)
   })
 
-  it('maps Stephen Curry score (0.52) to ~0.70', () => {
-    expect(calibrateSemantic(0.52)).toBeCloseTo(0.70)
+  it('maps above ceiling to 1', () => {
+    expect(calibrateSemantic(0.95)).toBe(1)
+  })
+
+  it('maps midpoint correctly', () => {
+    expect(calibrateSemantic(0.425)).toBeCloseTo(0.5)
+  })
+
+  it('maps 0.52 under the wider default ceiling', () => {
+    expect(calibrateSemantic(0.52)).toBeCloseTo(0.6118, 4)
   })
 
   it('accepts custom floor/ceiling', () => {
@@ -189,15 +150,15 @@ describe('calibrateKeyword', () => {
   })
 
   it('maps ceiling to 1', () => {
-    expect(calibrateKeyword(0.23)).toBe(1)
+    expect(calibrateKeyword(1)).toBe(1)
   })
 
   it('maps above ceiling to 1', () => {
-    expect(calibrateKeyword(0.50)).toBe(1)
+    expect(calibrateKeyword(1.50)).toBe(1)
   })
 
   it('maps midpoint correctly', () => {
-    expect(calibrateKeyword(0.115)).toBeCloseTo(0.5)
+    expect(calibrateKeyword(0.5)).toBeCloseTo(0.5)
   })
 
   it('accepts custom floor/ceiling', () => {
@@ -283,15 +244,27 @@ describe('mergeAndRank', () => {
 
   it('applies mode weights', () => {
     const indexed = [makeResult({ content: 'a', mode: 'indexed', normalizedScore: 0.5, rawScores: { semantic: 0.5 } })]
-    const live = [makeResult({ content: 'b', mode: 'live', normalizedScore: 0.5, rawScores: { semantic: 0.5 } })]
-    const merged = mergeAndRank([indexed, live], 10)
+    const graph = [makeResult({ content: 'b', mode: 'graph', normalizedScore: 0.5, rawScores: { graph: 0.5 } })]
+    const merged = mergeAndRank(
+      [indexed, graph],
+      10,
+      undefined,
+      { semantic: false, keyword: false, graph: false, memory: false },
+      { rrf: 1 }
+    )
     expect(merged[0]!.content).toBe('a')
   })
 
   it('accepts custom weights', () => {
     const indexed = [makeResult({ content: 'a', mode: 'indexed', normalizedScore: 0.5, rawScores: { semantic: 0.5 } })]
-    const live = [makeResult({ content: 'b', mode: 'live', normalizedScore: 0.5, rawScores: { semantic: 0.5 } })]
-    const merged = mergeAndRank([indexed, live], 10, { indexed: 0.1, live: 0.9 })
+    const graph = [makeResult({ content: 'b', mode: 'graph', normalizedScore: 0.5, rawScores: { graph: 0.5 } })]
+    const merged = mergeAndRank(
+      [indexed, graph],
+      10,
+      { indexed: 0.1, graph: 0.9 },
+      { semantic: false, keyword: false, graph: false, memory: false },
+      { rrf: 1 }
+    )
     expect(merged[0]!.content).toBe('b')
   })
 
@@ -315,7 +288,7 @@ describe('mergeAndRank', () => {
       mode: 'indexed',
       normalizedScore: 0.8,
       rawScores: { semantic: 0.75, keyword: 0.4 },
-      chunk: { index: 0, total: 1, isNeighbor: false },
+      chunk: { index: 0, total: 1 },
     })]
     const graph = [makeResult({
       content: 'Golden State Warriors are awesome',
@@ -323,7 +296,7 @@ describe('mergeAndRank', () => {
       mode: 'graph',
       normalizedScore: 0.15,
       rawScores: { graph: 0.15 },
-      chunk: { index: 0, total: 1, isNeighbor: false },
+      chunk: { index: 0, total: 1 },
     })]
     const merged = mergeAndRank([indexed, graph], 10)
     expect(merged).toHaveLength(1)

@@ -28,6 +28,10 @@ export type {
   QueryMemoryRecord,
   QueryMemoryResult,
   QueryResults,
+  ContextFormat,
+  ContextSection,
+  QueryContextOptions,
+  QueryContextStats,
   RawScores,
   NormalizedScores,
   QueryOpts,
@@ -69,6 +73,7 @@ export type {
   GraphBackfillResult,
   GraphExplainOpts,
   PassageResult,
+  GraphSearchProfile,
   GraphSearchOpts,
   GraphSearchTrace,
   GraphSearchResult,
@@ -123,10 +128,9 @@ export { PolicyEngine, PolicyViolationError } from './governance/index.js'
 // Index engine
 export { IndexEngine, defaultChunker, sha256, stripMarkdown } from './index-engine/index.js'
 
-// Query engine (internal assemble removed from public exports — use opts.format on query())
+// Query engine
 export { mergeAndRank, minMaxNormalize, calibrateSemantic, calibrateKeyword, normalizeGraphPPR } from './query/index.js'
 export { resolveSignals, signalLabel, computeCompositeScore, classifyQuery, type QueryClassification, type QueryType } from './query/index.js'
-export type { NormalizedResult } from './query/index.js'
 
 // Utilities
 export { generateId } from './utils/id.js'
